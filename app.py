@@ -900,7 +900,7 @@ def _ui_generate(prompt, negative, use_input, input_image,
 
 FOOOCUS_CSS = """
 .gradio-container { max-width: 1280px !important; margin: auto !important; }
-#cz_result { min-height: 520px; }
+#cz_result { min-height: 420px; }
 #cz_prompt textarea { font-size: 1.05rem; }
 #cz_generate { height: 88px; font-size: 1.1rem; }
 """
@@ -915,7 +915,7 @@ def build_ui():
             # ----- Colonne principale (grand apercu + barre de prompt en bas) -----
             with gr.Column(scale=3):
                 out = gr.Image(type="pil", label="Result", elem_id="cz_result",
-                               height=560, show_download_button=True)
+                               height=460, show_download_button=True)
                 report = gr.Markdown(value="*Ready. Type a prompt and press Generate.*")
 
                 use_input = gr.Checkbox(value=False, label="Input Image (img2img / upscale)")
@@ -931,10 +931,10 @@ def build_ui():
                     prompt = gr.Textbox(show_label=False, placeholder="Type your prompt here...",
                                         elem_id="cz_prompt", lines=2, scale=4, container=False)
                     btn = gr.Button("Generate", variant="primary", elem_id="cz_generate", scale=1, min_width=120)
-                advanced_cb = gr.Checkbox(value=False, label="Advanced")
+                advanced_cb = gr.Checkbox(value=True, label="Advanced settings (uncheck to hide)")
 
-            # ----- Colonne Advanced (a droite, masquee par defaut) -----
-            with gr.Column(scale=2, visible=False) as advanced_col:
+            # ----- Colonne Advanced (a droite, visible par defaut) -----
+            with gr.Column(scale=2, visible=True) as advanced_col:
                 with gr.Tabs():
                     with gr.Tab("Setting"):
                         negative = gr.Textbox(label="Negative prompt", lines=2,
