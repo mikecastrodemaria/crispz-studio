@@ -158,6 +158,19 @@ def _log(msg):
         print(f"[crispz] {msg}", file=sys.stderr, flush=True)
 
 
+# Hook de progression UI (gradio gr.Progress). None hors UI (CLI/serveur). Permet
+# d'afficher l'avancement des etapes (ESRGAN, refine, tuiles i/N) dans l'interface.
+_PROGRESS = None
+
+
+def _progress(frac, desc=""):
+    if _PROGRESS is not None:
+        try:
+            _PROGRESS(min(1.0, max(0.0, float(frac))), desc)
+        except Exception:
+            pass
+
+
 def set_esrgan_dir(path):
     """Change le dossier ESRGAN. Invalide le cache (les noms peuvent collisionner entre dossiers)."""
     global ESRGAN_DIR, _ESRGAN_CACHE
@@ -377,6 +390,7 @@ def generate(prompt, width, height, steps, seed, negative_prompt=""):
     w = round_to_multiple(int(width))
     h = round_to_multiple(int(height))
     _log(f"txt2img: {w}x{h}, {int(steps)} steps, guidance {GUIDANCE:.1f} ...")
+    _progress(0.1, f"Generating {w}x{h} ({int(steps)} steps)...")
     t0 = time.time()
     img = pipe(
         prompt=prompt or "",
@@ -455,6 +469,7 @@ def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
             x1, y1 = max(x2 - tile, 0), max(y2 - tile, 0)
             cw, ch = x2 - x1, y2 - y1
             _log(f"  tile {i}/{total}")
+            _progress(0.45 + 0.5 * (i - 1) / max(1, total), f"Refine tile {i}/{total}")
             crop = image.crop((x1, y1, x2, y2))
             out = _refine_whole(pipe, crop, denoise, steps, prompt, seed)
             if out.size != (cw, ch):
@@ -484,6 +499,7 @@ def process_one(image, esrgan_model, factor, denoise, steps, prompt, seed, tile,
     # Etage 1 : ESRGAN (saute si do_esrgan=False -> img2img pur)
     if do_esrgan and esrgan_model:
         t0 = time.time()
+        _progress(0.15, f"ESRGAN upscale {w0}x{h0}...")
         model = load_esrgan(esrgan_model)
         _log(f"stage 1/2 ESRGAN upscale: {w0}x{h0} (tile {int(tile)}) ...")
         upscaled = esrgan_upscale(image, model, int(tile), int(overlap))
@@ -512,12 +528,14 @@ def process_one(image, esrgan_model, factor, denoise, steps, prompt, seed, tile,
     else:
         _log(f"stage 2/2 Z-Image refine: whole image {target_w}x{target_h}, "
              f"denoise {float(denoise):.2f}, {int(steps)} steps ...")
+        _progress(0.5, f"Z-Image refine {target_w}x{target_h}...")
         refined = _refine_whole(pipe, upscaled, denoise, steps, prompt, seed)
     timings["refine"] = time.time() - t0
 
     gc.collect()
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
+    _progress(1.0, "Done")
     _log(f"stage 2/2 done in {timings['refine']:.1f}s | total "
          f"{timings['esrgan'] + timings['refine']:.1f}s")
     return refined, timings
@@ -842,33 +860,42 @@ def _ui_generate(prompt, negative, use_input, input_image,
                  width, height, gen_steps, seed, guidance, offload_mode,
                  esrgan_model, do_esrgan, factor, denoise, refine_steps,
                  tile, overlap, refine_tile, refine_overlap,
-                 save_mode, output_dir, output_format):
+                 save_mode, output_dir, output_format,
+                 progress=gr.Progress(track_tqdm=True)):
     """Bouton Generate unifie facon Fooocus: si une image d'entree est fournie ->
-    img2img / upscale, sinon txt2img. Renvoie (image, report_markdown)."""
-    set_offload_mode(offload_mode)
-    set_guidance(guidance)
-    if use_input and input_image is not None:
-        last_result, last_source, report = run(
-            input_image, None, esrgan_model, factor, denoise, refine_steps, prompt, seed,
-            tile, overlap, save_mode=save_mode, output_dir=output_dir,
-            output_format=output_format, refine_tile=refine_tile, refine_overlap=refine_overlap,
-            do_esrgan=bool(do_esrgan))
-        return last_result, report
-    # txt2img
-    result, t = txt2img_run(prompt, width, height, gen_steps, seed, negative,
-                            upscale=False, steps=refine_steps)
-    dst = None
-    if save_mode != "display":
-        try:
-            dst = build_output_path(None, save_mode, output_dir, output_format)
-            if dst:
-                save_image(result, dst, output_format)
-        except Exception as e:
-            dst = f"(save error: {e})"
-    rep = f"txt2img **{result.size[0]}x{result.size[1]}** in **{t['txt2img']:.1f}s**"
-    if dst:
-        rep += f"  \nSaved: `{dst}`"
-    return result, rep
+    img2img / upscale, sinon txt2img. Renvoie (image, report_markdown).
+    Affiche l'avancement des etapes (ESRGAN, refine, tuiles i/N) via gr.Progress."""
+    global _PROGRESS
+    _PROGRESS = lambda f, d: progress(f, desc=d)
+    progress(0.0, desc="Starting...")
+    try:
+        set_offload_mode(offload_mode)
+        set_guidance(guidance)
+        if use_input and input_image is not None:
+            last_result, last_source, report = run(
+                input_image, None, esrgan_model, factor, denoise, refine_steps, prompt, seed,
+                tile, overlap, save_mode=save_mode, output_dir=output_dir,
+                output_format=output_format, refine_tile=refine_tile, refine_overlap=refine_overlap,
+                do_esrgan=bool(do_esrgan))
+            return last_result, report
+        # txt2img
+        result, t = txt2img_run(prompt, width, height, gen_steps, seed, negative,
+                                upscale=False, steps=refine_steps)
+        progress(1.0, desc="Done")
+        dst = None
+        if save_mode != "display":
+            try:
+                dst = build_output_path(None, save_mode, output_dir, output_format)
+                if dst:
+                    save_image(result, dst, output_format)
+            except Exception as e:
+                dst = f"(save error: {e})"
+        rep = f"txt2img **{result.size[0]}x{result.size[1]}** in **{t['txt2img']:.1f}s**"
+        if dst:
+            rep += f"  \nSaved: `{dst}`"
+        return result, rep
+    finally:
+        _PROGRESS = None
 
 
 FOOOCUS_CSS = """
