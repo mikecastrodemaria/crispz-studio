@@ -1,0 +1,20 @@
+# Normalisation des fins de ligne, cross-platform
+* text=auto eol=lf
+
+# Scripts Windows: CRLF obligatoire
+*.bat text eol=crlf
+
+# Scripts Unix: LF obligatoire (sinon ne s'executent pas)
+*.sh text eol=lf
+
+# Binaires: ne jamais convertir
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.pth binary
+*.safetensors binary
+*.pt binary
+*.ckpt binary
+*.onnx binary
+*.bin binary

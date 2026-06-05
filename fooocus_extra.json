@@ -1,0 +1,130 @@
+{
+  "manifest_version": 1,
+  "id": "crispz",
+  "name": "Crispz - Z-Image upscaler + detailer",
+  "version": "0.1.0",
+  "description": "ESRGAN upscale + Z-Image Turbo refinement pass (img2img BF16). External process, invoked via CLI.",
+  "repo": "https://github.com/mikecastrodemaria/crispz",
+  "license_note": "Models pulled separately (HuggingFace for Z-Image, local ESRGAN folder).",
+
+  "runtime": {
+    "type": "cli",
+    "requires_gpu": true,
+    "isolation": "process",
+    "note_isolation": "crispz runs in ITS OWN environment (torch 2.7 / cu128 + diffusers from source). NEVER import it into the Fooocus process."
+  },
+
+  "server": {
+    "comment": "Optional persistent mode (stage 3). Keeps the model warm across calls and frees VRAM after idle_timeout. Prefer this when chaining many upscales. Requires fastapi + uvicorn.",
+    "launch": ["{venv_python}", "app.py", "--serve", "--host", "127.0.0.1", "--port", "7861", "--idle-timeout", "300"],
+    "endpoints": {
+      "health": "GET /health",
+      "models": "GET /models",
+      "upscale": "POST /upscale (JSON: input path + any setting incl. preset) -> {output, size, esrgan_s, refine_s, total_s}",
+      "unload": "POST /unload (free VRAM now)"
+    },
+    "measured": "RTX 5090, 2K: first call ~66s (cold, model load), warm calls ~46s. The per-call model load is the main source of uneven CLI timings."
+  },
+
+  "env": {
+    "python": ">=3.10",
+    "venv": true,
+    "comment": "Two strategies, host's choice. Default = fresh_venv. crispz needs torch 2.7 cu128 which Fooocus does not have, hence the explicit torch step.",
+    "strategies": {
+      "fresh_venv": {
+        "description": "Create a fresh venv and install torch cu128 then the deps.",
+        "create": ["python", "-m", "venv", ".venv"],
+        "steps": [
+          {
+            "name": "pip upgrade",
+            "cmd": ["{venv_python}", "-m", "pip", "install", "--upgrade", "pip"],
+            "warn": "Required: the fresh venv ships an old pip that rejects typing_extensions from the PyTorch index (name normalization bug -> ResolutionImpossible)."
+          },
+          {
+            "name": "torch cu128",
+            "cmd": ["{venv_pip}", "install", "torch==2.7.1", "torchvision", "--index-url", "https://download.pytorch.org/whl/cu128"],
+            "warn": "torch 2.7.1 cu128 = reference build (PROJECT_BRIEF)."
+          },
+          {
+            "name": "crispz deps",
+            "cmd": ["{venv_pip}", "install", "-r", "requirements.txt"]
+          }
+        ]
+      },
+      "reuse_python": {
+        "description": "Reuse an interpreter that already has torch 2.7 cu128 (the machine's system py -3.10), via --system-site-packages.",
+        "create": ["{base_python}", "-m", "venv", "--system-site-packages", ".venv"],
+        "steps": [
+          {
+            "name": "crispz deps (inherited torch)",
+            "cmd": ["{venv_pip}", "install", "-r", "requirements.txt"]
+          }
+        ],
+        "base_python_hint": "Path to be provided by the user at install time (e.g. py -3.10)."
+      }
+    }
+  },
+
+  "entry": {
+    "command": ["{venv_python}", "app.py", "--cli"],
+    "cwd": "{plugin_dir}",
+    "input_arg": "-i",
+    "output": {
+      "mode": "print_output",
+      "flag": "--print-output",
+      "parse": "Each stdout line is an absolute path to an output image.",
+      "save_mode_flag": ["--save-mode", "custom"],
+      "save_dir_flag": ["--output-dir", "{output_dir}"],
+      "format_flag": ["--output-format", "png"]
+    },
+    "models_arg": ["--esrgan-dir", "{esrgan_dir}"],
+    "vram_report_flag": "--report-vram",
+    "exit_codes": {"0": "ok", "other": "error (see stderr)"}
+  },
+
+  "params": [
+    {
+      "key": "model", "label": "ESRGAN model", "type": "dropdown",
+      "arg": "-m", "choices_cmd": ["--list-models"],
+      "choices_parse": "one file name per line on stdout"
+    },
+    {
+      "key": "preset", "label": "Use case", "type": "dropdown", "arg": "--preset", "default": "Custom",
+      "choices": ["Custom", "Photo (balanced)", "Subtle (clean-up)", "Detailed (creative)", "Portrait (faces)", "4K (tiled)", "Low VRAM (8-12GB)"],
+      "note": "Auto settings for a scenario. Explicit flags override the preset."
+    },
+    {"key": "factor",  "label": "Factor",  "type": "slider",  "arg": "--factor",  "min": 1.0, "max": 4.0, "step": 0.5,  "default": 2.0},
+    {"key": "denoise", "label": "Denoise",  "type": "slider",  "arg": "--denoise", "min": 0.0, "max": 0.8, "step": 0.05, "default": 0.30},
+    {"key": "steps",   "label": "Steps",    "type": "slider",  "arg": "--steps",   "min": 4,   "max": 30,  "step": 1,    "default": 12},
+    {"key": "prompt",  "label": "Prompt",   "type": "text",    "arg": "--prompt",  "default": ""},
+    {"key": "seed",    "label": "Seed",     "type": "number",  "arg": "--seed",    "default": -1, "note": "-1 = random"},
+    {"key": "tile",    "label": "ESRGAN tile",  "type": "number", "arg": "--tile",    "default": 760, "note": "0 = disabled"},
+    {"key": "overlap", "label": "Overlap",      "type": "number", "arg": "--overlap", "default": 32},
+    {"key": "refine_tile",    "label": "Diffusion tile (4K+)", "type": "number", "arg": "--refine-tile",    "default": 0, "note": "0 = whole image. >0 tiles the Z-Image pass: caps VRAM, enables 4K+. Try 1024-1280."},
+    {"key": "refine_overlap", "label": "Diffusion tile overlap", "type": "number", "arg": "--refine-overlap", "default": 64},
+    {
+      "key": "cpu_offload", "label": "CPU offload (diffusion VRAM)", "type": "dropdown",
+      "arg": "--cpu-offload", "choices": ["none", "model", "sequential"], "default": "none",
+      "note": "Lowers the diffusion VRAM peak. 'sequential' (~9 GB) lets crispz coexist with a loaded host model."
+    }
+  ],
+
+  "host_hints": {
+    "offload_host_model_before_run": true,
+    "reason": "crispz loads ESRGAN + Z-Image BF16. On a shared GPU, offloading the Fooocus SDXL model before the call avoids OOM.",
+    "heavy": true,
+    "vram_gb_min": 32,
+    "vram_measured": {
+      "gpu": "RTX 5090 32 GB (32607 MiB ~= 31.8 GiB)",
+      "date": "2026-05-30",
+      "baseline_idle_gb": 1.2,
+      "pipeline_2k": {"target": "1664x2432", "denoise": 0.30, "steps": 12, "peak_alloc_gb": 28.48, "peak_reserved_gb": 32.35},
+      "pipeline_2k_offload_model": {"peak_alloc_gb": 13.54, "peak_reserved_gb": 24.02, "time_s": 52},
+      "pipeline_2k_offload_sequential": {"peak_alloc_gb": 9.20, "peak_reserved_gb": 9.22, "time_s": 61},
+      "pipeline_4k_whole": "OOM expected in whole-image mode (2K already saturates the card)",
+      "pipeline_4k_tiled": {"target": "3328x4864", "refine_tile": 1024, "refine_overlap": 64, "denoise": 0.30, "peak_alloc_gb": 21.68, "peak_reserved_gb": 23.01, "time_s": 86, "note": "Diffusion tiling: VRAM bounded by tile size, independent of final resolution. No OOM."},
+      "note": "Re-measured on an idle card (1.2 GB baseline): same numbers -> crispz's real footprint, not contamination. Without offload the 2K reserved peak (32.35) > physical VRAM (31.8 GiB) = spill into Windows shared memory (WDDM), slow."
+    },
+    "vram_note": "Without offload, the 2K pipeline saturates a 32 GB card. Two knobs (both implemented) fix this: (1) --cpu-offload: 'model' ~24 GB reserved, 'sequential' ~9 GB with little speed loss; (2) --refine-tile (diffusion tiling): caps the VRAM peak by tile size regardless of final resolution and enables 4K+ (e.g. tile 1024 -> ~23 GB at 4K, no OOM). Recommended integration: --cpu-offload sequential for 2K, add --refine-tile 1024 for 4K. Offloading the host model before the call remains the safest belt-and-suspenders option."
+  }
+}

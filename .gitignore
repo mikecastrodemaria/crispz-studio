@@ -1,0 +1,54 @@
+# --- Claude Code / outils locaux ---
+.claude/
+CLAUDE.local.md
+*.local.json
+settings.local.json
+
+# --- Preferences locales (contiennent des chemins specifiques a la machine) ---
+preferences.json
+
+# --- Docs internes / perso (gardes hors du repo, non transmis a GitHub) ---
+# Les fichiers vivent un niveau au-dessus (../). Ces patterns evitent une
+# re-inclusion accidentelle si un .md interne est recree dans le repo.
+PROJECT_BRIEF.md
+BRIEF_*.md
+PLAN_*.md
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.env
+
+# --- Modeles ESRGAN (lourds, a deposer localement) ---
+upscale_models/*
+!upscale_models/.gitkeep
+*.pth
+*.safetensors
+*.pt
+*.ckpt
+*.onnx
+*.bin
+
+# --- Sorties + logs ---
+out/
+output/
+*.tsv
+
+# --- Images de test locales (essais, non versionnees) ---
+tests/
+
+# --- OS / editeurs ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp

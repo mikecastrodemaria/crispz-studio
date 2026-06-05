@@ -1,0 +1,31 @@
+# NE PAS reinstaller torch : garder ton build PyTorch 2.7 / CUDA 12.8 existant.
+# Z-Image n'est dans diffusers que depuis la source, d'ou le git+ ci-dessous.
+
+git+https://github.com/huggingface/diffusers
+
+# transformers >= 4.51 requis : Z-Image Turbo utilise un encodeur Qwen3 (Qwen3Model),
+# absent avant 4.51 (echec "module transformers has no attribute Qwen3Model").
+# Borne <5 : la ligne 5.x a des changements d'API qui peuvent casser le diffusers
+# source. Rester sur 4.51+ (teste OK en 4.57).
+transformers>=4.51,<5
+accelerate
+sentencepiece
+spandrel
+
+# Comparateur avant/apres = composant HTML+JS interne (voir _make_compare_html dans app.py).
+# Pas de dep externe -> stack stable.
+# Borne <6: Gradio 6 a un middleware Brotli buggé avec h11 ("Too little data for
+# declared Content-Length") qui spamme la console quand une reponse est interrompue.
+gradio>=4.44,<6
+
+pillow
+numpy
+
+# Optionnel: seulement pour le mode serveur persistant (--serve, palier 3).
+fastapi
+uvicorn
+
+# Note xformers: si une version est deja installee mais buildee pour une autre version
+# de torch que la tienne (ex xformers pour torch 2.9 alors que tu as 2.8), diffusers
+# echoue avec "DLL load failed while importing _C" au chargement du VAE. Solution la
+# plus simple: pip uninstall xformers. Torch 2.7+ a SDPA natif qui suffit.

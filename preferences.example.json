@@ -1,0 +1,16 @@
+{
+  "esrgan_dir": "./upscale_models",
+  "zimage_model": "Tongyi-MAI/Z-Image-Turbo",
+  "model": "4x-ClearRealityV1_Soft.safetensors",
+  "factor": 2.0,
+  "denoise": 0.30,
+  "steps": 12,
+  "prompt": "",
+  "seed": -1,
+  "tile": 760,
+  "overlap": 32,
+  "save_mode": "display",
+  "output_dir": "out",
+  "output_format": "png",
+  "time_log": ""
+}
