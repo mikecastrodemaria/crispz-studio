@@ -838,130 +838,141 @@ def _ui_txt2img(prompt, negative, width, height, gen_steps, seed, guidance, upsc
     return result, rep
 
 
+def _ui_generate(prompt, negative, use_input, input_image,
+                 width, height, gen_steps, seed, guidance, offload_mode,
+                 esrgan_model, do_esrgan, factor, denoise, refine_steps,
+                 tile, overlap, refine_tile, refine_overlap,
+                 save_mode, output_dir, output_format):
+    """Bouton Generate unifie facon Fooocus: si une image d'entree est fournie ->
+    img2img / upscale, sinon txt2img. Renvoie (image, report_markdown)."""
+    set_offload_mode(offload_mode)
+    set_guidance(guidance)
+    if use_input and input_image is not None:
+        last_result, last_source, report = run(
+            input_image, None, esrgan_model, factor, denoise, refine_steps, prompt, seed,
+            tile, overlap, save_mode=save_mode, output_dir=output_dir,
+            output_format=output_format, refine_tile=refine_tile, refine_overlap=refine_overlap,
+            do_esrgan=bool(do_esrgan))
+        return last_result, report
+    # txt2img
+    result, t = txt2img_run(prompt, width, height, gen_steps, seed, negative,
+                            upscale=False, steps=refine_steps)
+    dst = None
+    if save_mode != "display":
+        try:
+            dst = build_output_path(None, save_mode, output_dir, output_format)
+            if dst:
+                save_image(result, dst, output_format)
+        except Exception as e:
+            dst = f"(save error: {e})"
+    rep = f"txt2img **{result.size[0]}x{result.size[1]}** in **{t['txt2img']:.1f}s**"
+    if dst:
+        rep += f"  \nSaved: `{dst}`"
+    return result, rep
+
+
+FOOOCUS_CSS = """
+.gradio-container { max-width: 1280px !important; margin: auto !important; }
+#cz_result { min-height: 520px; }
+#cz_prompt textarea { font-size: 1.05rem; }
+#cz_generate { height: 88px; font-size: 1.1rem; }
+"""
+
+
 def build_ui():
     models = list_esrgan_models()
     default_model = DEFAULT_MODEL if DEFAULT_MODEL in models else (models[0] if models else None)
 
-    with gr.Blocks(title="crispz-studio - Z-Image txt2img + upscaler") as demo:
-        gr.Markdown("## crispz-studio\nZ-Image txt2img + ESRGAN/Z-Image upscale & detail, 100% local.")
+    with gr.Blocks(title="crispz-studio", theme=gr.themes.Default(), css=FOOOCUS_CSS) as demo:
+        with gr.Row():
+            # ----- Colonne principale (grand apercu + barre de prompt en bas) -----
+            with gr.Column(scale=3):
+                out = gr.Image(type="pil", label="Result", elem_id="cz_result",
+                               height=560, show_download_button=True)
+                report = gr.Markdown(value="*Ready. Type a prompt and press Generate.*")
 
-        with gr.Accordion("Paths / models (configuration)", open=False):
-            esrgan_dir_tb = gr.Textbox(value=ESRGAN_DIR, label="ESRGAN_DIR (.pth / .safetensors folder)")
-            zimage_model_tb = gr.Textbox(value=BASE_REPO,
-                                         label="Z-Image (HF repo, diffusers folder, or .safetensors file)",
-                                         info="A .safetensors (Civitai) is used as the transformer; "
-                                              "VAE+encoder stay from the base repo. Click 'Apply Z-Image'.")
-            with gr.Row():
-                refresh_btn = gr.Button("Refresh ESRGAN list", size="sm")
-                apply_zimage_btn = gr.Button("Apply Z-Image", size="sm")
-                save_paths_btn = gr.Button("Save to preferences.json", size="sm", variant="primary")
-            paths_status = gr.Markdown("")
+                use_input = gr.Checkbox(value=False, label="Input Image (img2img / upscale)")
+                with gr.Group(visible=False) as input_group:
+                    with gr.Row():
+                        inp = gr.Image(type="pil", label="Source image", height=240)
+                        with gr.Column():
+                            do_esrgan_cb = gr.Checkbox(value=True, label="ESRGAN upscale",
+                                                       info="Uncheck = img2img only (no enlargement).")
+                            preset = gr.Dropdown(list(PRESETS), value="Custom", label="Use case preset")
 
-        with gr.Tabs():
-            with gr.Tab("Image -> Upscale"):
                 with gr.Row():
-                    with gr.Column():
-                        inp = gr.Image(type="pil", label="Source image (single mode)")
-                        source_folder_tb = gr.Textbox(
-                            value="",
-                            label="OR source folder (batch mode, takes priority if filled)",
-                            placeholder="e.g. D:/images/series_a",
-                        )
-                        do_esrgan_cb = gr.Checkbox(value=True, label="ESRGAN upscale",
-                                                   info="Uncheck for img2img only (Z-Image refine on "
-                                                        "the input at native size, no enlargement).")
-                        esrgan = gr.Dropdown(models, value=default_model, label="ESRGAN model")
-                        preset = gr.Dropdown(list(PRESETS), value="Custom",
-                                             label="Use case (auto settings)",
-                                             info="Fills the settings below. 'Custom' changes nothing.")
-                        factor = gr.Slider(1.0, 4.0, value=DEFAULT_FACTOR, step=0.5, label="Net upscale factor")
-                        denoise = gr.Slider(0.0, 0.8, value=DEFAULT_DENOISE, step=0.01,
-                                            label="Denoise (strength) - 0.2-0.4 recommended")
-                        steps = gr.Slider(4, 30, value=DEFAULT_STEPS, step=1, label="Steps (diffusion pass)")
+                    prompt = gr.Textbox(show_label=False, placeholder="Type your prompt here...",
+                                        elem_id="cz_prompt", lines=2, scale=4, container=False)
+                    btn = gr.Button("Generate", variant="primary", elem_id="cz_generate", scale=1, min_width=120)
+                advanced_cb = gr.Checkbox(value=False, label="Advanced")
+
+            # ----- Colonne Advanced (a droite, masquee par defaut) -----
+            with gr.Column(scale=2, visible=False) as advanced_col:
+                with gr.Tabs():
+                    with gr.Tab("Setting"):
+                        negative = gr.Textbox(label="Negative prompt", lines=2,
+                                              placeholder="(needs guidance > 0)")
+                        with gr.Row():
+                            width = gr.Slider(256, 2048, value=1024, step=16, label="Width")
+                            height = gr.Slider(256, 2048, value=1024, step=16, label="Height")
+                        gen_steps = gr.Slider(2, 40, value=8, step=1, label="Generation steps (txt2img)")
                         guidance = gr.Slider(0.0, 8.0, value=0.0, step=0.5, label="CFG guidance",
-                                             info="0 for Z-Image Turbo. Z-Image Base needs ~3.5-5.")
-                        prompt = gr.Textbox(label="Optional prompt", placeholder="leaving it empty works very well")
+                                             info="0 = Z-Image Turbo. Z-Image Base: ~3.5-5.")
                         seed = gr.Number(value=-1, label="Seed (-1 = random)", precision=0)
+
+                    with gr.Tab("Upscale / img2img"):
+                        esrgan = gr.Dropdown(models, value=default_model, label="ESRGAN model")
+                        factor = gr.Slider(1.0, 4.0, value=DEFAULT_FACTOR, step=0.5, label="Upscale factor")
+                        denoise = gr.Slider(0.0, 0.8, value=DEFAULT_DENOISE, step=0.01,
+                                            label="Refine denoise (strength)")
+                        refine_steps = gr.Slider(4, 30, value=DEFAULT_STEPS, step=1, label="Refine steps")
                         with gr.Accordion("ESRGAN tiling (VRAM)", open=False):
-                            tile = gr.Slider(0, 1024, value=DEFAULT_TILE, step=8, label="Tile size (0 = disabled)")
+                            tile = gr.Slider(0, 1024, value=DEFAULT_TILE, step=8, label="Tile (0 = off)")
                             overlap = gr.Slider(0, 128, value=DEFAULT_OVERLAP, step=8, label="Overlap")
-                            offload = gr.Dropdown(
-                                choices=list(OFFLOAD_CHOICES),
-                                value="none",
-                                label="CPU offload (diffusion pass)",
-                                info="none=all in VRAM | model=offload per submodule (good tradeoff) | "
-                                     "sequential=more aggressive, slower. Lowers the VRAM peak.",
-                            )
                         with gr.Accordion("Z-Image tiling (4K+)", open=False):
                             refine_tile = gr.Slider(0, 2048, value=DEFAULT_REFINE_TILE, step=16,
-                                                    label="Diffusion tile size (0 = whole image)",
-                                                    info="Tiles the Z-Image pass. Caps the VRAM peak and "
-                                                         "enables 4K+ without seams. Try 1024-1280. "
-                                                         "Whole image stays best under ~2048px.")
+                                                    label="Diffusion tile (0 = whole image)")
                             refine_overlap = gr.Slider(0, 256, value=DEFAULT_REFINE_OVERLAP, step=16,
-                                                       label="Diffusion tile overlap (feather)")
-                        with gr.Accordion("Save", open=True):
-                            save_mode = gr.Radio(
-                                choices=["display", "local", "alongside", "custom"],
-                                value=DEFAULT_SAVE_MODE,
-                                label="Save mode",
-                                info="display=save nothing | local=into 'output_dir' relative to the project | "
-                                     "alongside=same folder as the source (CLI/batch) | custom=output_dir as-is",
-                            )
-                            output_dir = gr.Textbox(value=DEFAULT_OUTPUT_DIR, label="Output folder (local/custom)")
-                            output_format = gr.Dropdown(
-                                choices=list(SUPPORTED_FORMATS),
-                                value=DEFAULT_OUTPUT_FORMAT,
-                                label="Output format",
-                            )
-                        btn = gr.Button("Upscale + Detail", variant="primary")
-                    with gr.Column():
-                        out_slider = gr.HTML(value="<div style='padding:1em;color:#888'>No result yet. Run an upscale.</div>",
-                                             label="Before / after comparator (drag the slider)")
-                        out = gr.Image(type="pil", label="Result (downloadable)")
-                        report = gr.Markdown(value="*No run yet.*", label="Report")
+                                                       label="Diffusion tile overlap")
 
-            with gr.Tab("Text -> Image"):
-                with gr.Row():
-                    with gr.Column():
-                        t2i_prompt = gr.Textbox(label="Prompt", lines=3, placeholder="describe the image")
-                        t2i_negative = gr.Textbox(label="Negative prompt (optional)",
-                                                  placeholder="(ignored at guidance 0 / Turbo)")
+                    with gr.Tab("Model"):
+                        zimage_model_tb = gr.Textbox(
+                            value=BASE_REPO,
+                            label="Z-Image (HF repo, diffusers folder, or .safetensors file)",
+                            info="A .safetensors (Civitai) = transformer; VAE+encoder from base repo.")
+                        esrgan_dir_tb = gr.Textbox(value=ESRGAN_DIR, label="ESRGAN_DIR (.pth/.safetensors folder)")
+                        offload = gr.Dropdown(choices=list(OFFLOAD_CHOICES), value="none",
+                                              label="CPU offload (VRAM)",
+                                              info="none | model (~half) | sequential (~9GB, slower)")
                         with gr.Row():
-                            t2i_width = gr.Slider(256, 2048, value=1024, step=16, label="Width")
-                            t2i_height = gr.Slider(256, 2048, value=1024, step=16, label="Height")
-                        t2i_steps = gr.Slider(2, 40, value=8, step=1, label="Generation steps")
-                        t2i_guidance = gr.Slider(0.0, 8.0, value=0.0, step=0.5, label="CFG guidance",
-                                                 info="0 = Z-Image Turbo. Z-Image Base: ~3.5-5 + 20-28 steps.")
-                        t2i_seed = gr.Number(value=-1, label="Seed (-1 = random)", precision=0)
-                        t2i_upscale = gr.Checkbox(value=False,
-                                                  label="Upscale after generation (ESRGAN + refine)")
-                        t2i_model = gr.Dropdown(models, value=default_model, label="ESRGAN model (if upscaling)")
-                        t2i_factor = gr.Slider(1.0, 4.0, value=2.0, step=0.5, label="Upscale factor")
-                        t2i_denoise = gr.Slider(0.0, 0.8, value=0.30, step=0.01, label="Refine denoise")
-                        t2i_offload = gr.Dropdown(choices=list(OFFLOAD_CHOICES), value="none", label="CPU offload")
-                        t2i_btn = gr.Button("Generate", variant="primary")
-                    with gr.Column():
-                        t2i_out = gr.Image(type="pil", label="Generated image (downloadable)")
-                        t2i_report = gr.Markdown(value="*No generation yet.*", label="Report")
+                            refresh_btn = gr.Button("Refresh ESRGAN", size="sm")
+                            apply_zimage_btn = gr.Button("Apply Z-Image", size="sm", variant="primary")
+                            save_paths_btn = gr.Button("Save paths", size="sm")
+                        paths_status = gr.Markdown("")
 
+                    with gr.Tab("Save"):
+                        save_mode = gr.Radio(choices=["display", "local", "alongside", "custom"],
+                                             value=DEFAULT_SAVE_MODE, label="Save mode")
+                        output_dir = gr.Textbox(value=DEFAULT_OUTPUT_DIR, label="Output folder")
+                        output_format = gr.Dropdown(choices=list(SUPPORTED_FORMATS),
+                                                    value=DEFAULT_OUTPUT_FORMAT, label="Output format")
+
+        # Toggles facon Fooocus
+        advanced_cb.change(lambda v: gr.update(visible=bool(v)), advanced_cb, advanced_col)
+        use_input.change(lambda v: gr.update(visible=bool(v)), use_input, input_group)
+
+        # Actions
         refresh_btn.click(_refresh_models, [esrgan_dir_tb], [esrgan, paths_status])
         apply_zimage_btn.click(_apply_zimage, [zimage_model_tb], [paths_status])
         save_paths_btn.click(_save_paths_to_prefs, [esrgan_dir_tb, zimage_model_tb], [paths_status])
         preset.change(_apply_preset, [preset],
-                      [factor, denoise, steps, tile, overlap, refine_tile, refine_overlap, offload])
+                      [factor, denoise, refine_steps, tile, overlap, refine_tile, refine_overlap, offload])
         btn.click(
-            _ui_run,
-            inputs=[inp, source_folder_tb, esrgan, factor, denoise, steps, prompt, seed,
-                    tile, overlap, offload, refine_tile, refine_overlap, do_esrgan_cb, guidance,
-                    save_mode, output_dir, output_format],
-            outputs=[out, out_slider, report],
-        )
-        t2i_btn.click(
-            _ui_txt2img,
-            inputs=[t2i_prompt, t2i_negative, t2i_width, t2i_height, t2i_steps, t2i_seed,
-                    t2i_guidance, t2i_upscale, t2i_model, t2i_factor, t2i_denoise, t2i_offload],
-            outputs=[t2i_out, t2i_report],
+            _ui_generate,
+            inputs=[prompt, negative, use_input, inp, width, height, gen_steps, seed, guidance, offload,
+                    esrgan, do_esrgan_cb, factor, denoise, refine_steps,
+                    tile, overlap, refine_tile, refine_overlap, save_mode, output_dir, output_format],
+            outputs=[out, report],
         )
     return demo
 
