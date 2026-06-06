@@ -284,6 +284,24 @@ def _progress(frac, desc=""):
             pass
 
 
+# Stop "facon Fooocus": flag global + interruption des pipelines diffusers.
+_STOP = False
+
+
+def request_stop():
+    """Demande l'arret: stoppe la boucle de debruitage en cours (pipe._interrupt) et
+    les boucles batch/tuiles (_STOP). Quasi-immediat (s'arrete au pas suivant)."""
+    global _STOP
+    _STOP = True
+    for p in [_BASE_PIPE] + list(_DERIVED.values()):
+        if p is not None:
+            try:
+                p._interrupt = True
+            except Exception:
+                pass
+    return "Stopping..."
+
+
 def set_esrgan_dir(path):
     """Change le dossier ESRGAN. Invalide le cache (les noms peuvent collisionner entre dossiers)."""
     global ESRGAN_DIR, _ESRGAN_CACHE
@@ -577,6 +595,9 @@ def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
     i = 0
     for y in ys:
         for x in xs:
+            if _STOP:
+                _log("refine tiled: stop requested")
+                break
             i += 1
             x2, y2 = min(x + tile, w), min(y + tile, h)
             x1, y1 = max(x2 - tile, 0), max(y2 - tile, 0)
@@ -1031,7 +1052,8 @@ def _ui_generate(prompt, negative, styles, use_input, input_image,
     """Bouton Generate unifie facon Fooocus: image d'entree -> img2img/upscale,
     sinon txt2img (eventuellement N images via image_number). Renvoie (liste d'images,
     report). Styles = wrappers de prompt. Avancement via gr.Progress."""
-    global _PROGRESS
+    global _PROGRESS, _STOP
+    _STOP = False
     _PROGRESS = lambda f, d: progress(f, desc=d)
     progress(0.0, desc="Starting...")
     try:
@@ -1049,6 +1071,9 @@ def _ui_generate(prompt, negative, styles, use_input, input_image,
         n = max(1, int(image_number))
         images, total_t = [], 0.0
         for i in range(n):
+            if _STOP:
+                _log(f"stop requested after {i}/{n} image(s)")
+                break
             s = (int(seed) + i) if int(seed) >= 0 else -1
             progress(i / n, desc=f"Image {i + 1}/{n}")
             img, t = txt2img_run(full_prompt, width, height, gen_steps, s, negative,
@@ -1066,8 +1091,11 @@ def _ui_generate(prompt, negative, styles, use_input, input_image,
                 except Exception:
                     pass
         progress(1.0, desc="Done")
-        rep = (f"txt2img x{n} - **{images[0].size[0]}x{images[0].size[1]}** "
-               f"in **{total_t:.1f}s**")
+        if not images:
+            return [], "Stopped before any image."
+        suffix = " (stopped)" if _STOP else ""
+        rep = (f"txt2img x{len(images)} - **{images[0].size[0]}x{images[0].size[1]}** "
+               f"in **{total_t:.1f}s**{suffix}")
         return images, rep
     finally:
         _PROGRESS = None
@@ -1121,7 +1149,9 @@ def build_ui():
                 with gr.Row():
                     prompt = gr.Textbox(show_label=False, placeholder="Type your prompt here...",
                                         elem_id="cz_prompt", lines=2, scale=4, container=False)
-                    btn = gr.Button("Generate", elem_id="cz_generate", scale=1, min_width=150)
+                    with gr.Column(scale=1, min_width=150):
+                        btn = gr.Button("Generate", elem_id="cz_generate", min_width=150)
+                        stop_btn = gr.Button("Stop", variant="stop", size="sm", min_width=150)
 
                 negative = gr.Textbox(show_label=False, elem_id="cz_neg", lines=1, container=False,
                                       placeholder="Negative prompt - what you do NOT want (needs guidance > 0)")
@@ -1180,7 +1210,7 @@ def build_ui():
                         gen_steps = gr.Slider(2, 40, value=8, step=1, label="Generation steps (txt2img)")
                         guidance = gr.Slider(0.0, 8.0, value=0.0, step=0.5, label="CFG guidance",
                                              info="0 = Z-Image Turbo. Z-Image Base: ~3.5-5.")
-                        image_number = gr.Slider(1, 8, value=1, step=1, label="Image number (batch)")
+                        image_number = gr.Slider(1, 30, value=1, step=1, label="Image number (batch)")
                         seed = gr.Number(value=-1, label="Seed (-1 = random)", precision=0)
 
                     with gr.Tab("Styles"):
@@ -1232,6 +1262,9 @@ def build_ui():
         detect_btn.click(_ui_detect_ollama, [ollama_url], [ollama_model, ollama_status])
         describe_btn.click(_ui_describe, [describe_img, ollama_model, ollama_url], [prompt, describe_status])
         improve_btn.click(_ui_improve, [prompt, ollama_model, ollama_url], [prompt, improve_status])
+        # Stop facon Fooocus: tourne en parallele du Generate (thread separe) et pose
+        # le flag d'arret + interrompt la boucle de debruitage en cours.
+        stop_btn.click(request_stop, None, [report])
         preset.change(_apply_preset, [preset],
                       [factor, denoise, refine_steps, tile, overlap, refine_tile, refine_overlap, offload])
         btn.click(
