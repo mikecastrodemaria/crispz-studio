@@ -107,15 +107,13 @@ def _style_sample(name):
 
 
 def _filter_styles(query, selected):
-    """Filtre la liste des styles par recherche. Conserve les styles deja coches.
-    Renvoie (update CheckboxGroup, galerie de vignettes des resultats)."""
+    """Filtre la liste des styles par recherche. Conserve les styles deja coches."""
     q = (query or "").strip().lower()
     matches = [n for n in STYLES if q in n.lower()] if q else list(STYLES)
     selected = [s for s in (selected or []) if s in STYLES]
     # choices = resultats + styles coches (pour ne pas perdre la selection)
     choices = list(dict.fromkeys(matches + selected))
-    gallery = [(_style_sample(n), n) for n in matches[:120] if _style_sample(n)]
-    return gr.update(choices=choices, value=selected), gallery
+    return gr.update(choices=choices, value=selected)
 
 
 def _apply_styles(prompt, negative, style_names):
@@ -1681,14 +1679,59 @@ def _ui_generate(prompt, negative, styles, use_input, input_image,
         _PROGRESS = None
 
 
-# Force le theme sombre au chargement (Fooocus est toujours sombre).
-DARK_JS = """
+# JS injecte au chargement: force le theme sombre, preview de style au survol,
+# et lightbox plein ecran au clic sur le rendu. __MAP__ = {nom_style: url_vignette}.
+CZ_JS = """
 () => {
   const u = new URL(window.location.href);
   if (u.searchParams.get('__theme') !== 'dark') {
-    u.searchParams.set('__theme', 'dark');
-    window.location.replace(u.toString());
+    u.searchParams.set('__theme', 'dark'); window.location.replace(u.toString()); return;
   }
+  const SAMPLES = __MAP__;
+
+  // --- Preview de style au survol ---
+  let tip = null;
+  const ensureTip = () => {
+    if (!tip) { tip = document.createElement('div'); tip.className = 'cz-style-preview';
+      tip.style.display = 'none'; tip.innerHTML = '<img>'; document.body.appendChild(tip); }
+    return tip;
+  };
+  document.addEventListener('mouseover', (e) => {
+    const lbl = e.target.closest && e.target.closest('#cz_styles label');
+    if (!lbl) return;
+    const name = (lbl.innerText || '').trim();
+    const url = SAMPLES[name];
+    if (!url) return;
+    const t = ensureTip(); const im = t.querySelector('img');
+    im.onerror = () => { t.style.display = 'none'; };
+    im.src = url; t.style.display = 'block';
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (tip && tip.style.display === 'block') {
+      let x = e.clientX + 18, y = e.clientY + 18;
+      if (x + 240 > window.innerWidth) x = e.clientX - 240;
+      if (y + 240 > window.innerHeight) y = e.clientY - 240;
+      tip.style.left = x + 'px'; tip.style.top = y + 'px';
+    }
+  });
+  document.addEventListener('mouseout', (e) => {
+    const lbl = e.target.closest && e.target.closest('#cz_styles label');
+    if (lbl && tip) tip.style.display = 'none';
+  });
+
+  // --- Lightbox plein ecran au clic sur le rendu ---
+  document.addEventListener('click', (e) => {
+    const img = e.target.closest && e.target.closest('#cz_result img');
+    if (!img || e.target.closest('.cz-lightbox')) return;
+    const ov = document.createElement('div'); ov.className = 'cz-lightbox';
+    ov.innerHTML = '<span class="cz-close">&times;</span><img>';
+    ov.querySelector('img').src = img.src;
+    ov.addEventListener('click', () => ov.remove());
+    document.body.appendChild(ov);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { const o = document.querySelector('.cz-lightbox'); if (o) o.remove(); }
+  });
 }
 """
 
@@ -1704,12 +1747,25 @@ FOOOCUS_CSS = """
   --input-background-fill: #141b29;
 }
 #cz_result { min-height: 560px; }
-#cz_result img { max-height: 80vh; object-fit: contain; }
+#cz_result img { max-height: 80vh; object-fit: contain; cursor: zoom-in; }
 #cz_prompt textarea, #cz_neg textarea { font-size: 1.04rem; }
 #cz_generate { min-height: 96px !important; height: 100% !important; font-size: 1.12rem; font-weight: 600;
   background: linear-gradient(180deg,#5a6376,#3b4356) !important; color: #fff !important;
   border: 1px solid #5d6884 !important; box-shadow: none !important; }
 #cz_generate:hover { background: linear-gradient(180deg,#69738a,#454e63) !important; }
+/* Bloc styles: scroller interne */
+#cz_styles { max-height: 340px; overflow-y: auto; padding-right: 6px; }
+/* Preview de style au survol */
+.cz-style-preview { position: fixed; z-index: 10000; pointer-events: none;
+  border: 1px solid #2a3346; border-radius: 8px; overflow: hidden;
+  box-shadow: 0 6px 24px rgba(0,0,0,.6); background: #0b1018; }
+.cz-style-preview img { display: block; width: 220px; height: auto; }
+/* Lightbox plein ecran */
+.cz-lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.93); z-index: 10001;
+  display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+.cz-lightbox img { max-width: 95vw; max-height: 95vh; object-fit: contain; }
+.cz-lightbox .cz-close { position: fixed; top: 14px; right: 26px; color: #fff;
+  font-size: 44px; line-height: 1; cursor: pointer; font-weight: 300; }
 """
 
 
@@ -1717,13 +1773,21 @@ def build_ui():
     models = list_esrgan_models()
     default_model = DEFAULT_MODEL if DEFAULT_MODEL in models else (models[0] if models else None)
 
-    with gr.Blocks(title="crispz-studio", theme=gr.themes.Default(), css=FOOOCUS_CSS, js=DARK_JS) as demo:
+    # Map nom_style -> URL de vignette (servie par Gradio) pour le preview au survol.
+    _sample_urls = {}
+    for n in STYLES:
+        p = _style_sample(n)
+        if p:
+            _sample_urls[n] = "/gradio_api/file=" + os.path.abspath(p).replace("\\", "/")
+    js_full = CZ_JS.replace("__MAP__", json.dumps(_sample_urls))
+
+    with gr.Blocks(title="crispz-studio", theme=gr.themes.Default(), css=FOOOCUS_CSS, js=js_full) as demo:
         with gr.Row():
             # ===== Colonne principale (apercu en haut, prompt + Generate, negative, input) =====
             with gr.Column(scale=3):
                 out = gr.Gallery(label="Result", elem_id="cz_result", height=620,
                                  columns=2, object_fit="contain", preview=True,
-                                 show_download_button=True)
+                                 allow_preview=False, show_download_button=True)
                 report = gr.Markdown(value="*Ready. Type a prompt and press Generate.*")
 
                 history = gr.State([])
@@ -1837,12 +1901,9 @@ def build_ui():
                     with gr.Tab("Styles"):
                         style_search = gr.Textbox(show_label=False, container=False,
                                                   placeholder="Search styles... (e.g. anime, cinematic, sai)")
+                        gr.Markdown("*Hover a style to preview it.*")
                         styles = gr.CheckboxGroup(list(STYLES), value=CONFIG.get("default_styles", []),
-                                                  label="Styles (combinable)")
-                        style_gallery = gr.Gallery(label="Previews (search to filter)", height=260,
-                                                   columns=4, object_fit="cover", show_download_button=False,
-                                                   value=[(_style_sample(n), n) for n in list(STYLES)[:40]
-                                                          if _style_sample(n)])
+                                                  label="Styles (combinable)", elem_id="cz_styles")
 
                     with gr.Tab("Prompt AI"):
                         ollama_url = gr.Textbox(value=OLLAMA_URL, label="Ollama URL",
@@ -1919,7 +1980,7 @@ def build_ui():
         use_input.change(lambda v: gr.update(visible=bool(v)), use_input, input_group)
         aspect.change(_set_aspect, [aspect], [width, height])
         performance.change(_set_performance, [performance], [gen_steps, guidance])
-        style_search.change(_filter_styles, [style_search, styles], [styles, style_gallery])
+        style_search.change(_filter_styles, [style_search, styles], [styles])
 
         # Actions
         refresh_btn.click(_refresh_models, [esrgan_dir_tb], [esrgan, paths_status])
@@ -2251,7 +2312,7 @@ def cli_main(argv=None):
 
     # Pas de --cli et pas d'entree -> UI
     if not args.cli and not args.input and not args.input_folder:
-        build_ui().launch()
+        build_ui().launch(allowed_paths=[os.path.join(HERE, "styles", "samples")])
         return 0
 
     if not models and not args.no_esrgan:
