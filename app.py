@@ -898,12 +898,35 @@ def _ui_generate(prompt, negative, use_input, input_image,
         _PROGRESS = None
 
 
+# Force le theme sombre au chargement (Fooocus est toujours sombre).
+DARK_JS = """
+() => {
+  const u = new URL(window.location.href);
+  if (u.searchParams.get('__theme') !== 'dark') {
+    u.searchParams.set('__theme', 'dark');
+    window.location.replace(u.toString());
+  }
+}
+"""
+
 FOOOCUS_CSS = """
-.gradio-container { max-width: 100% !important; width: 100% !important; padding: 0 1.2rem !important; }
-#cz_result { min-height: 540px; }
-#cz_result img { max-height: 78vh; object-fit: contain; }
-#cz_prompt textarea { font-size: 1.05rem; }
-#cz_generate { height: 88px; font-size: 1.1rem; }
+.gradio-container { max-width: 100% !important; width: 100% !important; padding: 0 1rem !important; }
+.dark, :root {
+  --body-background-fill: #0b1018;
+  --background-fill-primary: #0b1018;
+  --background-fill-secondary: #11182400;
+  --block-background-fill: #1a2233;
+  --block-border-color: #2a3346;
+  --border-color-primary: #2a3346;
+  --input-background-fill: #141b29;
+}
+#cz_result { min-height: 560px; }
+#cz_result img { max-height: 80vh; object-fit: contain; }
+#cz_prompt textarea, #cz_neg textarea { font-size: 1.04rem; }
+#cz_generate { min-height: 96px !important; height: 100% !important; font-size: 1.12rem; font-weight: 600;
+  background: linear-gradient(180deg,#5a6376,#3b4356) !important; color: #fff !important;
+  border: 1px solid #5d6884 !important; box-shadow: none !important; }
+#cz_generate:hover { background: linear-gradient(180deg,#69738a,#454e63) !important; }
 """
 
 
@@ -911,35 +934,53 @@ def build_ui():
     models = list_esrgan_models()
     default_model = DEFAULT_MODEL if DEFAULT_MODEL in models else (models[0] if models else None)
 
-    with gr.Blocks(title="crispz-studio", theme=gr.themes.Default(), css=FOOOCUS_CSS) as demo:
+    with gr.Blocks(title="crispz-studio", theme=gr.themes.Default(), css=FOOOCUS_CSS, js=DARK_JS) as demo:
         with gr.Row():
-            # ----- Colonne principale (grand apercu + barre de prompt en bas) -----
+            # ===== Colonne principale (apercu en haut, prompt + Generate, negative, input) =====
             with gr.Column(scale=3):
                 out = gr.Image(type="pil", label="Result", elem_id="cz_result",
-                               height=560, show_download_button=True)
+                               height=620, show_download_button=True)
                 report = gr.Markdown(value="*Ready. Type a prompt and press Generate.*")
-
-                use_input = gr.Checkbox(value=False, label="Input Image (img2img / upscale)")
-                with gr.Group(visible=False) as input_group:
-                    with gr.Row():
-                        inp = gr.Image(type="pil", label="Source image", height=240)
-                        with gr.Column():
-                            do_esrgan_cb = gr.Checkbox(value=True, label="ESRGAN upscale",
-                                                       info="Uncheck = img2img only (no enlargement).")
-                            preset = gr.Dropdown(list(PRESETS), value="Custom", label="Use case preset")
 
                 with gr.Row():
                     prompt = gr.Textbox(show_label=False, placeholder="Type your prompt here...",
                                         elem_id="cz_prompt", lines=2, scale=4, container=False)
-                    btn = gr.Button("Generate", variant="primary", elem_id="cz_generate", scale=1, min_width=120)
-                advanced_cb = gr.Checkbox(value=True, label="Advanced settings (uncheck to hide)")
+                    btn = gr.Button("Generate", elem_id="cz_generate", scale=1, min_width=150)
 
-            # ----- Colonne Advanced (a droite, visible par defaut) -----
-            with gr.Column(scale=2, visible=True) as advanced_col:
+                negative = gr.Textbox(show_label=False, elem_id="cz_neg", lines=1, container=False,
+                                      placeholder="Negative prompt - what you do NOT want (needs guidance > 0)")
+
+                with gr.Row():
+                    use_input = gr.Checkbox(value=False, label="Input Image", min_width=160)
+                    advanced_cb = gr.Checkbox(value=False, label="Advanced", min_width=160)
+
+                with gr.Group(visible=False) as input_group:
+                    with gr.Tabs():
+                        with gr.Tab("Upscale or img2img"):
+                            with gr.Row():
+                                inp = gr.Image(type="pil", label="Drop image here / click to upload", height=300)
+                                with gr.Column():
+                                    do_esrgan_cb = gr.Checkbox(value=True, label="ESRGAN upscale",
+                                                               info="Uncheck = img2img only (no enlargement).")
+                                    preset = gr.Dropdown(list(PRESETS), value="Custom", label="Use case preset")
+                                    esrgan = gr.Dropdown(models, value=default_model, label="ESRGAN model")
+                                    factor = gr.Slider(1.0, 4.0, value=DEFAULT_FACTOR, step=0.5, label="Upscale factor")
+                                    denoise = gr.Slider(0.0, 0.8, value=DEFAULT_DENOISE, step=0.01,
+                                                        label="Refine denoise (strength)")
+                                    refine_steps = gr.Slider(4, 30, value=DEFAULT_STEPS, step=1, label="Refine steps")
+                            with gr.Accordion("ESRGAN tiling (VRAM)", open=False):
+                                tile = gr.Slider(0, 1024, value=DEFAULT_TILE, step=8, label="Tile (0 = off)")
+                                overlap = gr.Slider(0, 128, value=DEFAULT_OVERLAP, step=8, label="Overlap")
+                            with gr.Accordion("Z-Image tiling (4K+)", open=False):
+                                refine_tile = gr.Slider(0, 2048, value=DEFAULT_REFINE_TILE, step=16,
+                                                        label="Diffusion tile (0 = whole image)")
+                                refine_overlap = gr.Slider(0, 256, value=DEFAULT_REFINE_OVERLAP, step=16,
+                                                           label="Diffusion tile overlap")
+
+            # ===== Colonne Advanced (a droite, masquee par defaut comme Fooocus) =====
+            with gr.Column(scale=2, visible=False) as advanced_col:
                 with gr.Tabs():
                     with gr.Tab("Setting"):
-                        negative = gr.Textbox(label="Negative prompt", lines=2,
-                                              placeholder="(needs guidance > 0)")
                         with gr.Row():
                             width = gr.Slider(256, 2048, value=1024, step=16, label="Width")
                             height = gr.Slider(256, 2048, value=1024, step=16, label="Height")
@@ -948,22 +989,7 @@ def build_ui():
                                              info="0 = Z-Image Turbo. Z-Image Base: ~3.5-5.")
                         seed = gr.Number(value=-1, label="Seed (-1 = random)", precision=0)
 
-                    with gr.Tab("Upscale / img2img"):
-                        esrgan = gr.Dropdown(models, value=default_model, label="ESRGAN model")
-                        factor = gr.Slider(1.0, 4.0, value=DEFAULT_FACTOR, step=0.5, label="Upscale factor")
-                        denoise = gr.Slider(0.0, 0.8, value=DEFAULT_DENOISE, step=0.01,
-                                            label="Refine denoise (strength)")
-                        refine_steps = gr.Slider(4, 30, value=DEFAULT_STEPS, step=1, label="Refine steps")
-                        with gr.Accordion("ESRGAN tiling (VRAM)", open=False):
-                            tile = gr.Slider(0, 1024, value=DEFAULT_TILE, step=8, label="Tile (0 = off)")
-                            overlap = gr.Slider(0, 128, value=DEFAULT_OVERLAP, step=8, label="Overlap")
-                        with gr.Accordion("Z-Image tiling (4K+)", open=False):
-                            refine_tile = gr.Slider(0, 2048, value=DEFAULT_REFINE_TILE, step=16,
-                                                    label="Diffusion tile (0 = whole image)")
-                            refine_overlap = gr.Slider(0, 256, value=DEFAULT_REFINE_OVERLAP, step=16,
-                                                       label="Diffusion tile overlap")
-
-                    with gr.Tab("Model"):
+                    with gr.Tab("Models"):
                         zimage_model_tb = gr.Textbox(
                             value=BASE_REPO,
                             label="Z-Image (HF repo, diffusers folder, or .safetensors file)",
