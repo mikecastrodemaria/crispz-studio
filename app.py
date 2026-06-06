@@ -1134,6 +1134,24 @@ def _ui_improve(prompt_text, model, url):
         return gr.update(), f"Improve failed: {e}"
 
 
+def _ui_clear_history():
+    """Vide l'historique de session (state + galerie)."""
+    return [], []
+
+
+def _ui_load_outputs(output_dir):
+    """Charge les images du dossier de sortie (plus recentes en tete) dans l'historique."""
+    d = output_dir or DEFAULT_OUTPUT_DIR
+    if not os.path.isabs(d):
+        d = os.path.join(HERE, d)
+    if not os.path.isdir(d):
+        return [], []
+    files = [os.path.join(d, f) for f in os.listdir(d) if f.lower().endswith(IMG_EXTS)]
+    files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    files = files[:200]
+    return files, files
+
+
 def _pil_to_b64_jpeg(img, max_side=1600, quality=85):
     """Reduit + encode en JPEG base64 pour embarquer en HTML sans saturer la page."""
     if img is None:
@@ -1219,15 +1237,20 @@ def _ui_generate(prompt, negative, styles, use_input, input_image,
                  width, height, gen_steps, image_number, seed, guidance, offload_mode,
                  esrgan_model, do_esrgan, factor, denoise, refine_steps,
                  tile, overlap, refine_tile, refine_overlap,
-                 save_mode, output_dir, output_format,
+                 save_mode, output_dir, output_format, history,
                  progress=gr.Progress(track_tqdm=True)):
-    """Bouton Generate unifie facon Fooocus: image d'entree -> img2img/upscale,
-    sinon txt2img (eventuellement N images via image_number). Renvoie (liste d'images,
-    report). Styles = wrappers de prompt. Avancement via gr.Progress."""
+    """Bouton Generate unifie facon Fooocus. Renvoie 4 sorties:
+    (images du run, report, history_state, history_gallery). L'historique accumule
+    les rendus de la session (plus recents en tete, cap 200)."""
     global _PROGRESS, _STOP
     _STOP = False
     _PROGRESS = lambda f, d: progress(f, desc=d)
     progress(0.0, desc="Starting...")
+
+    def _done(imgs, rep):
+        new_hist = (list(imgs) + list(history or []))[:200]
+        return imgs, rep, new_hist, new_hist
+
     try:
         set_offload_mode(offload_mode)
         set_guidance(guidance)
@@ -1247,7 +1270,7 @@ def _ui_generate(prompt, negative, styles, use_input, input_image,
                 tile, overlap, save_mode=save_mode, output_dir=output_dir,
                 output_format=output_format, refine_tile=refine_tile, refine_overlap=refine_overlap,
                 do_esrgan=bool(do_esrgan))
-            return [last_result], report
+            return _done([last_result], report)
         # txt2img (batch image_number)
         n = max(1, int(image_number))
         images, total_t = [], 0.0
@@ -1273,11 +1296,11 @@ def _ui_generate(prompt, negative, styles, use_input, input_image,
                     _dbg(f"save failed: {e}")
         progress(1.0, desc="Done")
         if not images:
-            return [], "Stopped before any image."
+            return _done([], "Stopped before any image.")
         suffix = " (stopped)" if _STOP else ""
         rep = (f"txt2img x{len(images)} - **{images[0].size[0]}x{images[0].size[1]}** "
                f"in **{total_t:.1f}s**{suffix}")
-        return images, rep
+        return _done(images, rep)
     finally:
         _PROGRESS = None
 
@@ -1326,6 +1349,14 @@ def build_ui():
                                  columns=2, object_fit="contain", preview=True,
                                  show_download_button=True)
                 report = gr.Markdown(value="*Ready. Type a prompt and press Generate.*")
+
+                history = gr.State([])
+                with gr.Accordion("History (this session)", open=False):
+                    history_gallery = gr.Gallery(label=None, height=240, columns=6,
+                                                 object_fit="cover", show_download_button=True)
+                    with gr.Row():
+                        load_out_btn = gr.Button("Load output folder", size="sm")
+                        clear_hist_btn = gr.Button("Clear history", size="sm")
 
                 with gr.Row():
                     prompt = gr.Textbox(show_label=False, value=CONFIG.get("default_prompt", ""),
@@ -1470,14 +1501,17 @@ def build_ui():
         # Stop facon Fooocus: tourne en parallele du Generate (thread separe) et pose
         # le flag d'arret + interrompt la boucle de debruitage en cours.
         stop_btn.click(request_stop, None, [report])
+        clear_hist_btn.click(_ui_clear_history, None, [history, history_gallery])
+        load_out_btn.click(_ui_load_outputs, [output_dir], [history, history_gallery])
         preset.change(_apply_preset, [preset],
                       [factor, denoise, refine_steps, tile, overlap, refine_tile, refine_overlap, offload])
         btn.click(
             _ui_generate,
             inputs=[prompt, negative, styles, use_input, inp, width, height, gen_steps, image_number,
                     seed, guidance, offload, esrgan, do_esrgan_cb, factor, denoise, refine_steps,
-                    tile, overlap, refine_tile, refine_overlap, save_mode, output_dir, output_format],
-            outputs=[out, report],
+                    tile, overlap, refine_tile, refine_overlap, save_mode, output_dir, output_format,
+                    history],
+            outputs=[out, report, history, history_gallery],
         )
     return demo
 
