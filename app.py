@@ -1933,7 +1933,11 @@ FOOOCUS_CSS = """
   --input-background-fill: #141b29;
 }
 #cz_result { min-height: 560px; }
-#cz_result img { max-height: 80vh; object-fit: contain; cursor: zoom-in; }
+/* Rendu: image entierement visible (contain), jamais plus grande que la zone, pas de cover. */
+#cz_result img { object-fit: contain !important; max-width: 100% !important;
+  max-height: 72vh !important; width: auto !important; height: auto !important; cursor: zoom-in; }
+#cz_result .thumbnail-item, #cz_result .thumbnail-item img, #cz_result button img {
+  object-fit: contain !important; }
 #cz_prompt textarea, #cz_neg textarea { font-size: 1.04rem; }
 #cz_generate { min-height: 96px !important; height: 100% !important; font-size: 1.12rem; font-weight: 600;
   background: linear-gradient(180deg,#5a6376,#3b4356) !important; color: #fff !important;
@@ -1945,7 +1949,7 @@ FOOOCUS_CSS = """
 .cz-style-preview { position: fixed; z-index: 10000; pointer-events: none;
   border: 1px solid #2a3346; border-radius: 8px; overflow: hidden;
   box-shadow: 0 6px 24px rgba(0,0,0,.6); background: #0b1018; }
-.cz-style-preview img { display: block; width: 220px; height: auto; }
+.cz-style-preview img { display: block; width: 110px; height: auto; }
 /* Lightbox plein ecran */
 .cz-lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.93); z-index: 10001;
   display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
