@@ -24,9 +24,13 @@ ollama_describe_prompt  Instruction sent to the vision model to caption an image
 ollama_improve_prompt   Instruction to rewrite/enrich the current prompt. Must
                         contain {prompt} (replaced by your prompt). Edit the tone
                         here (e.g. ask for photographic detail, a language, etc.).
-ollama_compose_prompt   Instruction for the Compose (LLM) tab ("poor-man's Omni"):
-                        merges the per-image descriptions into ONE prompt. Should
-                        contain {descriptions} (replaced by the list of captions).
+ollama_compose_prompt   Instruction for the Vision Mix tab: merges the per-image
+                        descriptions into ONE prompt. Should contain {descriptions}
+                        (replaced by the list of captions).
+ollama_vision_blocklist List of model-name substrings to EXCLUDE from the vision
+                        model list (Describe / Vision Mix), even if Ollama reports
+                        them as vision-capable. e.g. ["qwen3.6"] to hide a model
+                        that claims vision but doesn't work well.
 
 default_prompt          Prompt prefilled at startup.
 default_negative_prompt Negative prompt prefilled at startup.

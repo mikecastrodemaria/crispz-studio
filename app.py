@@ -150,21 +150,33 @@ def _ollama_http(path, payload=None, base=None, timeout=8):
 
 
 def _ollama_vision_models(base=None):
-    """Modeles Ollama capables de vision (capabilities=vision via /api/show)."""
+    """Modeles Ollama reellement capables de vision. On se fie a la capacite
+    'vision' rapportee par /api/show (source autoritaire d'Ollama). Si /api/show
+    echoue (vieille version), repli sur un nom clairement multimodal. On NE se fie
+    PAS aux familles (clip...) qui donnent des faux positifs (ex. qwen3.6)."""
+    _VISION_NAME = ("llava", "-vl", "vl:", "moondream", "minicpm-v", "bakllava",
+                    "llama3.2-vision", "llama-3.2-vision")
+    block = [b.lower() for b in (CONFIG.get("ollama_vision_blocklist") or []) if b]
     tags = _ollama_http("/api/tags", base=base, timeout=5)
     names = [m.get("name") for m in tags.get("models", []) if m.get("name")]
     vision = []
     for n in names:
+        if any(b in n.lower() for b in block):   # exclu par l'utilisateur (config)
+            continue
         try:
             info = _ollama_http("/api/show", {"model": n}, base=base, timeout=8)
             caps = [c.lower() for c in (info.get("capabilities") or [])]
-            fams = [(f or "").lower() for f in ((info.get("details") or {}).get("families") or [])]
-            if "vision" in caps or any(("clip" in f or "mllama" in f) for f in fams):
+            if "vision" in caps:               # verite Ollama -> on garde
                 vision.append(n)
+            elif not info.get("capabilities"):  # champ absent (vieux Ollama)
+                if any(k in n.lower() for k in _VISION_NAME):
+                    vision.append(n)
         except Exception:
-            if any(k in n.lower() for k in ("llava", "vision", "-vl", "vl:", "vl-",
-                                            "moondream", "minicpm-v", "bakllava", "lfm")):
+            if any(k in n.lower() for k in _VISION_NAME):
                 vision.append(n)
+    # Tri: vrais modeles vision "connus" (llava, *-vl, moondream...) d'abord, pour
+    # que le choix par defaut soit fiable.
+    vision.sort(key=lambda n: 0 if any(k in n.lower() for k in _VISION_NAME) else 1)
     return vision
 
 
@@ -2028,18 +2040,22 @@ def build_ui():
                                 "*Uses the Ollama vision model selected in Advanced > Prompt AI "
                                 "(or the local BLIP fallback if Ollama is off).*")
 
-                        with gr.Tab("Compose (LLM)"):
-                            gr.Markdown("*\"Poor-man's Omni\": describe each reference with the "
-                                        "vision model, then merge them into ONE prompt (Ollama, set "
-                                        "in Advanced > Prompt AI). Then press **Generate**.*")
+                        with gr.Tab("Vision Mix"):
+                            gr.Markdown("*Vision Mix: a vision model looks at your reference images "
+                                        "and an LLM blends them into ONE text prompt (e.g. a person + "
+                                        "an outfit + a setting), then Z-Image generates from it. "
+                                        "Needs Ollama with a vision model (Advanced > Prompt AI). "
+                                        "It mixes ideas/style, not exact pixels.*")
                             with gr.Row():
                                 cref1 = gr.Image(type="pil", label="Ref 1", height=180)
                                 cref2 = gr.Image(type="pil", label="Ref 2", height=180)
                             with gr.Row():
                                 cref3 = gr.Image(type="pil", label="Ref 3", height=180)
                                 cref4 = gr.Image(type="pil", label="Ref 4", height=180)
-                            compose_btn = gr.Button("Describe + combine -> prompt",
-                                                    variant="primary", size="sm")
+                            with gr.Row():
+                                compose_btn = gr.Button("Vision Mix -> prompt", size="sm")
+                                vmix_gen_btn = gr.Button("Vision Mix & Generate", variant="primary",
+                                                         size="sm")
                             compose_status = gr.Markdown("")
 
                         with gr.Tab("Remove BG"):
@@ -2242,16 +2258,19 @@ def build_ui():
         load_out_btn.click(_ui_load_outputs, [output_dir], [history, history_gallery])
         preset.change(_apply_preset, [preset],
                       [factor, denoise, refine_steps, tile, overlap, refine_tile, refine_overlap, offload])
-        btn.click(
-            _ui_generate,
-            inputs=[prompt, negative, styles, use_input, inp, input_mode, ref1, ref2, ref3, ref4,
-                    faceswap_enable, faceswap_src,
-                    width, height, gen_steps, image_number,
-                    seed, guidance, offload, esrgan, do_esrgan_cb, factor, denoise, refine_steps,
-                    tile, overlap, refine_tile, refine_overlap, save_mode, output_dir, output_format,
-                    history],
-            outputs=[out, report, history, history_gallery],
-        )
+        _gen_inputs = [prompt, negative, styles, use_input, inp, input_mode, ref1, ref2, ref3, ref4,
+                       faceswap_enable, faceswap_src,
+                       width, height, gen_steps, image_number,
+                       seed, guidance, offload, esrgan, do_esrgan_cb, factor, denoise, refine_steps,
+                       tile, overlap, refine_tile, refine_overlap, save_mode, output_dir, output_format,
+                       history]
+        _gen_outputs = [out, report, history, history_gallery]
+        btn.click(_ui_generate, inputs=_gen_inputs, outputs=_gen_outputs)
+        # Vision Mix & Generate: fusionne les refs en un prompt, puis genere (txt2img).
+        vmix_gen_btn.click(
+            _ui_compose, [cref1, cref2, cref3, cref4, ollama_model, ollama_url],
+            [prompt, compose_status]
+        ).then(_ui_generate, inputs=_gen_inputs, outputs=_gen_outputs)
     return demo
 
 
