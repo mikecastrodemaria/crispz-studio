@@ -625,12 +625,15 @@ def _ensure_base():
 
 
 def get_pipe(kind="img2img"):
-    """Renvoie le pipeline demande (txt2img / img2img / inpaint), derive du base
-    via from_pipe (composants partages, aucune VRAM en double)."""
+    """Renvoie le pipeline demande. txt2img/img2img/inpaint derivent du base via
+    from_pipe (poids partages). Omni a besoin de composants en plus (SigLIP) ->
+    charge separement depuis un modele Omni dedie (CONFIG['zimage_omni_model'])."""
     base = _ensure_base()
     if kind in _DERIVED:
         _dbg(f"get_pipe('{kind}'): reuse derived")
         return _DERIVED[kind]
+    if kind == "omni":
+        return _load_omni()
     from diffusers import ZImageImg2ImgPipeline, ZImageInpaintPipeline
     cls = {"img2img": ZImageImg2ImgPipeline, "inpaint": ZImageInpaintPipeline}.get(kind)
     if cls is None:
@@ -639,6 +642,64 @@ def get_pipe(kind="img2img"):
     p = cls.from_pipe(base)
     _DERIVED[kind] = p
     return p
+
+
+def _load_omni():
+    """Charge le pipeline Omni (multi-reference). Necessite un modele Z-Image
+    Omni/Edit (avec encodeur SigLIP) -> CONFIG['zimage_omni_model'] ou env
+    ZIMAGE_OMNI_MODEL. Pipeline separe (ne partage pas avec le base)."""
+    global _DERIVED
+    from diffusers import ZImageOmniPipeline
+    repo = (os.environ.get("ZIMAGE_OMNI_MODEL") or CONFIG.get("zimage_omni_model") or "").strip()
+    if not repo:
+        raise RuntimeError(
+            "Omni needs a dedicated Z-Image Omni/Edit model (it requires a SigLIP encoder "
+            "that the Turbo model does not ship). Set 'zimage_omni_model' in config.txt "
+            "(HF repo id or local diffusers folder).")
+    _log(f"loading Z-Image Omni: {repo} (offload={OFFLOAD_MODE}) ...")
+    t0 = time.time()
+    pipe = ZImageOmniPipeline.from_pretrained(repo, torch_dtype=DTYPE)
+    try:
+        pipe.enable_attention_slicing()
+    except Exception:
+        pass
+    if DEVICE == "cuda" and OFFLOAD_MODE == "model":
+        pipe.enable_model_cpu_offload()
+    elif DEVICE == "cuda" and OFFLOAD_MODE == "sequential":
+        pipe.enable_sequential_cpu_offload()
+    else:
+        pipe = pipe.to(DEVICE)
+    _DERIVED["omni"] = pipe
+    _log(f"Z-Image Omni ready in {time.time() - t0:.1f}s")
+    return pipe
+
+
+def generate_omni(refs, prompt, negative, width, height, steps, seed):
+    """Omni multi-reference: compose une image a partir de plusieurs images de
+    reference + un prompt (ex. personne + vetement). ZImageOmniPipeline natif."""
+    refs = [r for r in (refs or []) if r is not None]
+    if not refs:
+        raise ValueError("Omni needs at least one reference image.")
+    pipe = get_pipe("omni")
+    w = round_to_multiple(int(width))
+    h = round_to_multiple(int(height))
+    _log(f"omni: {len(refs)} ref(s) -> {w}x{h}, {int(steps)} steps, guidance {GUIDANCE:.1f} ...")
+    _progress(0.1, f"Omni compose ({len(refs)} refs)...")
+    t0 = time.time()
+    out = pipe(
+        image=[r.convert("RGB") for r in refs],
+        prompt=prompt or "",
+        negative_prompt=(negative or None),
+        width=w, height=h,
+        num_inference_steps=int(steps),
+        guidance_scale=GUIDANCE,
+        generator=_make_generator(seed),
+    ).images[0]
+    _log(f"omni done in {time.time() - t0:.1f}s")
+    gc.collect()
+    if DEVICE == "cuda":
+        torch.cuda.empty_cache()
+    return out
 
 
 def load_pipe():
@@ -1234,6 +1295,7 @@ def _ui_txt2img(prompt, negative, width, height, gen_steps, seed, guidance, upsc
 
 
 def _ui_generate(prompt, negative, styles, use_input, input_image,
+                 input_mode, ref1, ref2, ref3, ref4,
                  width, height, gen_steps, image_number, seed, guidance, offload_mode,
                  esrgan_model, do_esrgan, factor, denoise, refine_steps,
                  tile, overlap, refine_tile, refine_overlap,
@@ -1261,6 +1323,27 @@ def _ui_generate(prompt, negative, styles, use_input, input_image,
              f"size={int(width)}x{int(height)} gen_steps={int(gen_steps)} n={int(image_number)} "
              f"seed={int(seed)} guidance={float(guidance)} offload={offload_mode} styles={styles}")
         _dbg(f"prompt='{(full_prompt or '')[:160]}' | negative='{(negative or '')[:80]}'")
+        # --- Omni multi-reference (compo a partir de plusieurs images) ---
+        if use_input and input_mode == "Reference (Omni)":
+            refs = [r for r in [ref1, ref2, ref3, ref4] if r is not None]
+            _dbg(f"omni: {len(refs)} ref(s), size={int(width)}x{int(height)}")
+            if not refs:
+                return _done([], "Omni: add at least one reference image.")
+            try:
+                img = generate_omni(refs, full_prompt, full_negative, width, height, gen_steps, seed)
+            except Exception as e:
+                _log(f"omni error: {e}")
+                return _done([], f"Omni error: {e}")
+            if save_mode != "display":
+                try:
+                    dst = build_output_path(None, save_mode, output_dir, output_format,
+                                            tag="omni", seed=seed, size=img.size)
+                    if dst:
+                        save_image(img, dst, output_format)
+                        _dbg(f"saved: {dst}")
+                except Exception as e:
+                    _dbg(f"save failed: {e}")
+            return _done([img], f"omni - **{img.size[0]}x{img.size[1]}** from {len(refs)} ref(s)")
         if use_input and input_image is not None:
             _dbg(f"img2img: esrgan={esrgan_model} do_esrgan={do_esrgan} factor={factor} "
                  f"denoise={denoise} refine_steps={int(refine_steps)} tile={int(tile)} "
@@ -1379,6 +1462,10 @@ def build_ui():
                     advanced_cb = gr.Checkbox(value=False, label="Advanced", min_width=160)
 
                 with gr.Group(visible=False) as input_group:
+                    input_mode = gr.Radio(["Upscale / img2img", "Reference (Omni)"],
+                                          value="Upscale / img2img", label="Input mode",
+                                          info="Reference (Omni) = compose from several reference "
+                                               "images + prompt (e.g. a person + an outfit).")
                     with gr.Tabs():
                         with gr.Tab("Upscale or img2img"):
                             with gr.Row():
@@ -1407,6 +1494,17 @@ def build_ui():
                             describe_status = gr.Markdown(
                                 "*Uses the Ollama vision model selected in Advanced > Prompt AI "
                                 "(or the local BLIP fallback if Ollama is off).*")
+
+                        with gr.Tab("Reference (Omni)"):
+                            gr.Markdown("*Compose from up to 4 reference images + a prompt. "
+                                        "Set **Input mode = Reference (Omni)** above. "
+                                        "Uses width/height/steps/guidance from Settings.*")
+                            with gr.Row():
+                                ref1 = gr.Image(type="pil", label="Ref 1", height=220)
+                                ref2 = gr.Image(type="pil", label="Ref 2", height=220)
+                            with gr.Row():
+                                ref3 = gr.Image(type="pil", label="Ref 3", height=220)
+                                ref4 = gr.Image(type="pil", label="Ref 4", height=220)
 
             # ===== Colonne Advanced (a droite, masquee par defaut comme Fooocus) =====
             with gr.Column(scale=2, visible=False) as advanced_col:
@@ -1507,7 +1605,8 @@ def build_ui():
                       [factor, denoise, refine_steps, tile, overlap, refine_tile, refine_overlap, offload])
         btn.click(
             _ui_generate,
-            inputs=[prompt, negative, styles, use_input, inp, width, height, gen_steps, image_number,
+            inputs=[prompt, negative, styles, use_input, inp, input_mode, ref1, ref2, ref3, ref4,
+                    width, height, gen_steps, image_number,
                     seed, guidance, offload, esrgan, do_esrgan_cb, factor, denoise, refine_steps,
                     tile, overlap, refine_tile, refine_overlap, save_mode, output_dir, output_format,
                     history],

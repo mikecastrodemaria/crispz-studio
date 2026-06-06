@@ -24,6 +24,8 @@
     "default_refine_overlap": 64,
     "default_cpu_offload": "none",
 
+    "zimage_omni_model": "",
+
     "default_save_mode": "display",
     "default_output_dir": "out",
     "default_output_format": "png",
