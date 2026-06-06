@@ -2477,6 +2477,24 @@ def cli_main(argv=None):
     parser.add_argument("--negative", default="", help="Negative prompt (txt2img)")
     parser.add_argument("--upscale", action="store_true",
                         help="In --txt2img: run the ESRGAN + refine upscale on the generated image")
+    # Nouvelles features en CLI (mêmes que l'UI)
+    parser.add_argument("--lora", action="append", default=[], metavar="NAME[:WEIGHT]",
+                        help="Apply a LoRA (file in the loras dir, or a path), optional :weight "
+                             "(default 1.0). Repeatable, e.g. --lora a.safetensors:0.8 --lora b")
+    parser.add_argument("--loras-dir", help="Override the LoRA folder (for --lora names)")
+    parser.add_argument("--remove-bg", action="store_true",
+                        help="Remove the background of -i (rembg) -> transparent PNG, then exit.")
+    parser.add_argument("--reframe", metavar="W:H",
+                        help="Outpaint -i to a target aspect ratio (e.g. 16:9 / 9:16), then exit. "
+                             "--prompt guides the fill; --gen-steps sets the steps.")
+    parser.add_argument("--faceswap-src", metavar="PATH",
+                        help="Post-process: swap the face in the (txt2img/reframe) result with this "
+                             "source face. Needs insightface + an inswapper model.")
+    parser.add_argument("--vision-mix", nargs="+", metavar="IMG",
+                        help="Describe these reference images with an Ollama vision model and merge "
+                             "them into ONE prompt, then run txt2img from it.")
+    parser.add_argument("--ollama-model", help="Ollama vision model for --vision-mix "
+                                               "(default: first detected vision model)")
     # Server (stage 3)
     parser.add_argument("--serve", action="store_true",
                         help="Run a persistent HTTP server (lazy model load + idle unload) "
@@ -2529,6 +2547,73 @@ def cli_main(argv=None):
     set_offload_mode(args.cpu_offload)
     set_guidance(args.guidance)
 
+    # LoRA(s) en CLI: --lora NAME[:WEIGHT] (repetable)
+    if args.loras_dir:
+        set_loras_dir(args.loras_dir)
+    if args.lora:
+        slots = []
+        for spec in args.lora:
+            head, _, tail = spec.rpartition(":")
+            try:
+                slots.append((head, float(tail)))   # NAME:WEIGHT
+            except ValueError:
+                slots.append((spec, LORA_WEIGHT))    # NAME (poids par defaut)
+        set_loras(slots)
+
+    def _maybe_faceswap(img):
+        if args.faceswap_src and os.path.isfile(args.faceswap_src):
+            try:
+                return _faceswap(img, Image.open(args.faceswap_src))
+            except Exception as e:
+                _log(f"faceswap skipped: {e}")
+        return img
+
+    # --remove-bg : detoure -i puis termine
+    if args.remove_bg:
+        if not args.input or not os.path.isfile(args.input):
+            parser.error("--remove-bg requires -i <image>")
+        res = _remove_bg(Image.open(args.input))
+        sm = args.save_mode if args.save_mode != "display" else "local"
+        base = os.path.splitext(os.path.basename(args.input))[0]
+        dst = args.output if (args.output and not os.path.isdir(args.output)) else \
+            build_output_path(args.input, sm, args.output_dir, "png", tag=f"{base}_nobg")
+        save_image(res, dst, "png")
+        print(os.path.abspath(dst))
+        return 0
+
+    # --reframe W:H : outpaint -i puis termine
+    if args.reframe:
+        if not args.input or not os.path.isfile(args.input):
+            parser.error("--reframe requires -i <image>")
+        try:
+            rw, rh = [int(x) for x in str(args.reframe).split(":")]
+        except Exception:
+            parser.error("--reframe expects W:H, e.g. 16:9")
+        res = _maybe_faceswap(outpaint(Image.open(args.input), rw, rh, args.prompt,
+                                       args.gen_steps, args.seed))
+        sm = args.save_mode if args.save_mode != "display" else "local"
+        base = os.path.splitext(os.path.basename(args.input))[0]
+        dst = args.output if (args.output and not os.path.isdir(args.output)) else \
+            build_output_path(args.input, sm, args.output_dir, args.output_format,
+                              tag=f"{base}_reframe", seed=args.seed, size=res.size)
+        save_image(res, dst, args.output_format)
+        print(os.path.abspath(dst))
+        return 0
+
+    # --vision-mix IMG... : decrit + fusionne en un prompt, puis txt2img
+    if args.vision_mix:
+        imgs = [Image.open(p) for p in args.vision_mix if os.path.isfile(p)]
+        if not imgs:
+            parser.error("--vision-mix: no valid image path")
+        vmodel = args.ollama_model or (_ollama_vision_models() or [None])[0]
+        if not vmodel:
+            parser.error("--vision-mix needs an Ollama vision model (none detected)")
+        caps = [_ollama_describe(im, vmodel) for im in imgs]
+        args.prompt = _ollama_compose(caps, vmodel)
+        args.txt2img = True
+        if not (args.quiet or args.print_output):
+            print(f"[vision-mix] {vmodel} -> {args.prompt}", file=sys.stderr)
+
     if args.serve:
         return serve_main(args.host, args.port, args.idle_timeout)
 
@@ -2551,6 +2636,7 @@ def cli_main(argv=None):
             factor=args.factor, denoise=args.denoise, steps=args.steps,
             tile=args.tile, overlap=args.overlap,
             refine_tile=args.refine_tile, refine_overlap=args.refine_overlap)
+        result = _maybe_faceswap(result)
         # Sortie : -o fichier, sinon output_dir (sauf save-mode display)
         dst = None
         if args.output and not (os.path.isdir(args.output) or args.output.endswith(("/", "\\"))):

@@ -22,6 +22,9 @@ SwarmUI. On top of crispz's upscaler it adds:
 
 Tabbed Gradio UI + scriptable CLI + persistent server (`--serve`).
 
+> **CLI cheat sheet:** see **[README_CLI.md](README_CLI.md)** for one-block examples of
+> every mode (txt2img, upscale, LoRA, Vision Mix, Remove BG, Reframe, Face Swap, server).
+
 > Roadmap status: **Phase 3** (FaceSwap) is implemented and works. **Phase 2**
 > (Omni multi-reference) is coded but **its UI stays hidden** until a Z-Image
 > Omni/Edit model is released (none yet) — use **img2img** for a reference image
