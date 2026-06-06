@@ -22,9 +22,11 @@ SwarmUI. On top of crispz's upscaler it adds:
 
 Tabbed Gradio UI + scriptable CLI + persistent server (`--serve`).
 
-> Roadmap status: **Phase 2** (Omni multi-reference) and **Phase 3** (FaceSwap)
-> are implemented (gated on the required model/deps — see below). ControlNet and
-> Inpaint are next. See the parent crispz repo for the upscale internals.
+> Roadmap status: **Phase 3** (FaceSwap) is implemented and works. **Phase 2**
+> (Omni multi-reference) is coded but **its UI stays hidden** until a Z-Image
+> Omni/Edit model is released (none yet) — use **img2img** for a reference image
+> in the meantime. ControlNet / Inpaint are next. See the parent crispz repo for
+> the upscale internals.
 
 ## Configuration (`config.txt`)
 
@@ -50,14 +52,33 @@ prompts, the Omni / FaceSwap model paths, etc.).
 - **Improve prompt**: rewrites the current prompt via the same Ollama model. URL +
   model in Advanced → **Prompt AI**. Tune the instructions in `config.txt`.
 
-## Reference (Omni) — multi-image compose  *(Phase 2)*
+## Using a reference image (multi-reference status)
 
-Compose one image from several references + a prompt (e.g. a person + an outfit).
-Check **Input Image** → **Input mode = Reference (Omni)** → drop up to 4 refs.
+**Available now — img2img.** To guide generation with a reference image, use
+**Input Image → Upscale or img2img** (uncheck "ESRGAN upscale" for a pure
+img2img refine). One reference image + your prompt.
 
-> Omni needs a **dedicated Z-Image Omni/Edit model** (it requires a SigLIP encoder
-> the Turbo model lacks). Set it in `config.txt`:
-> `"zimage_omni_model": "<HF repo or local diffusers folder>"`. Unset → clear message.
+**Multi-reference compose (person + outfit, etc.)** needs a model that can read
+several reference images. The options and their status for Z-Image:
+
+| Approach | Status for Z-Image |
+|---|---|
+| **Omni** (`ZImageOmniPipeline`, native multi-ref) | code ready; **model not released** (Z-Image-Omni-Base / Z-Image-Edit "coming soon") |
+| **ControlNet** (`ZImageControlNetPipeline`) | pipeline exists; **no Z-Image ControlNet model yet** |
+| **IP-Adapter** (what Fooocus uses for image prompts on SDXL) | **none for Z-Image yet** |
+
+Fooocus's "Image Prompt / multi-reference" relies on **IP-Adapter + ControlNet**,
+which are SDXL-family components — they don't apply to Z-Image. So for Z-Image the
+only reference path today is **img2img**; true multi-reference waits on the models
+above.
+
+### Reference (Omni) — hidden until a model exists
+
+The **Reference (Omni)** tab is **hidden by default** (no usable model). The code
+is in place: once a Z-Image Omni/Edit model ships, set it in `config.txt`
+(`"zimage_omni_model": "<HF repo or local diffusers folder>"`) **and restart** —
+the tab appears and multi-reference works. Use **Models → Check Omni availability**
+to see if it has been released.
 
 ## Face Swap — post-process  *(Phase 3, optional)*
 

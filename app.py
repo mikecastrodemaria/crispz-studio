@@ -1780,6 +1780,8 @@ def build_ui():
         if p:
             _sample_urls[n] = "/gradio_api/file=" + os.path.abspath(p).replace("\\", "/")
     js_full = CZ_JS.replace("__MAP__", json.dumps(_sample_urls))
+    # Omni (multi-reference) propose seulement si un modele Omni/Edit est configure.
+    omni_on = bool((OMNI_MODEL or "").strip())
 
     with gr.Blocks(title="crispz-studio", theme=gr.themes.Default(), css=FOOOCUS_CSS, js=js_full) as demo:
         with gr.Row():
@@ -1819,10 +1821,10 @@ def build_ui():
                     advanced_cb = gr.Checkbox(value=False, label="Advanced", min_width=160)
 
                 with gr.Group(visible=False) as input_group:
-                    input_mode = gr.Radio(["Upscale / img2img", "Reference (Omni)"],
-                                          value="Upscale / img2img", label="Input mode",
-                                          info="Reference (Omni) = compose from several reference "
-                                               "images + prompt (e.g. a person + an outfit).")
+                    input_mode = gr.Radio(
+                        ["Upscale / img2img"] + (["Reference (Omni)"] if omni_on else []),
+                        value="Upscale / img2img", label="Input mode", visible=omni_on,
+                        info="Reference (Omni) = compose from several reference images + prompt.")
                     with gr.Tabs():
                         with gr.Tab("Upscale or img2img"):
                             with gr.Row():
@@ -1852,13 +1854,10 @@ def build_ui():
                                 "*Uses the Ollama vision model selected in Advanced > Prompt AI "
                                 "(or the local BLIP fallback if Ollama is off).*")
 
-                        with gr.Tab("Reference (Omni)"):
+                        with gr.Tab("Reference (Omni)", visible=omni_on):
                             gr.Markdown("*Compose from up to 4 reference images + a prompt. "
                                         "Set **Input mode = Reference (Omni)** above. "
                                         "Uses width/height/steps/guidance from Settings.*")
-                            gr.Markdown("> Needs a Z-Image Omni/Edit model (with SigLIP). Not yet "
-                                        "released by Tongyi - check below; set it in Models > Omni "
-                                        "once available.")
                             with gr.Row():
                                 omni_check_btn2 = gr.Button("Check Omni model availability", size="sm")
                                 omni_status2 = gr.Markdown("")
@@ -1967,10 +1966,13 @@ def build_ui():
                         lora_status = gr.Markdown("")
 
                         gr.Markdown("### Omni / Edit model (multi-reference)")
+                        gr.Markdown("*The Reference (Omni) tab stays hidden until a model is set "
+                                    "here (then restart). Z-Image-Omni-Base / Z-Image-Edit are not "
+                                    "released yet. For a reference image now, use img2img.*")
                         omni_model_tb = gr.Textbox(value=CONFIG.get("zimage_omni_model", ""),
                                                    label="Omni model (HF repo or local folder)",
-                                                   info="Needs SigLIP. Z-Image-Omni-Base / Z-Image-Edit "
-                                                        "(coming soon).")
+                                                   info="Needs SigLIP. Set it then restart to enable "
+                                                        "the Reference (Omni) tab.")
                         omni_check_btn = gr.Button("Check Omni availability (Hugging Face)", size="sm")
                         omni_status = gr.Markdown("")
 
