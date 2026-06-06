@@ -152,20 +152,18 @@ def _ollama_describe(image, model, base=None):
     """Decrit l'image en un prompt text-to-image via un modele vision Ollama."""
     _dbg(f"ollama describe: url={base or OLLAMA_URL} model={model}")
     b64 = _pil_to_b64_jpeg(image, max_side=1024)
-    instr = ("You are an expert text-to-image prompt writer. Look at the image and output ONE "
-             "detailed prompt as comma-separated visual tags (subject, clothing, setting, lighting, "
-             "style, quality). No preamble, no explanation, just the prompt.")
     out = _ollama_http("/api/generate",
-                       {"model": model, "prompt": instr, "images": [b64], "stream": False},
+                       {"model": model, "prompt": DESCRIBE_INSTRUCTION, "images": [b64], "stream": False},
                        base=base, timeout=180)
     return (out.get("response") or "").strip()
 
 
 def _ollama_improve(prompt_text, model, base=None):
-    """Reecrit un prompt pour le rendre plus riche, via Ollama (modele texte/vision)."""
-    instr = ("Rewrite the following text-to-image prompt to be more vivid and detailed while keeping "
-             "the same subject and intent. Output ONLY the improved prompt (comma-separated), no "
-             "preamble.\n\nPROMPT: " + (prompt_text or ""))
+    """Reecrit un prompt pour le rendre plus riche, via Ollama (modele texte/vision).
+    Instruction editable dans config.txt (ollama_improve_prompt, {prompt} = le prompt)."""
+    pt = prompt_text or ""
+    instr = (IMPROVE_INSTRUCTION.replace("{prompt}", pt) if "{prompt}" in IMPROVE_INSTRUCTION
+             else f"{IMPROVE_INSTRUCTION}\n\nPROMPT: {pt}")
     out = _ollama_http("/api/generate", {"model": model, "prompt": instr, "stream": False},
                        base=base, timeout=120)
     return (out.get("response") or "").strip()
@@ -228,6 +226,49 @@ def _load_styles():
 STYLES = _load_styles() or _FALLBACK_STYLES
 
 
+CONFIG_PATH = os.path.join(HERE, "config.txt")
+
+
+def _load_config():
+    """Charge config.txt (JSON, facon Fooocus): defauts + strings d'instruction
+    Ollama (describe / improve). Absent ou invalide -> {} (les valeurs codees servent
+    de repli)."""
+    if not os.path.isfile(CONFIG_PATH):
+        return {}
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+CONFIG = _load_config()
+
+# Defauts pilotes par config.txt (repli sur les constantes deja definies plus haut).
+DEFAULT_FACTOR = float(CONFIG.get("default_factor", DEFAULT_FACTOR))
+DEFAULT_DENOISE = float(CONFIG.get("default_denoise", DEFAULT_DENOISE))
+DEFAULT_STEPS = int(CONFIG.get("default_refine_steps", DEFAULT_STEPS))
+DEFAULT_TILE = int(CONFIG.get("default_tile", DEFAULT_TILE))
+DEFAULT_OVERLAP = int(CONFIG.get("default_overlap", DEFAULT_OVERLAP))
+DEFAULT_REFINE_TILE = int(CONFIG.get("default_refine_tile", DEFAULT_REFINE_TILE))
+DEFAULT_REFINE_OVERLAP = int(CONFIG.get("default_refine_overlap", DEFAULT_REFINE_OVERLAP))
+DEFAULT_SAVE_MODE = CONFIG.get("default_save_mode", DEFAULT_SAVE_MODE)
+DEFAULT_OUTPUT_DIR = CONFIG.get("default_output_dir", DEFAULT_OUTPUT_DIR)
+DEFAULT_OUTPUT_FORMAT = CONFIG.get("default_output_format", DEFAULT_OUTPUT_FORMAT)
+
+# Strings d'instruction Ollama (editable dans config.txt).
+DESCRIBE_INSTRUCTION = CONFIG.get(
+    "ollama_describe_prompt",
+    "You are an expert text-to-image prompt writer. Look at the image and output ONE "
+    "detailed prompt as comma-separated visual tags (subject, clothing, setting, lighting, "
+    "style, quality). No preamble, no explanation, just the prompt.")
+IMPROVE_INSTRUCTION = CONFIG.get(
+    "ollama_improve_prompt",
+    "Rewrite the following text-to-image prompt to be more vivid and detailed while keeping "
+    "the same subject and intent. Output ONLY the improved prompt (comma-separated), no "
+    "preamble.\n\nPROMPT: {prompt}")
+
+
 def _load_prefs_raw():
     if not os.path.isfile(PREFS_PATH):
         return {}
@@ -267,7 +308,8 @@ else:
 
 ESRGAN_DIR = os.environ.get("ESRGAN_DIR") or _prefs.get("esrgan_dir") or DEFAULT_ESRGAN_DIR
 # Ollama (Describe image->prompt + Improve prompt). URL configurable, persistee.
-OLLAMA_URL = os.environ.get("OLLAMA_URL") or _prefs.get("ollama_url") or "http://localhost:11434"
+OLLAMA_URL = (os.environ.get("OLLAMA_URL") or _prefs.get("ollama_url")
+              or CONFIG.get("ollama_url") or "http://localhost:11434")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DTYPE = torch.bfloat16
 
@@ -309,7 +351,7 @@ def _parse_log_level(v, default=1):
     return _LOG_NAMES.get(str(v).strip().lower(), default)
 
 
-LOG_LEVEL = _parse_log_level(os.environ.get("CRISPZ_LOG_LEVEL"), 1)
+LOG_LEVEL = _parse_log_level(os.environ.get("CRISPZ_LOG_LEVEL") or CONFIG.get("log_level"), 1)
 VERBOSE = True  # back-compat (non utilise pour le gating)
 
 
@@ -1233,13 +1275,15 @@ def build_ui():
                 report = gr.Markdown(value="*Ready. Type a prompt and press Generate.*")
 
                 with gr.Row():
-                    prompt = gr.Textbox(show_label=False, placeholder="Type your prompt here...",
+                    prompt = gr.Textbox(show_label=False, value=CONFIG.get("default_prompt", ""),
+                                        placeholder="Type your prompt here...",
                                         elem_id="cz_prompt", lines=2, scale=4, container=False)
                     with gr.Column(scale=1, min_width=150):
                         btn = gr.Button("Generate", elem_id="cz_generate", min_width=150)
                         stop_btn = gr.Button("Stop", variant="stop", size="sm", min_width=150)
 
-                negative = gr.Textbox(show_label=False, elem_id="cz_neg", lines=1, container=False,
+                negative = gr.Textbox(show_label=False, value=CONFIG.get("default_negative_prompt", ""),
+                                      elem_id="cz_neg", lines=1, container=False,
                                       placeholder="Negative prompt - what you do NOT want (needs guidance > 0)")
 
                 with gr.Row():
@@ -1284,23 +1328,32 @@ def build_ui():
             with gr.Column(scale=2, visible=False) as advanced_col:
                 with gr.Tabs():
                     with gr.Tab("Settings"):
-                        performance = gr.Radio(list(PERFORMANCE), value="Turbo (8 steps)",
+                        performance = gr.Radio(list(PERFORMANCE),
+                                               value=CONFIG.get("default_performance", "Turbo (8 steps)"),
                                                label="Performance",
                                                info="Sets steps + guidance. Turbo = your Turbo model; "
                                                     "Base CFG = for a Z-Image Base checkpoint.")
-                        aspect = gr.Dropdown(list(ASPECT_RATIOS), value="1024 x 1024  (1:1)",
+                        aspect = gr.Dropdown(list(ASPECT_RATIOS),
+                                             value=CONFIG.get("default_aspect_ratio", "1024 x 1024  (1:1)"),
                                              label="Aspect ratio")
                         with gr.Row():
-                            width = gr.Slider(256, 2048, value=1024, step=16, label="Width")
-                            height = gr.Slider(256, 2048, value=1024, step=16, label="Height")
-                        gen_steps = gr.Slider(2, 40, value=8, step=1, label="Generation steps (txt2img)")
-                        guidance = gr.Slider(0.0, 8.0, value=0.0, step=0.5, label="CFG guidance",
+                            width = gr.Slider(256, 2048, value=int(CONFIG.get("default_width", 1024)),
+                                              step=16, label="Width")
+                            height = gr.Slider(256, 2048, value=int(CONFIG.get("default_height", 1024)),
+                                               step=16, label="Height")
+                        gen_steps = gr.Slider(2, 40, value=int(CONFIG.get("default_gen_steps", 8)),
+                                              step=1, label="Generation steps (txt2img)")
+                        guidance = gr.Slider(0.0, 8.0, value=float(CONFIG.get("default_guidance", 0.0)),
+                                             step=0.5, label="CFG guidance",
                                              info="0 = Z-Image Turbo. Z-Image Base: ~3.5-5.")
-                        image_number = gr.Slider(1, 30, value=1, step=1, label="Image number (batch)")
-                        seed = gr.Number(value=-1, label="Seed (-1 = random)", precision=0)
+                        image_number = gr.Slider(1, 30, value=int(CONFIG.get("default_image_number", 1)),
+                                                 step=1, label="Image number (batch)")
+                        seed = gr.Number(value=int(CONFIG.get("default_seed", -1)),
+                                         label="Seed (-1 = random)", precision=0)
 
                     with gr.Tab("Styles"):
-                        styles = gr.CheckboxGroup(list(STYLES), value=[], label="Styles",
+                        styles = gr.CheckboxGroup(list(STYLES), value=CONFIG.get("default_styles", []),
+                                                  label="Styles",
                                                   info="Wraps your prompt with style words (combinable).")
 
                     with gr.Tab("Prompt AI"):

@@ -1,0 +1,32 @@
+{
+    "ollama_url": "http://localhost:11434",
+    "ollama_describe_prompt": "You are an expert text-to-image prompt writer. Look at the image and output ONE detailed prompt as comma-separated visual tags (subject, clothing, setting, lighting, style, quality). No preamble, no explanation, just the prompt.",
+    "ollama_improve_prompt": "Rewrite the following text-to-image prompt to be more vivid and detailed while keeping the same subject and intent. Output ONLY the improved prompt (comma-separated), no preamble.\n\nPROMPT: {prompt}",
+
+    "default_prompt": "",
+    "default_negative_prompt": "",
+    "default_styles": [],
+    "default_aspect_ratio": "1024 x 1024  (1:1)",
+    "default_performance": "Turbo (8 steps)",
+    "default_width": 1024,
+    "default_height": 1024,
+    "default_gen_steps": 8,
+    "default_guidance": 0.0,
+    "default_image_number": 1,
+    "default_seed": -1,
+
+    "default_factor": 2.0,
+    "default_denoise": 0.30,
+    "default_refine_steps": 12,
+    "default_tile": 760,
+    "default_overlap": 32,
+    "default_refine_tile": 0,
+    "default_refine_overlap": 64,
+    "default_cpu_offload": "none",
+
+    "default_save_mode": "display",
+    "default_output_dir": "out",
+    "default_output_format": "png",
+
+    "log_level": "info"
+}
