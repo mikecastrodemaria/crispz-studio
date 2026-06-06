@@ -209,6 +209,49 @@ def _local_caption(image):
     out = mdl.generate(**inputs, max_new_tokens=50)
     return proc.decode(out[0], skip_special_tokens=True).strip()
 
+
+# ----------------------------------------------------------------------------
+# FaceSwap (post-process, optionnel). InsightFace + modele inswapper. Active
+# seulement si insightface/onnxruntime sont installes ET faceswap_model_path
+# pointe sur un inswapper (.onnx). Sinon -> message clair (feature gated).
+# ----------------------------------------------------------------------------
+_FACE_APP = None
+_FACE_SWAPPER = None
+
+
+def _faceswap(target_img, source_img):
+    """Remplace le(s) visage(s) de target_img par celui de source_img."""
+    global _FACE_APP, _FACE_SWAPPER
+    try:
+        import insightface
+        from insightface.app import FaceAnalysis
+    except Exception:
+        raise RuntimeError("insightface not installed (pip install insightface onnxruntime-gpu).")
+    model_path = (os.environ.get("FACESWAP_MODEL") or CONFIG.get("faceswap_model_path") or "").strip()
+    if not model_path or not os.path.isfile(model_path):
+        raise RuntimeError("Set 'faceswap_model_path' in config.txt to an inswapper .onnx file.")
+    if _FACE_APP is None:
+        _log("loading insightface buffalo_l (face detection) ...")
+        app = FaceAnalysis(name="buffalo_l")
+        app.prepare(ctx_id=0 if DEVICE == "cuda" else -1, det_size=(640, 640))
+        _FACE_APP = app
+    if _FACE_SWAPPER is None:
+        _log(f"loading inswapper: {model_path}")
+        _FACE_SWAPPER = insightface.model_zoo.get_model(model_path)
+    tgt = np.asarray(target_img.convert("RGB"))[:, :, ::-1].copy()  # RGB -> BGR
+    src = np.asarray(source_img.convert("RGB"))[:, :, ::-1].copy()
+    src_faces = _FACE_APP.get(src)
+    if not src_faces:
+        raise RuntimeError("No face found in the source image.")
+    src_face = max(src_faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+    tgt_faces = _FACE_APP.get(tgt)
+    if not tgt_faces:
+        raise RuntimeError("No face found in the generated image.")
+    res = tgt
+    for f in tgt_faces:
+        res = _FACE_SWAPPER.get(res, f, src_face, paste_back=True)
+    return Image.fromarray(res[:, :, ::-1])  # BGR -> RGB
+
 # ----------------------------------------------------------------------------
 # Config (persistance dans preferences.json a cote de app.py)
 # Ordre de priorite pour ESRGAN_DIR et BASE_REPO:
@@ -1295,7 +1338,7 @@ def _ui_txt2img(prompt, negative, width, height, gen_steps, seed, guidance, upsc
 
 
 def _ui_generate(prompt, negative, styles, use_input, input_image,
-                 input_mode, ref1, ref2, ref3, ref4,
+                 input_mode, ref1, ref2, ref3, ref4, faceswap_enable, faceswap_src,
                  width, height, gen_steps, image_number, seed, guidance, offload_mode,
                  esrgan_model, do_esrgan, factor, denoise, refine_steps,
                  tile, overlap, refine_tile, refine_overlap,
@@ -1310,6 +1353,21 @@ def _ui_generate(prompt, negative, styles, use_input, input_image,
     progress(0.0, desc="Starting...")
 
     def _done(imgs, rep):
+        # FaceSwap post-process (optionnel, gated). S'applique a tous les modes.
+        if faceswap_enable and faceswap_src is not None and imgs:
+            try:
+                imgs = [_faceswap(im, faceswap_src) for im in imgs]
+                rep += " + faceswap"
+                if save_mode != "display":
+                    for k, im in enumerate(imgs):
+                        dst = build_output_path(None, save_mode, output_dir, output_format,
+                                                tag="faceswap", seed=seed, size=im.size,
+                                                index=(k + 1 if len(imgs) > 1 else 0))
+                        if dst:
+                            save_image(im, dst, output_format)
+            except Exception as e:
+                _log(f"faceswap error: {e}")
+                rep += f"  \n[faceswap skipped: {e}]"
         new_hist = (list(imgs) + list(history or []))[:200]
         return imgs, rep, new_hist, new_hist
 
@@ -1506,6 +1564,14 @@ def build_ui():
                                 ref3 = gr.Image(type="pil", label="Ref 3", height=220)
                                 ref4 = gr.Image(type="pil", label="Ref 4", height=220)
 
+                        with gr.Tab("Face Swap"):
+                            gr.Markdown("*Post-process: replace the face in the result with this "
+                                        "source face. Works on any mode (txt2img / img2img / omni). "
+                                        "Needs `insightface` + `onnxruntime-gpu` installed and "
+                                        "`faceswap_model_path` (inswapper .onnx) set in config.txt.*")
+                            faceswap_src = gr.Image(type="pil", label="Source face", height=240)
+                            faceswap_enable = gr.Checkbox(value=False, label="Apply face swap to result")
+
             # ===== Colonne Advanced (a droite, masquee par defaut comme Fooocus) =====
             with gr.Column(scale=2, visible=False) as advanced_col:
                 with gr.Tabs():
@@ -1606,6 +1672,7 @@ def build_ui():
         btn.click(
             _ui_generate,
             inputs=[prompt, negative, styles, use_input, inp, input_mode, ref1, ref2, ref3, ref4,
+                    faceswap_enable, faceswap_src,
                     width, height, gen_steps, image_number,
                     seed, guidance, offload, esrgan, do_esrgan_cb, factor, denoise, refine_steps,
                     tile, overlap, refine_tile, refine_overlap, save_mode, output_dir, output_format,

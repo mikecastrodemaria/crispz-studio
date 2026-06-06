@@ -25,6 +25,7 @@
     "default_cpu_offload": "none",
 
     "zimage_omni_model": "",
+    "faceswap_model_path": "",
 
     "default_save_mode": "display",
     "default_output_dir": "out",
