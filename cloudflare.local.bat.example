@@ -1,0 +1,17 @@
+@echo off
+REM ============================================================================
+REM  Config Cloudflare LOCALE pour run_quality_rtx5090_web.bat
+REM  COPIE ce fichier en  cloudflare.local.bat  (gitignore, JAMAIS versionne)
+REM  et mets TES valeurs. Ne committe jamais ton nom de tunnel / domaine.
+REM ============================================================================
+
+REM Nom de ton tunnel cloudflared nomme :
+REM   cloudflared tunnel create mon-tunnel
+REM   (puis route mon-domaine -> http://localhost:%CF_PORT% via le dashboard / config.yml)
+set "CF_TUNNEL=mon-tunnel"
+
+REM Port local expose (doit matcher le serveur)
+set "CF_PORT=7860"
+
+REM Laisse CF_TUNNEL vide (set "CF_TUNNEL=") pour un quick tunnel ephemere
+REM (URL aleatoire *.trycloudflare.com, aucune config ni domaine perso requis).

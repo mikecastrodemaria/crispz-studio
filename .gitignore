@@ -11,6 +11,10 @@ preferences.json
 #     config-sample.txt ; config.txt reste local (copie/edite par l'utilisateur). ---
 config.txt
 
+# --- Cloudflare perso (nom de tunnel / domaine). On versionne UNIQUEMENT
+#     cloudflare.local.bat.example ; le .bat reel reste local. ---
+cloudflare.local.bat
+
 # --- Docs internes / perso (gardes hors du repo, non transmis a GitHub) ---
 # Les fichiers vivent un niveau au-dessus (../). Ces patterns evitent une
 # re-inclusion accidentelle si un .md interne est recree dans le repo.

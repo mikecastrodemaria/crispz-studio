@@ -25,6 +25,24 @@ Tabbed Gradio UI + scriptable CLI + persistent server (`--serve`).
 > **CLI cheat sheet:** see **[README_CLI.md](README_CLI.md)** for one-block examples of
 > every mode (txt2img, upscale, LoRA, Vision Mix, Remove BG, Reframe, Face Swap, server).
 
+### Launchers (Windows)
+
+| Script | What it does |
+|---|---|
+| `run.bat` | Standard local launch (127.0.0.1:7860). |
+| `boot_check_rtx5090.bat` | GPU / venv / torch / models diagnostic, then launch. |
+| `run_quality_rtx5090.bat` | Local launch + RTX-5090 CUDA env. |
+| `run_quality_rtx5090_lan.bat` | **LAN**: listens on `0.0.0.0`, prints your LAN URL. |
+| `run_quality_rtx5090_web.bat` | **Web via Cloudflare tunnel** (named tunnel or ephemeral quick tunnel). |
+
+They set `GRADIO_SERVER_NAME` / `GRADIO_SERVER_PORT` (Gradio reads them) and call `run.bat`.
+
+**Cloudflare (private):** the web launcher reads `cloudflare.local.bat` (your tunnel
+name/port) — this file is **gitignored**, never committed. Copy
+`cloudflare.local.bat.example` to `cloudflare.local.bat` and fill it in. Leave
+`CF_TUNNEL` empty for an ephemeral `*.trycloudflare.com` quick tunnel (no personal
+config). Needs `cloudflared` (`winget install --id Cloudflare.cloudflared`).
+
 > Roadmap status: **Phase 3** (FaceSwap) is implemented and works. **Phase 2**
 > (Omni multi-reference) is coded but **its UI stays hidden** until a Z-Image
 > Omni/Edit model is released (none yet) — use **img2img** for a reference image
