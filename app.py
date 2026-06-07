@@ -1814,10 +1814,14 @@ def _apply_zimage(repo):
 
 
 def _refresh_checkpoints(new_dir):
-    """Change le dossier checkpoints + liste les modeles Z-Image single-file."""
+    """Change le dossier checkpoints + liste les modeles + persiste."""
     set_checkpoints_dir(new_dir)
+    try:
+        _save_prefs_keys({"checkpoints_dir": CHECKPOINTS_DIR})
+    except Exception:
+        pass
     cks = list_checkpoints()
-    return gr.update(choices=["(base repo)"] + cks), f"{len(cks)} checkpoint(s) in {CHECKPOINTS_DIR}"
+    return gr.update(choices=["(base repo)"] + cks), f"{len(cks)} checkpoint(s) in {CHECKPOINTS_DIR} (saved)."
 
 
 def _apply_checkpoint(name):
@@ -1853,10 +1857,15 @@ def _wild_sanitize(name):
 
 
 def _ui_wild_refresh(new_dir):
-    """Change le dossier + rafraichit le dropdown de tous les wildcards."""
+    """Change le dossier + rafraichit le dropdown de tous les wildcards + persiste."""
     set_wildcards_dir(new_dir)
+    try:
+        _save_prefs_keys({"wildcards_dir": WILDCARDS_DIR})
+    except Exception:
+        pass
     w = list_wildcards()
-    return gr.update(choices=["None"] + w, value="None"), f"{len(w)} wildcard file(s) in {WILDCARDS_DIR}."
+    return gr.update(choices=["None"] + w, value="None"), \
+        f"{len(w)} wildcard file(s) in {WILDCARDS_DIR} (saved)."
 
 
 def _ui_wild_load(name):
@@ -1912,11 +1921,15 @@ def _ui_wild_create(newname, content):
 
 
 def _refresh_loras(new_dir):
-    """Change le dossier loras + liste les LoRA (met a jour les 3 slots)."""
+    """Change le dossier loras + liste les LoRA (met a jour les 3 slots) + persiste."""
     set_loras_dir(new_dir)
+    try:
+        _save_prefs_keys({"loras_dir": LORAS_DIR})   # persiste -> survit au reboot
+    except Exception:
+        pass
     lr = ["None"] + list_loras()
     return (gr.update(choices=lr), gr.update(choices=lr), gr.update(choices=lr),
-            f"{len(lr) - 1} LoRA(s) in {LORAS_DIR}")
+            f"{len(lr) - 1} LoRA(s) in {LORAS_DIR} (saved).")
 
 
 def _apply_loras(n1, w1, n2, w2, n3, w3):
