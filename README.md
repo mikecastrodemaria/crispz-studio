@@ -7,18 +7,25 @@ A standalone Z-Image **creation + enhancement** tool, **100% local**, no ComfyUI
 SwarmUI. On top of crispz's upscaler it adds:
 
 - **Text → Image** (`ZImagePipeline`): generate from a prompt, optionally upscale.
-- **Image → Upscale** (the crispz pipeline): Real-ESRGAN + Z-Image refine.
-- **Single-file `.safetensors` models** (Civitai): use a Z-Image transformer
-  checkpoint via `from_single_file` (VAE + Qwen3 encoder kept from the base repo).
-- **Shared VRAM**: txt2img and img2img reuse the same loaded weights (`from_pipe`).
-- **Fooocus-style UI**: big preview, prompt + Generate + **Stop**, dark theme,
-  Settings (aspect ratios, performance presets, batch **1–30**), and a **Styles**
-  tab with **277 styles** (search box + thumbnail previews).
-- **Reference (Omni)** multi-image compose, **Face Swap** post-process,
-  **Describe** (image→prompt) and **Improve prompt** via a local **Ollama** model.
-- **Session history gallery** (accumulates renders; load from the output folder).
-- **Dated, unique filenames** (date + tag + seed + size) — no more overwriting.
+- **Image → Upscale** (the crispz pipeline): Real-ESRGAN + Z-Image refine, 4K tiling.
+- **Inpaint** (paint a mask → regenerate the area) and **Reframe / Outpaint** (expand
+  to a new aspect ratio).
+- **Remove Background** (rembg) and **Face Swap** with optional **GFPGAN restore**.
+- **Models**: single-file `.safetensors` (Civitai) checkpoints + a **Transformer
+  override** (diffusers repo/folder, e.g. Juggernaut-Z), **multi-LoRA** (3 slots +
+  trigger words). FP8 checkpoints are skipped (diffusers can't load them).
+- **Ollama**: **Describe** (image→prompt), **Improve prompt**, and **Vision Mix**
+  (blend several reference images into one prompt). Models unload from VRAM after use.
+- **Fooocus-style UI**: big contained preview + batch gallery (arrows + fullscreen),
+  prompt + Generate + **Stop**, dark theme, Settings (aspect/performance/batch **1–30**),
+  **277 styles** (search + hover previews), and a **crop editor** on every image input.
+- **Advanced Gallery** (output folder): metadata (prompt/seed/params), sort/filter,
+  copy, delete, NSFW blur — plus a per-session history.
+- **Metadata saved** with every image: PNG text chunk + EXIF (jpg/webp) + `.json`
+  sidecar. **Dated, unique filenames** (date + tag + seed + size).
 - **`config.txt`** for all defaults + the Ollama instruction strings.
+- **Reference (Omni)** native multi-image compose: code ready, UI hidden until the
+  Z-Image Omni/Edit model ships.
 
 Tabbed Gradio UI + scriptable CLI + persistent server (`--serve`).
 
