@@ -55,6 +55,13 @@
     "default_output_dir": "out",
     "default_output_format": "png",
     "filename_pattern": "{date}_{tag}_seed{seed}_{w}x{h}{index}",
+    "asset_browser": {
+        "enabled": false,
+        "generate_thumbnails": true,
+        "thumbnail_size": 256,
+        "thumbnail_quality": 85,
+        "blur_thumbnails": false
+    },
 
     "log_level": "info"
 }

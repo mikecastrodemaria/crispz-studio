@@ -2301,6 +2301,169 @@ def _gallery_delete(path, output_dir, sort="Newest", filt=""):
     return files, files, msg, "*Select an image to see its info.*", ""
 
 
+# ----------------------------------------------------------------------------
+# Asset Browser (facon Fooocus2026): SPA statique deposee dans le dossier de
+# sortie, ouverte via un lien file=, alimentee par un manifest JSON + thumbnails.
+# Memes options (enabled, generate_thumbnails, thumbnail_size/quality, blur).
+# ----------------------------------------------------------------------------
+_AB_DEFAULTS = {"enabled": False, "generate_thumbnails": True,
+                "thumbnail_size": 256, "thumbnail_quality": 85, "blur_thumbnails": False}
+
+
+def _ab_get(key):
+    cfg = CONFIG.get("asset_browser") or {}
+    return cfg.get(key, _AB_DEFAULTS.get(key))
+
+
+def _ab_resolve_dir(output_dir):
+    d = output_dir or DEFAULT_OUTPUT_DIR
+    return d if os.path.isabs(d) else os.path.join(HERE, d)
+
+
+def _ab_make_thumb(src, dst, size, quality):
+    with Image.open(src) as im:
+        im = im.convert("RGB")
+        w, h = im.size
+        side = min(w, h)
+        im = im.crop(((w - side) // 2, (h - side) // 2, (w - side) // 2 + side, (h - side) // 2 + side))
+        im = im.resize((int(size), int(size)), Image.LANCZOS)
+        im.save(dst, "JPEG", quality=int(quality), optimize=True)
+
+
+ASSET_BROWSER_HTML = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>crispz-studio - Asset Browser</title>
+<style>
+:root{--bg:#0b1018;--panel:#1a2233;--line:#2a3346;--fg:#e6ebf2;--mut:#8b98ad}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
+font-family:system-ui,Segoe UI,Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:#0b1018ee;backdrop-filter:blur(6px);
+padding:10px 14px;display:flex;gap:12px;align-items:center;border-bottom:1px solid var(--line);flex-wrap:wrap}
+header h1{font-size:15px;margin:0;font-weight:600}
+input,button{background:#141b29;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-size:13px}
+button{cursor:pointer}#count{color:var(--mut);font-size:12px}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;padding:12px}
+.cell{position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;background:#11182a;cursor:zoom-in;border:1px solid var(--line)}
+.cell img{width:100%;height:100%;object-fit:cover;display:block;transition:.15s}
+.cell:hover img{transform:scale(1.04)}
+.cell .cap{position:absolute;left:0;right:0;bottom:0;font-size:10px;padding:3px 5px;color:#cfd8e6;
+background:linear-gradient(transparent,#000b);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body.blur .cell img{filter:blur(14px)}body.blur .cell:hover img{filter:none}
+#lb{position:fixed;inset:0;background:#000d;z-index:10;display:none;grid-template-columns:1fr 340px}
+#lb.open{display:grid}
+#lbimg{display:flex;align-items:center;justify-content:center;padding:16px;min-width:0}
+#lbimg img{max-width:100%;max-height:96vh;object-fit:contain}
+#side{background:var(--panel);border-left:1px solid var(--line);padding:16px;overflow:auto;font-size:13px}
+#side h3{margin:.2em 0 .4em;font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+#side .v{margin:0 0 10px;word-break:break-word;white-space:pre-wrap}
+#side button{margin:4px 6px 4px 0}
+.nav{position:fixed;top:50%;transform:translateY(-50%);font-size:40px;color:#fff;cursor:pointer;
+user-select:none;padding:0 14px;opacity:.7}.nav:hover{opacity:1}#prev{left:0}#next{right:344px}
+#close{position:fixed;top:10px;right:352px;font-size:30px;color:#fff;cursor:pointer;z-index:11}
+</style></head><body>
+<header><h1>🖼️ crispz-studio</h1>
+<input id="q" placeholder="Search prompt / filename..." style="flex:1;min-width:160px">
+<button id="blurbtn">Blur</button><span id="count"></span></header>
+<div id="grid"></div>
+<div id="lb"><span id="close">&times;</span><span class="nav" id="prev">&#10094;</span>
+<span class="nav" id="next">&#10095;</span><div id="lbimg"><img id="big"></div>
+<div id="side"></div></div>
+<script>
+let DATA=[],VIEW=[],cur=0;
+const grid=document.getElementById('grid'),lb=document.getElementById('lb'),big=document.getElementById('big'),
+side=document.getElementById('side'),q=document.getElementById('q'),cnt=document.getElementById('count');
+function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function render(){grid.innerHTML='';VIEW.forEach((e,i)=>{const c=document.createElement('div');c.className='cell';
+c.innerHTML='<img loading="lazy" src="'+encodeURI(e.thumb)+'"><div class="cap">'+esc(e.file)+'</div>';
+c.onclick=()=>open(i);grid.appendChild(c);});cnt.textContent=VIEW.length+' / '+DATA.length;}
+function filter(){const s=q.value.toLowerCase().trim();VIEW=!s?DATA.slice():DATA.filter(e=>
+(e.file+' '+(e.prompt||'')+' '+(e.mode||'')+' '+(e.seed||'')).toLowerCase().includes(s));render();}
+function open(i){cur=i;const e=VIEW[i];big.src=encodeURI(e.file);
+let h='<h3>Prompt</h3><div class="v">'+esc(e.prompt||'(none)')+'</div>';
+if(e.negative)h+='<h3>Negative</h3><div class="v">'+esc(e.negative)+'</div>';
+h+='<h3>Info</h3><div class="v">';
+['mode','seed','steps','guidance','size','model','date'].forEach(k=>{if(e[k]!=null&&e[k]!=='')h+=k+': '+esc(e[k])+'\n';});
+if(e.loras&&e.loras.length)h+='loras: '+esc(e.loras.join(', '))+'\n';
+h+='file: '+esc(e.file)+'</div>';
+h+='<button onclick="cp(\''+'prompt'+'\')">Copy prompt</button>';
+h+='<button onclick="cp(\''+'all'+'\')">Copy all</button>';
+h+='<a href="'+encodeURI(e.file)+'" download style="margin-left:6px;color:#9fb3d6">Download</a>';
+side.innerHTML=h;lb.classList.add('open');}
+function cp(what){const e=VIEW[cur];let t=e.prompt||'';if(what==='all')t=JSON.stringify(e,null,2);
+navigator.clipboard.writeText(t).catch(()=>{});}
+function close(){lb.classList.remove('open');}
+document.getElementById('close').onclick=close;
+document.getElementById('prev').onclick=()=>open((cur-1+VIEW.length)%VIEW.length);
+document.getElementById('next').onclick=()=>open((cur+1)%VIEW.length);
+lb.onclick=ev=>{if(ev.target===lb||ev.target===big.parentNode)close();};
+document.addEventListener('keydown',ev=>{if(!lb.classList.contains('open'))return;
+if(ev.key==='Escape')close();if(ev.key==='ArrowLeft')document.getElementById('prev').click();
+if(ev.key==='ArrowRight')document.getElementById('next').click();});
+q.oninput=filter;
+document.getElementById('blurbtn').onclick=()=>document.body.classList.toggle('blur');
+fetch('_index/manifest.json?t='+Date.now()).then(r=>r.json()).then(m=>{
+DATA=m.images||[];if(m.blur)document.body.classList.add('blur');filter();})
+.catch(e=>{grid.innerHTML='<p style="padding:20px;color:#8b98ad">No manifest. Click Reindex in crispz-studio.</p>';});
+</script></body></html>
+"""
+
+
+def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=True):
+    """Genere index.html + thumbnails + _index/manifest.json dans le dossier de sortie."""
+    d = _ab_resolve_dir(output_dir)
+    os.makedirs(d, exist_ok=True)
+    idx_dir = os.path.join(d, "_index")
+    thumbs_dir = os.path.join(idx_dir, "thumbs")
+    os.makedirs(thumbs_dir, exist_ok=True)
+    with open(os.path.join(d, "index.html"), "w", encoding="utf-8") as f:
+        f.write(ASSET_BROWSER_HTML)
+    imgs = [f for f in os.listdir(d) if f.lower().endswith(IMG_EXTS)]
+    imgs.sort(key=lambda f: os.path.getmtime(os.path.join(d, f)), reverse=True)
+    entries = []
+    for name in imgs:
+        p = os.path.join(d, name)
+        thumb_rel = name
+        if gen_thumbs:
+            try:
+                tname = os.path.splitext(name)[0] + ".jpg"
+                tp = os.path.join(thumbs_dir, tname)
+                if not (os.path.isfile(tp) and os.path.getmtime(tp) >= os.path.getmtime(p)):
+                    _ab_make_thumb(p, tp, thumb_size, quality)
+                thumb_rel = "_index/thumbs/" + tname
+            except Exception as e:
+                _dbg(f"ab thumb failed {name}: {e}")
+        meta = _read_image_meta(p)
+        try:
+            date = datetime.datetime.fromtimestamp(os.path.getmtime(p)).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            date = ""
+        entries.append({
+            "file": name, "thumb": thumb_rel, "date": date,
+            "prompt": meta.get("prompt", ""), "negative": meta.get("negative", ""),
+            "seed": meta.get("seed"), "steps": meta.get("steps"),
+            "guidance": meta.get("guidance"), "size": meta.get("size"), "mode": meta.get("mode"),
+            "model": (os.path.basename(str(meta["model"])) if meta.get("model") else ""),
+            "loras": meta.get("loras"),
+        })
+    manifest = {"count": len(entries), "blur": bool(blur), "thumb_size": int(thumb_size),
+                "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "images": entries}
+    with open(os.path.join(idx_dir, "manifest.json"), "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False)
+    return len(entries), os.path.join(d, "index.html")
+
+
+def _ui_ab_reindex(output_dir, thumb_size, quality, blur, gen_thumbs):
+    try:
+        n, idx = ab_reindex(output_dir, thumb_size, quality, blur, gen_thumbs)
+    except Exception as e:
+        return "", f"Asset Browser reindex failed: {e}"
+    url = "/gradio_api/file=" + os.path.abspath(idx).replace("\\", "/")
+    link = (f'<a href="{url}" target="_blank" style="display:inline-block;padding:8px 14px;'
+            f'background:#3b4356;color:#fff;border-radius:6px;text-decoration:none;">'
+            f'\U0001F5BC️ Open Asset Browser ({n} images)</a>')
+    return link, f"Indexed {n} image(s) -> {os.path.dirname(idx)}"
+
+
 def _pil_to_b64_jpeg(img, max_side=1600, quality=85):
     """Reduit + encode en JPEG base64 pour embarquer en HTML sans saturer la page."""
     if img is None:
@@ -2935,6 +3098,24 @@ def build_ui():
                         omni_check_btn = gr.Button("Check Omni availability (Hugging Face)", size="sm")
                         omni_status = gr.Markdown("")
 
+                        gr.Markdown("### \U0001F5BC️ Asset Browser")
+                        gr.Markdown("*Standalone gallery page (thumbnails + metadata + lightbox) "
+                                    "built into the output folder, opened in a new tab. Reindex to "
+                                    "(re)build it from your saved images.*")
+                        with gr.Row():
+                            ab_thumb_size = gr.Slider(96, 512, value=int(_ab_get("thumbnail_size")),
+                                                      step=32, label="Thumbnail size")
+                            ab_quality = gr.Slider(40, 100, value=int(_ab_get("thumbnail_quality")),
+                                                   step=5, label="Thumbnail quality")
+                        with gr.Row():
+                            ab_blur = gr.Checkbox(value=bool(_ab_get("blur_thumbnails")),
+                                                  label="Blur thumbnails (NSFW)")
+                            ab_gen_thumbs = gr.Checkbox(value=bool(_ab_get("generate_thumbnails")),
+                                                        label="Generate thumbnails")
+                        ab_reindex_btn = gr.Button("Reindex + open link", variant="primary", size="sm")
+                        ab_open_link = gr.HTML("")
+                        ab_status = gr.Markdown("")
+
                     with gr.Tab("Save"):
                         save_mode = gr.Radio(choices=["display", "local", "alongside", "custom"],
                                              value=DEFAULT_SAVE_MODE, label="Save mode")
@@ -2979,6 +3160,9 @@ def build_ui():
                              [omni_model_tb], [omni_status])
         omni_check_btn.click(_ui_check_omni, None, [omni_status])
         omni_check_btn2.click(_ui_check_omni, None, [omni_status2])
+        ab_reindex_btn.click(_ui_ab_reindex,
+                             [output_dir, ab_thumb_size, ab_quality, ab_blur, ab_gen_thumbs],
+                             [ab_open_link, ab_status])
         log_level_dd.change(set_log_level, [log_level_dd], [log_level_status])
         detect_btn.click(_ui_detect_ollama, [ollama_url], [ollama_model, ollama_status])
         describe_btn.click(_ui_describe, [describe_img, ollama_model, ollama_url], [prompt, describe_status])
@@ -3428,7 +3612,8 @@ def cli_main(argv=None):
     # Pas de --cli et pas d'entree -> UI
     if not args.cli and not args.input and not args.input_folder:
         _disable_brotli()  # evite le bug h11 'Content-Length' a l'envoi des resultats
-        build_ui().launch(allowed_paths=[os.path.join(HERE, "styles", "samples")])
+        build_ui().launch(allowed_paths=[os.path.join(HERE, "styles", "samples"),
+                                         _ab_resolve_dir(DEFAULT_OUTPUT_DIR)])
         return 0
 
     if not models and not args.no_esrgan:
