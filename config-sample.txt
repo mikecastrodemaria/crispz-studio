@@ -36,7 +36,7 @@
     "faceswap_restore": false,
     "faceswap_restore_blend": 0.8,
     "faceswap_restore_path": "",
-    "faceswap_restore_url": "https://github.com/facefusion/facefusion-assets/releases/download/models/gfpgan_1.4.onnx",
+    "faceswap_restore_url": "https://huggingface.co/facefusion/models-3.0.0/resolve/main/gfpgan_1.4.onnx",
 
     "default_save_mode": "local",
     "default_output_dir": "out",

@@ -385,8 +385,10 @@ def _get_face_restore_session():
              "(set faceswap_restore_url/path or drop gfpgan_1.4.onnx in faceswap/).")
         return None
     import onnxruntime as ort
-    _log(f"loading GFPGAN restore: {path}")
-    _FACE_RESTORE_SESSION = ort.InferenceSession(path, providers=ort.get_available_providers())
+    # On evite TensorRT (nvinfer_*.dll souvent absent) -> CUDA puis CPU.
+    provs = [p for p in ort.get_available_providers() if p != "TensorrtExecutionProvider"]
+    _log(f"loading GFPGAN restore: {path} (providers={provs})")
+    _FACE_RESTORE_SESSION = ort.InferenceSession(path, providers=provs)
     return _FACE_RESTORE_SESSION
 
 
