@@ -1469,14 +1469,32 @@ def build_output_path(source_path, save_mode, output_dir, output_format,
     return _unique_path(os.path.join(target_dir, fname))
 
 
+def _exif_bytes(meta):
+    """EXIF (ImageDescription=0x010e) contenant le JSON des metadonnees, pour jpg/webp."""
+    try:
+        exif = Image.Exif()
+        exif[0x010E] = json.dumps(meta, ensure_ascii=False)  # ImageDescription
+        return exif.tobytes()
+    except Exception:
+        return None
+
+
 def save_image(img, dst_path, output_format, meta=None):
-    """Sauve avec le bon format Pillow. Si meta (dict) est fourni: l'embarque dans
-    le PNG (chunk texte 'crispz') ET ecrit un sidecar '<fichier>.json'."""
+    """Sauve avec le bon format Pillow. Si meta (dict): embarque dans le PNG (chunk
+    'crispz'), en EXIF (ImageDescription) pour jpg/webp, ET ecrit un sidecar .json."""
     fmt = output_format.lower().lstrip(".")
     if fmt in ("jpg", "jpeg"):
-        img.convert("RGB").save(dst_path, "JPEG", quality=95)
+        kw = {"quality": 95}
+        eb = _exif_bytes(meta) if meta else None
+        if eb:
+            kw["exif"] = eb
+        img.convert("RGB").save(dst_path, "JPEG", **kw)
     elif fmt == "webp":
-        img.save(dst_path, "WEBP", quality=95, method=6)
+        kw = {"quality": 95, "method": 6}
+        eb = _exif_bytes(meta) if meta else None
+        if eb:
+            kw["exif"] = eb
+        img.save(dst_path, "WEBP", **kw)
     else:
         pnginfo = None
         if meta:
@@ -2003,9 +2021,12 @@ def _read_image_meta(path):
             pass
     try:
         with Image.open(path) as im:
-            txt = (im.info or {}).get("crispz")
+            txt = (im.info or {}).get("crispz")          # PNG tEXt
             if txt:
                 return json.loads(txt)
+            desc = im.getexif().get(0x010E)              # EXIF ImageDescription (jpg/webp)
+            if desc:
+                return json.loads(desc)
     except Exception:
         pass
     return {}
