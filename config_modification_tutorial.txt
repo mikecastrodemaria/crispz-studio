@@ -69,6 +69,10 @@ checkpoints_dir         Folder of single-file Z-Image models (.safetensors). Sca
                         ESRGAN). Empty -> ./checkpoints next to app.py.
 loras_dir               Folder of LoRA .safetensors. Scanned into Models > LoRA.
                         Empty -> ./loras next to app.py.
+wildcards_dir           Folder of wildcard .txt files. In the prompt, __name__ is
+                        replaced by a random line from <folder>/name.txt (e.g.
+                        __color__). Nested wildcards supported, reproducible per
+                        seed. Empty -> ./wildcards next to app.py.
 default_lora_weight     Default LoRA strength (0..2).
 zimage_omni_model       HF repo id OR local diffusers folder of a Z-Image Omni/Edit
                         model (with a SigLIP encoder). REQUIRED for the Reference

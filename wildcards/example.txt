@@ -1,0 +1,10 @@
+﻿# Example wildcard file for crispz-studio.
+# A wildcard file is a .txt with one option per line; lines starting with # are ignored.
+# Use it in the prompt as __example__ (filename without .txt) -> one random line is inserted.
+# Drop your own .txt here (or point Wildcards folder in Advanced > Models).
+# The full Fooocus wildcard set lives here locally but is NOT committed to git.
+vivid colors
+moody lighting
+golden hour
+neon glow
+soft pastel tones

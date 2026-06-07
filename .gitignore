@@ -49,6 +49,11 @@ faceswap/
 *.onnx
 *.bin
 
+# --- Wildcards locaux (set Fooocus, ~218 fichiers). On versionne UNIQUEMENT
+#     wildcards/example.txt ; le reste reste local. ---
+wildcards/*.txt
+!wildcards/example.txt
+
 # --- Sorties + logs ---
 out/
 output/

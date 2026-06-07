@@ -154,6 +154,48 @@ def _filter_styles(query, selected):
     return gr.update(choices=choices, value=selected)
 
 
+def _seed_rng(seed):
+    """RNG reproductible si seed>=0 (memes wildcards/styles pour une meme seed)."""
+    try:
+        s = int(seed)
+        return random.Random(s) if s >= 0 else random.Random()
+    except Exception:
+        return random.Random()
+
+
+def list_wildcards():
+    if not os.path.isdir(WILDCARDS_DIR):
+        return []
+    return sorted(f[:-4] for f in os.listdir(WILDCARDS_DIR) if f.lower().endswith(".txt"))
+
+
+def _apply_wildcards(text, rng=None):
+    """Remplace les __nom__ par une ligne aleatoire de wildcards/nom.txt (gere
+    l'imbrication: une ligne peut contenir d'autres __wildcards__)."""
+    if not text or "__" not in text:
+        return text
+    import re
+    rng = rng or random
+    for _ in range(64):  # garde-fou anti-boucle
+        m = re.search(r"__([A-Za-z0-9_\-/]+)__", text)
+        if not m:
+            break
+        name = m.group(1)
+        path = os.path.join(WILDCARDS_DIR, name + ".txt")
+        repl = ""
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                    lines = [ln.strip() for ln in fh
+                             if ln.strip() and not ln.lstrip().startswith("#")]
+                if lines:
+                    repl = rng.choice(lines)
+            except Exception:
+                pass
+        text = text[:m.start()] + repl + text[m.end():]
+    return text
+
+
 def _pick_styles(selected, randomize):
     """Si randomize: tire 1 style au hasard dans la selection (ou dans TOUS les
     styles si rien n'est selectionne). Sinon renvoie la selection telle quelle."""
@@ -618,6 +660,8 @@ CHECKPOINTS_DIR = (os.environ.get("CHECKPOINTS_DIR") or _prefs.get("checkpoints_
                    or CONFIG.get("checkpoints_dir") or os.path.join(HERE, "checkpoints"))
 LORAS_DIR = (os.environ.get("LORAS_DIR") or _prefs.get("loras_dir")
              or CONFIG.get("loras_dir") or os.path.join(HERE, "loras"))
+WILDCARDS_DIR = (os.environ.get("WILDCARDS_DIR") or _prefs.get("wildcards_dir")
+                 or CONFIG.get("wildcards_dir") or os.path.join(HERE, "wildcards"))
 # LoRA active (chemin .safetensors) + poids. Inclus dans la clef de cache du pipe.
 # LoRA actives: liste de (chemin, poids). Plusieurs LoRA combinables (multi-slots).
 LORAS = []
@@ -819,6 +863,12 @@ def set_loras_dir(path):
     global LORAS_DIR
     if path:
         LORAS_DIR = path
+
+
+def set_wildcards_dir(path):
+    global WILDCARDS_DIR
+    if path:
+        WILDCARDS_DIR = path
 
 
 def _read_safetensors_metadata(path):
@@ -1798,6 +1848,15 @@ def _apply_transformer_repo(repo):
             gr.update(value=st), gr.update(value=g))
 
 
+def _ui_list_wildcards(new_dir):
+    """Change le dossier wildcards + liste ce qui est disponible."""
+    set_wildcards_dir(new_dir)
+    w = list_wildcards()
+    if not w:
+        return f"No .txt wildcard in {WILDCARDS_DIR}."
+    return f"{len(w)} wildcards in {WILDCARDS_DIR} -> e.g. " + ", ".join(f"__{n}__" for n in w[:15])
+
+
 def _refresh_loras(new_dir):
     """Change le dossier loras + liste les LoRA (met a jour les 3 slots)."""
     set_loras_dir(new_dir)
@@ -1862,7 +1921,8 @@ def _ui_check_omni():
     return check_omni_available()
 
 
-def _save_paths_to_prefs(esrgan_dir, zimage_model, checkpoints_dir=None, loras_dir=None):
+def _save_paths_to_prefs(esrgan_dir, zimage_model, checkpoints_dir=None, loras_dir=None,
+                         wildcards_dir=None):
     """Persiste les chemins dans preferences.json (local) -> charges au prochain boot."""
     set_esrgan_dir(esrgan_dir)
     set_zimage_model(zimage_model)
@@ -1870,10 +1930,13 @@ def _save_paths_to_prefs(esrgan_dir, zimage_model, checkpoints_dir=None, loras_d
         set_checkpoints_dir(checkpoints_dir)
     if loras_dir:
         set_loras_dir(loras_dir)
+    if wildcards_dir:
+        set_wildcards_dir(wildcards_dir)
     _save_prefs_keys({"esrgan_dir": ESRGAN_DIR, "zimage_model": BASE_REPO,
-                      "checkpoints_dir": CHECKPOINTS_DIR, "loras_dir": LORAS_DIR})
-    return (f"Saved to {PREFS_PATH}: esrgan_dir, zimage_model, "
-            f"checkpoints_dir={CHECKPOINTS_DIR}, loras_dir={LORAS_DIR}")
+                      "checkpoints_dir": CHECKPOINTS_DIR, "loras_dir": LORAS_DIR,
+                      "wildcards_dir": WILDCARDS_DIR})
+    return (f"Saved to {PREFS_PATH}: esrgan_dir, zimage_model, checkpoints_dir, "
+            f"loras_dir, wildcards_dir={WILDCARDS_DIR}")
 
 
 # Ordre des composants mis a jour par le dropdown de presets (doit matcher l'UI).
@@ -2294,7 +2357,9 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
     try:
         set_offload_mode(offload_mode)
         set_guidance(guidance)
-        full_prompt, full_negative = _apply_styles(prompt, negative, _pick_styles(styles, style_random))
+        base_prompt = _apply_wildcards(prompt, _seed_rng(seed))   # __name__ -> random line
+        full_prompt, full_negative = _apply_styles(base_prompt, negative,
+                                                   _pick_styles(styles, style_random))
         mode = "img2img/upscale" if (use_input and input_image is not None) else "txt2img"
         _log(f"Generate ({mode})")
         _dbg(f"params: mode={mode} use_input={use_input} has_img={input_image is not None} "
@@ -2347,10 +2412,10 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                 break
             s = (int(seed) + i) if int(seed) >= 0 else -1
             progress(i / n, desc=f"Image {i + 1}/{n}")
-            # Style aleatoire par image si demande (sinon = la selection)
+            # Wildcards (__name__) + style aleatoire, par image (seed -> reproductible)
             chosen = _pick_styles(styles, style_random)
-            fp, fn = (_apply_styles(prompt, negative, chosen) if style_random
-                      else (full_prompt, full_negative))
+            p_i = _apply_wildcards(prompt, _seed_rng(s))
+            fp, fn = _apply_styles(p_i, negative, chosen)
             if style_random:
                 _log(f"random style #{i + 1}: {chosen}")
             img, t = txt2img_run(fp, width, height, gen_steps, s, fn,
@@ -2771,6 +2836,14 @@ def build_ui():
                             lora_kw_to_prompt_btn = gr.Button("Add to prompt", size="sm", variant="primary")
                         lora_status = gr.Markdown("")
 
+                        gr.Markdown("### Wildcards")
+                        gr.Markdown("*Use `__name__` in the prompt -> replaced by a random line "
+                                    "from `<folder>/name.txt` (e.g. `__color__`, `__artist-c__`). "
+                                    "Nested wildcards supported. Reproducible per seed.*")
+                        wild_dir_tb = gr.Textbox(value=WILDCARDS_DIR, label="Wildcards folder")
+                        wild_status = gr.Markdown("")
+                        wild_refresh_btn = gr.Button("List wildcards", size="sm")
+
                         gr.Markdown("### Omni / Edit model (multi-reference)")
                         gr.Markdown("*The Reference (Omni) tab stays hidden until a model is set "
                                     "here (then restart). Z-Image-Omni-Base / Z-Image-Edit are not "
@@ -2800,8 +2873,9 @@ def build_ui():
         refresh_btn.click(_refresh_models, [esrgan_dir_tb], [esrgan, paths_status])
         apply_zimage_btn.click(_apply_zimage, [zimage_model_tb], [paths_status])
         save_paths_btn.click(_save_paths_to_prefs,
-                             [esrgan_dir_tb, zimage_model_tb, ckpt_dir_tb, lora_dir_tb],
+                             [esrgan_dir_tb, zimage_model_tb, ckpt_dir_tb, lora_dir_tb, wild_dir_tb],
                              [paths_status])
+        wild_refresh_btn.click(_ui_list_wildcards, [wild_dir_tb], [wild_status])
         ckpt_refresh_btn.click(_refresh_checkpoints, [ckpt_dir_tb], [ckpt_dd, ckpt_status])
         ckpt_dd.change(_apply_checkpoint, [ckpt_dd], [ckpt_status, gen_steps, guidance])
         transformer_apply_btn.click(_apply_transformer_repo, [transformer_tb],
