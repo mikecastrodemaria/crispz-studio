@@ -33,6 +33,7 @@
 
     "default_factor": 2.0,
     "default_denoise": 0.30,
+    "default_refine": true,
     "default_refine_steps": 12,
     "default_tile": 760,
     "default_overlap": 32,

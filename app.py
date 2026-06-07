@@ -1064,7 +1064,7 @@ def _ui_txt2img(prompt, negative, width, height, gen_steps, seed, guidance, upsc
 def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                  input_mode, ref1, ref2, ref3, ref4, faceswap_enable, faceswap_src,
                  width, height, gen_steps, image_number, seed, guidance, offload_mode,
-                 esrgan_model, do_esrgan, factor, denoise, refine_steps,
+                 esrgan_model, do_esrgan, do_refine, factor, denoise, refine_steps,
                  tile, overlap, refine_tile, refine_overlap,
                  save_mode, output_dir, output_format, history,
                  progress=gr.Progress(track_tqdm=True)):
@@ -1139,11 +1139,13 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                     _dbg(f"save failed: {e}")
             return _done([img], f"omni - **{img.size[0]}x{img.size[1]}** from {len(refs)} ref(s)")
         if use_input and input_image is not None:
-            _dbg(f"img2img: esrgan={esrgan_model} do_esrgan={do_esrgan} factor={factor} "
-                 f"denoise={denoise} refine_steps={int(refine_steps)} tile={int(tile)} "
+            # Refine (img2img) decoche -> denoise 0 = saute la passe de diffusion (lente).
+            eff_denoise = float(denoise) if do_refine else 0.0
+            _dbg(f"img2img: esrgan={esrgan_model} do_esrgan={do_esrgan} do_refine={do_refine} "
+                 f"factor={factor} denoise={eff_denoise} refine_steps={int(refine_steps)} tile={int(tile)} "
                  f"refine_tile={int(refine_tile)} model={cz_pipeline.BASE_REPO} transformer={cz_pipeline.ZIMAGE_TRANSFORMER}")
             last_result, last_source, report = run(
-                input_image, None, esrgan_model, factor, denoise, refine_steps, full_prompt, seed,
+                input_image, None, esrgan_model, factor, eff_denoise, refine_steps, full_prompt, seed,
                 tile, overlap, save_mode=save_mode, output_dir=output_dir,
                 output_format=output_format, refine_tile=refine_tile, refine_overlap=refine_overlap,
                 do_esrgan=bool(do_esrgan))
@@ -1267,14 +1269,19 @@ def build_ui():
                             with gr.Row():
                                 inp = _crop_input("Drop image here / click to upload", 300)
                                 with gr.Column():
-                                    do_esrgan_cb = gr.Checkbox(value=True, label="ESRGAN upscale",
-                                                               info="Uncheck = img2img only (no enlargement).")
+                                    with gr.Row():
+                                        do_esrgan_cb = gr.Checkbox(value=True, label="ESRGAN upscale",
+                                                                   info="Uncheck = img2img only (no enlargement).")
+                                        do_refine_cb = gr.Checkbox(value=bool(CONFIG.get("default_refine", True)),
+                                                                   label="Refine (img2img)",
+                                                                   info="Uncheck = ESRGAN upscale only (skip the slow diffusion pass).")
                                     preset = gr.Dropdown(list(PRESETS), value="Custom", label="Use case preset")
                                     esrgan = gr.Dropdown(models, value=default_model, label="ESRGAN model")
                                     factor = gr.Slider(1.0, 4.0, value=DEFAULT_FACTOR, step=0.5, label="Upscale factor")
                                     denoise = gr.Slider(0.0, 0.8, value=DEFAULT_DENOISE, step=0.01,
-                                                        label="Refine denoise (strength)")
-                                    refine_steps = gr.Slider(4, 30, value=DEFAULT_STEPS, step=1, label="Refine steps")
+                                                        label="Refine denoise (strength) - 0 = skip refine (ESRGAN only)")
+                                    refine_steps = gr.Slider(4, 30, value=DEFAULT_STEPS, step=1,
+                                                             label="Refine steps (runs at upscaled res -> higher = slower)")
                             with gr.Accordion("ESRGAN tiling (VRAM)", open=False):
                                 tile = gr.Slider(0, 1024, value=DEFAULT_TILE, step=8, label="Tile (0 = off)")
                                 overlap = gr.Slider(0, 128, value=DEFAULT_OVERLAP, step=8, label="Overlap")
@@ -1614,7 +1621,7 @@ def build_ui():
                        ref1, ref2, ref3, ref4,
                        faceswap_enable, faceswap_src,
                        width, height, gen_steps, image_number,
-                       seed, guidance, offload, esrgan, do_esrgan_cb, factor, denoise, refine_steps,
+                       seed, guidance, offload, esrgan, do_esrgan_cb, do_refine_cb, factor, denoise, refine_steps,
                        tile, overlap, refine_tile, refine_overlap, save_mode, output_dir, output_format,
                        history]
         _gen_outputs = [out, report, history, history_gallery]
@@ -1766,6 +1773,9 @@ def cli_main(argv=None):
                         help="ESRGAN model (file in ESRGAN_DIR). Fallback: first found.")
     parser.add_argument("--factor", type=float, default=DEFAULT_FACTOR, help="Net upscale factor")
     parser.add_argument("--denoise", type=float, default=DEFAULT_DENOISE, help="Z-Image strength (0 = ESRGAN only)")
+    parser.add_argument("--no-refine", action="store_true",
+                        help="Skip the (slow) Z-Image img2img refine pass -> ESRGAN upscale only "
+                             "(shortcut for --denoise 0).")
     parser.add_argument("--steps", type=int, default=DEFAULT_STEPS, help="Diffusion steps")
     parser.add_argument("--prompt", default="", help="Optional prompt")
     parser.add_argument("--seed", type=int, default=-1, help="Seed (-1 = random)")
@@ -1851,6 +1861,9 @@ def cli_main(argv=None):
                              "Implies a silent stdout; the VRAM peak stays on stderr.")
     args = parser.parse_args(argv)
     apply_preset_to_args(args, argv if argv is not None else sys.argv[1:])
+    # Raccourci: --no-refine == --denoise 0 (saute la passe img2img lente).
+    if args.no_refine:
+        args.denoise = 0.0
 
     if args.log_level:
         cz_core.LOG_LEVEL = _parse_log_level(args.log_level)

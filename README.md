@@ -266,10 +266,18 @@ appends them.
 - **img2img only** (refine without ESRGAN enlargement): `--no-esrgan` (CLI), or
   uncheck **"ESRGAN upscale"** in the Image -> Upscale tab. The Z-Image refine runs
   on the input at its native size.
+- **ESRGAN only** (fast upscale, skip the slow refine): `--no-refine` (CLI, shortcut
+  for `--denoise 0`), or uncheck **"Refine (img2img)"** in the Image -> Upscale tab.
+  The two stages are independent toggles: the diffusion refine runs at the *upscaled*
+  resolution, so it is the slow part — turn it off when you just want a clean enlarge.
 
 ```bash
 # img2img only: Z-Image refine on the input, no enlargement
 python app.py --cli -i in.png --no-esrgan --denoise 0.30 --save-mode local --output-dir out
+
+# ESRGAN only: fast upscale, no diffusion refine
+python app.py --cli -i in.png -m 4x-ClearRealityV1_Soft.safetensors --no-refine \
+    --factor 2 --save-mode local --output-dir out
 ```
 
 ---
@@ -484,6 +492,7 @@ Every UI setting has a CLI flag and a prefs key:
 | Use-case preset | `--preset` | - | `Custom` |
 | Upscale factor | `--factor` | `factor` | `2.0` |
 | Denoise (strength) | `--denoise` | `denoise` | `0.30` |
+| Skip refine (ESRGAN only) | `--no-refine` | "Refine (img2img)" checkbox (off) | refine on |
 | Diffusion steps | `--steps` | `steps` | `12` |
 | Prompt | `--prompt` | `prompt` | `""` |
 | Seed | `--seed` | `seed` | `-1` |
