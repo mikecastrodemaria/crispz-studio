@@ -1988,10 +1988,21 @@ FOOOCUS_CSS = """
   --border-color-primary: #2a3346;
   --input-background-fill: #141b29;
 }
-#cz_result { min-height: 560px; }
-/* Rendu: image entierement visible (contain), jamais plus grande que la zone, pas de cover. */
-#cz_result img { object-fit: contain !important; max-width: 100% !important;
-  max-height: 72vh !important; width: auto !important; height: auto !important; cursor: zoom-in; }
+/* Rendu homothetique: image entierement visible (contain), centree, jamais plus
+   grande que la zone -> pas de scroll, pas de cover. La galerie se dimensionne a
+   l'image (plafond 78vh), donc plus de bande vide ni d'image coupee. */
+#cz_result { min-height: 0 !important; }
+#cz_result .grid-wrap, #cz_result .grid-container { max-height: 80vh !important; }
+#cz_result img {
+  object-fit: contain !important;
+  max-width: 100% !important;
+  max-height: 78vh !important;
+  width: auto !important;
+  height: auto !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  cursor: zoom-in;
+}
 #cz_result .thumbnail-item, #cz_result .thumbnail-item img, #cz_result button img {
   object-fit: contain !important; }
 #cz_prompt textarea, #cz_neg textarea { font-size: 1.04rem; }
@@ -2033,8 +2044,8 @@ def build_ui():
         with gr.Row():
             # ===== Colonne principale (apercu en haut, prompt + Generate, negative, input) =====
             with gr.Column(scale=3):
-                out = gr.Gallery(label="Result", elem_id="cz_result", height=620,
-                                 columns=2, object_fit="contain", preview=True,
+                out = gr.Gallery(label="Result", elem_id="cz_result",
+                                 columns=1, object_fit="contain", preview=False,
                                  allow_preview=False, show_download_button=True)
                 report = gr.Markdown(value="*Ready. Type a prompt and press Generate.*")
 
