@@ -16,9 +16,9 @@ Do NOT do it all at once. One module per PR, smoke-green between each.
   _list_output_files. (`_gen_meta` stays in app — reads model state.)
 - [x] **Step 4 — `cz_assetbrowser.py`**: ab_reindex + thumbs + delete_asset.
   Each step validated: `is`-identity of moved names + build_ui + smoke 19/19.
-- [ ] **Step 5 — `cz_prompt.py`**: styles + wildcards. NOTE: `WILDCARDS_DIR` is mutable
-  (set_wildcards_dir) -> keep dir + setter + readers together in cz_prompt, and have
-  app read `cz_prompt.WILDCARDS_DIR` where the dir can change at runtime.
+- [x] **Step 5 — `cz_prompt.py`**: styles + wildcards (STYLES/_apply_styles/_pick_styles
+  + WILDCARDS_DIR/set_wildcards_dir/_apply_wildcards/list_wildcards). App reads the live
+  `cz_prompt.WILDCARDS_DIR`. Validated: style applied, setter propagation, smoke 19/19.
 - [ ] **Step 6 — `cz_esrgan.py` / `cz_face.py`**: leaf compute. Mutable caches
   (_ESRGAN_CACHE / _FACE_APP/_FACE_SWAPPER/_FACE_RESTORE_SESSION/_BLIP) + setters must
   move WITH the functions so bare refs stay valid.
