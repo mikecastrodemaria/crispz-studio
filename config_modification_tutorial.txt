@@ -64,6 +64,8 @@ default_factor          Upscale factor (img2img/upscale).
 default_denoise         Refine denoise strength (0..0.8).
 default_refine          Default state of the "Refine (img2img)" checkbox (true/false).
                         false = ESRGAN upscale only by default (skip the slow refine).
+default_refine_first    Default state of "Refine before upscale (faster)" (true/false).
+                        true = refine at native res THEN ESRGAN (~4-16x faster refine).
 default_refine_steps    Z-Image refine steps.
 default_tile/overlap    ESRGAN tiling (0 = off) to cap VRAM.
 default_refine_tile/overlap   Z-Image diffusion tiling for 4K+ (0 = whole image).

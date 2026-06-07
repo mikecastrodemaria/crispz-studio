@@ -28,6 +28,15 @@ from cz_core import (
 from cz_esrgan import load_esrgan, esrgan_upscale
 from cz_imageio import _now_stamp
 
+# Vitesse: autorise TF32 (matmul/cudnn) sur GPU. Gain gratuit sur Ampere+ pour les
+# operations fp32 residuelles; les poids restent BF16. Sans effet hors CUDA.
+if DEVICE == "cuda":
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    except Exception:
+        pass
+
 
 # Modele Z-Image courant. Un repo HF / dossier diffusers -> BASE_REPO. Un fichier
 # single-file (.safetensors Civitai) passe comme "modele" -> transformer override
@@ -350,10 +359,14 @@ def _ensure_base():
                 pipe.set_adapters(names, weights)
         except Exception as e:
             _log(f"LoRA load failed ({e}); continuing without LoRA")
-    try:
-        pipe.enable_attention_slicing()
-    except Exception:
-        pass
+    # Attention slicing economise la VRAM mais ralentit (attention chunkee). On ne
+    # l'active que pour les modes offload (VRAM contrainte). En plein VRAM (offload
+    # none, defaut) -> attention native = plus rapide.
+    if OFFLOAD_MODE in ("model", "sequential"):
+        try:
+            pipe.enable_attention_slicing()
+        except Exception:
+            pass
     # enable_*_cpu_offload gere lui-meme le device -> ne PAS faire .to(cuda) alors.
     if DEVICE == "cuda" and OFFLOAD_MODE == "model":
         pipe.enable_model_cpu_offload()
@@ -407,10 +420,12 @@ def _load_omni():
     _log(f"loading Z-Image Omni: {repo} (offload={OFFLOAD_MODE}) ...")
     t0 = time.time()
     pipe = ZImageOmniPipeline.from_pretrained(repo, torch_dtype=DTYPE)
-    try:
-        pipe.enable_attention_slicing()
-    except Exception:
-        pass
+    # Attention slicing seulement en mode offload (VRAM contrainte); plein VRAM -> rapide.
+    if OFFLOAD_MODE in ("model", "sequential"):
+        try:
+            pipe.enable_attention_slicing()
+        except Exception:
+            pass
     if DEVICE == "cuda" and OFFLOAD_MODE == "model":
         pipe.enable_model_cpu_offload()
     elif DEVICE == "cuda" and OFFLOAD_MODE == "sequential":
@@ -639,64 +654,81 @@ def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
 # ----------------------------------------------------------------------------
 def process_one(image, esrgan_model, factor, denoise, steps, prompt, seed, tile, overlap,
                 refine_tile=DEFAULT_REFINE_TILE, refine_overlap=DEFAULT_REFINE_OVERLAP,
-                do_esrgan=True):
+                do_esrgan=True, refine_first=False):
     """Pipeline sur une PIL Image, renvoie (image, timings_dict).
-    do_esrgan=False -> img2img pur (saute l'etage ESRGAN, refine sur l'image native)."""
-    timings = {}
+    do_esrgan=False -> img2img pur (saute l'etage ESRGAN, refine sur l'image native).
+    refine_first=True -> refine PUIS ESRGAN (la diffusion tourne a la resolution
+    native = bien plus rapide), au lieu de ESRGAN PUIS refine (detail en haute-def)."""
+    timings = {"esrgan": 0.0, "refine": 0.0}
     image = image.convert("RGB")
     w0, h0 = image.size
+    use_esrgan = bool(do_esrgan and esrgan_model)
+    do_refine = float(denoise) > 0.001
     _dbg(f"process_one in={w0}x{h0} factor={factor} denoise={denoise} steps={int(steps)} "
-         f"do_esrgan={do_esrgan} esrgan={esrgan_model} refine_tile={int(refine_tile)}")
+         f"do_esrgan={do_esrgan} refine_first={refine_first} esrgan={esrgan_model} "
+         f"refine_tile={int(refine_tile)}")
 
-    # Etage 1 : ESRGAN (saute si do_esrgan=False -> img2img pur)
-    if do_esrgan and esrgan_model:
+    def _esrgan_stage(img):
         t0 = time.time()
-        _progress(0.15, f"ESRGAN upscale {w0}x{h0}...")
+        iw, ih = img.size
+        _progress(0.15, f"ESRGAN upscale {iw}x{ih}...")
         model = load_esrgan(esrgan_model)
-        _log(f"stage 1/2 ESRGAN upscale: {w0}x{h0} (tile {int(tile)}) ...")
-        upscaled = esrgan_upscale(image, model, int(tile), int(overlap))
+        _log(f"ESRGAN upscale: {iw}x{ih} (tile {int(tile)}) ...")
+        up = esrgan_upscale(img, model, int(tile), int(overlap))
+        # Cible = facteur applique a la taille d'origine (independant de l'ordre).
         target_w = round_to_multiple(w0 * factor)
         target_h = round_to_multiple(h0 * factor)
-        upscaled = upscaled.resize((target_w, target_h), Image.LANCZOS)
-        timings["esrgan"] = time.time() - t0
-        _log(f"stage 1/2 done in {timings['esrgan']:.1f}s -> {target_w}x{target_h}")
-    else:
-        upscaled = image
-        target_w, target_h = w0, h0
-        timings["esrgan"] = 0.0
-        _log(f"ESRGAN skipped (img2img only) on {w0}x{h0}")
+        up = up.resize((target_w, target_h), Image.LANCZOS)
+        timings["esrgan"] += time.time() - t0
+        _log(f"ESRGAN done in {timings['esrgan']:.1f}s -> {target_w}x{target_h}")
+        return up
 
-    if denoise <= 0.001:
-        timings["refine"] = 0.0
-        _log("refine skipped (denoise = 0)")
-        return upscaled, timings
-
-    # Etage 2 : Z-Image img2img (image entiere, ou tuiles si refine_tile > 0)
-    t0 = time.time()
-    pipe = load_pipe()
-    if int(refine_tile) > 0:
-        refined = _refine_tiled(pipe, upscaled, denoise, steps, prompt, seed,
+    def _refine_stage(img):
+        t0 = time.time()
+        pipe = load_pipe()
+        rw, rh = img.size
+        if int(refine_tile) > 0:
+            out = _refine_tiled(pipe, img, denoise, steps, prompt, seed,
                                 int(refine_tile), int(refine_overlap))
+        else:
+            _log(f"Z-Image refine: whole image {rw}x{rh}, denoise {float(denoise):.2f}, "
+                 f"{int(steps)} steps ...")
+            _progress(0.5, f"Z-Image refine {rw}x{rh}...")
+            out = _refine_whole(pipe, img, denoise, steps, prompt, seed)
+        timings["refine"] += time.time() - t0
+        return out
+
+    result = image
+    if refine_first:
+        # refine sur l'image native (rapide) puis agrandissement ESRGAN.
+        if do_refine:
+            result = _refine_stage(result)
+        if use_esrgan:
+            result = _esrgan_stage(result)
     else:
-        _log(f"stage 2/2 Z-Image refine: whole image {target_w}x{target_h}, "
-             f"denoise {float(denoise):.2f}, {int(steps)} steps ...")
-        _progress(0.5, f"Z-Image refine {target_w}x{target_h}...")
-        refined = _refine_whole(pipe, upscaled, denoise, steps, prompt, seed)
-    timings["refine"] = time.time() - t0
+        # ordre classique: ESRGAN (detailleur) puis refine a la resolution agrandie.
+        if use_esrgan:
+            result = _esrgan_stage(result)
+        if do_refine:
+            result = _refine_stage(result)
+
+    if not use_esrgan and not do_refine:
+        _log(f"process_one: nothing to do (no ESRGAN, denoise=0) on {w0}x{h0}")
 
     gc.collect()
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
     _progress(1.0, "Done")
-    _log(f"stage 2/2 done in {timings['refine']:.1f}s | total "
-         f"{timings['esrgan'] + timings['refine']:.1f}s")
-    return refined, timings
+    _log(f"process_one done | esrgan {timings['esrgan']:.1f}s + refine {timings['refine']:.1f}s "
+         f"= {timings['esrgan'] + timings['refine']:.1f}s")
+    return result, timings
 
 
 def txt2img_run(prompt, width, height, gen_steps, seed, negative_prompt="",
                 upscale=False, esrgan_model=None, factor=2.0, denoise=0.30, steps=12,
                 tile=DEFAULT_TILE, overlap=DEFAULT_OVERLAP,
-                refine_tile=DEFAULT_REFINE_TILE, refine_overlap=DEFAULT_REFINE_OVERLAP):
+                refine_tile=DEFAULT_REFINE_TILE, refine_overlap=DEFAULT_REFINE_OVERLAP,
+                refine_first=False):
     """Genere une image (txt2img Z-Image) puis, si upscale=True, la passe dans le
     pipeline ESRGAN + refine. Renvoie (image, timings_dict)."""
     timings = {"txt2img": 0.0, "esrgan": 0.0, "refine": 0.0}
@@ -706,7 +738,8 @@ def txt2img_run(prompt, width, height, gen_steps, seed, negative_prompt="",
     if not upscale:
         return base, timings
     result, t = process_one(base, esrgan_model, factor, denoise, steps, prompt, seed,
-                            tile, overlap, refine_tile=refine_tile, refine_overlap=refine_overlap)
+                            tile, overlap, refine_tile=refine_tile, refine_overlap=refine_overlap,
+                            refine_first=refine_first)
     timings["esrgan"] = t.get("esrgan", 0.0)
     timings["refine"] = t.get("refine", 0.0)
     return result, timings

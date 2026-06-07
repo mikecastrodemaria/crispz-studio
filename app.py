@@ -386,7 +386,7 @@ def run(image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed
         tile, overlap, save_mode=DEFAULT_SAVE_MODE, output_dir=DEFAULT_OUTPUT_DIR,
         output_format=DEFAULT_OUTPUT_FORMAT, time_log_path=None, print_output=False,
         refine_tile=DEFAULT_REFINE_TILE, refine_overlap=DEFAULT_REFINE_OVERLAP,
-        do_esrgan=True):
+        do_esrgan=True, refine_first=False):
     """Point d'entree commun UI / CLI.
     Renvoie (last_result_PIL, last_source_PIL, report_markdown).
     - Si source_folder est un dossier existant -> batch sur ses images.
@@ -394,6 +394,7 @@ def run(image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed
     - print_output: imprime le chemin absolu de chaque image sauvee sur stdout.
     - refine_tile > 0: passe Z-Image en tuiles (4K+, plafonne le pic VRAM).
     - do_esrgan=False: img2img pur (pas d'ESRGAN, juste le refine Z-Image).
+    - refine_first=True: refine PUIS ESRGAN (diffusion a la resolution native = rapide).
     """
     if do_esrgan and not esrgan_model:
         raise gr.Error(f"No ESRGAN model found in {cz_esrgan.ESRGAN_DIR}.")
@@ -412,7 +413,7 @@ def run(image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed
                 result, t = process_one(src, esrgan_model, factor, denoise, steps,
                                         prompt, seed, tile, overlap,
                                         refine_tile=refine_tile, refine_overlap=refine_overlap,
-                                        do_esrgan=do_esrgan)
+                                        do_esrgan=do_esrgan, refine_first=refine_first)
                 _srcbase = os.path.splitext(os.path.basename(p))[0]
                 _tag = f"{_srcbase}_" + ("upscaled" if do_esrgan else "img2img")
                 dst = build_output_path(p, save_mode, output_dir, output_format,
@@ -448,7 +449,7 @@ def run(image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed
     result, t = process_one(src_img, esrgan_model, factor, denoise, steps,
                             prompt, seed, tile, overlap,
                             refine_tile=refine_tile, refine_overlap=refine_overlap,
-                            do_esrgan=do_esrgan)
+                            do_esrgan=do_esrgan, refine_first=refine_first)
     dst = None
     _srcbase = os.path.splitext(os.path.basename(source_path))[0] if source_path else None
     _tag = (f"{_srcbase}_" if _srcbase else "") + ("upscaled" if do_esrgan else "img2img")
@@ -1064,7 +1065,7 @@ def _ui_txt2img(prompt, negative, width, height, gen_steps, seed, guidance, upsc
 def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                  input_mode, ref1, ref2, ref3, ref4, faceswap_enable, faceswap_src,
                  width, height, gen_steps, image_number, seed, guidance, offload_mode,
-                 esrgan_model, do_esrgan, do_refine, factor, denoise, refine_steps,
+                 esrgan_model, do_esrgan, do_refine, refine_first, factor, denoise, refine_steps,
                  tile, overlap, refine_tile, refine_overlap,
                  save_mode, output_dir, output_format, history,
                  progress=gr.Progress(track_tqdm=True)):
@@ -1148,7 +1149,7 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                 input_image, None, esrgan_model, factor, eff_denoise, refine_steps, full_prompt, seed,
                 tile, overlap, save_mode=save_mode, output_dir=output_dir,
                 output_format=output_format, refine_tile=refine_tile, refine_overlap=refine_overlap,
-                do_esrgan=bool(do_esrgan))
+                do_esrgan=bool(do_esrgan), refine_first=bool(refine_first))
             return _done([last_result], report)
         # txt2img (batch image_number)
         n = max(1, int(image_number))
@@ -1275,6 +1276,10 @@ def build_ui():
                                         do_refine_cb = gr.Checkbox(value=bool(CONFIG.get("default_refine", True)),
                                                                    label="Refine (img2img)",
                                                                    info="Uncheck = ESRGAN upscale only (skip the slow diffusion pass).")
+                                    refine_first_cb = gr.Checkbox(value=bool(CONFIG.get("default_refine_first", False)),
+                                                                  label="Refine before upscale (faster)",
+                                                                  info="Refine at native res THEN ESRGAN enlarge "
+                                                                       "(~4-16x faster refine; a touch less high-res detail).")
                                     preset = gr.Dropdown(list(PRESETS), value="Custom", label="Use case preset")
                                     esrgan = gr.Dropdown(models, value=default_model, label="ESRGAN model")
                                     factor = gr.Slider(1.0, 4.0, value=DEFAULT_FACTOR, step=0.5, label="Upscale factor")
@@ -1621,7 +1626,7 @@ def build_ui():
                        ref1, ref2, ref3, ref4,
                        faceswap_enable, faceswap_src,
                        width, height, gen_steps, image_number,
-                       seed, guidance, offload, esrgan, do_esrgan_cb, do_refine_cb, factor, denoise, refine_steps,
+                       seed, guidance, offload, esrgan, do_esrgan_cb, do_refine_cb, refine_first_cb, factor, denoise, refine_steps,
                        tile, overlap, refine_tile, refine_overlap, save_mode, output_dir, output_format,
                        history]
         _gen_outputs = [out, report, history, history_gallery]
@@ -1776,6 +1781,9 @@ def cli_main(argv=None):
     parser.add_argument("--no-refine", action="store_true",
                         help="Skip the (slow) Z-Image img2img refine pass -> ESRGAN upscale only "
                              "(shortcut for --denoise 0).")
+    parser.add_argument("--refine-first", action="store_true",
+                        help="Refine at native resolution THEN ESRGAN upscale (~4-16x faster "
+                             "refine), instead of ESRGAN-then-refine.")
     parser.add_argument("--steps", type=int, default=DEFAULT_STEPS, help="Diffusion steps")
     parser.add_argument("--prompt", default="", help="Optional prompt")
     parser.add_argument("--seed", type=int, default=-1, help="Seed (-1 = random)")
@@ -1968,7 +1976,8 @@ def cli_main(argv=None):
             args.negative, upscale=args.upscale, esrgan_model=model_name,
             factor=args.factor, denoise=args.denoise, steps=args.steps,
             tile=args.tile, overlap=args.overlap,
-            refine_tile=args.refine_tile, refine_overlap=args.refine_overlap)
+            refine_tile=args.refine_tile, refine_overlap=args.refine_overlap,
+            refine_first=args.refine_first)
         result = _maybe_faceswap(result)
         # Sortie : -o fichier, sinon output_dir (sauf save-mode display)
         dst = None
@@ -2061,7 +2070,7 @@ def cli_main(argv=None):
             output_format=args.output_format, time_log_path=args.time_log,
             print_output=args.print_output,
             refine_tile=args.refine_tile, refine_overlap=args.refine_overlap,
-            do_esrgan=not args.no_esrgan,
+            do_esrgan=not args.no_esrgan, refine_first=args.refine_first,
         )
         if not quiet:
             print(report)
@@ -2085,7 +2094,7 @@ def cli_main(argv=None):
             result, t = process_one(img, model_name, args.factor, args.denoise, args.steps,
                                     args.prompt, args.seed, args.tile, args.overlap,
                                     refine_tile=args.refine_tile, refine_overlap=args.refine_overlap,
-                                    do_esrgan=not args.no_esrgan)
+                                    do_esrgan=not args.no_esrgan, refine_first=args.refine_first)
             os.makedirs(os.path.dirname(os.path.abspath(explicit_output_file)) or ".", exist_ok=True)
             save_image(result, explicit_output_file, args.output_format)
             if args.print_output:
@@ -2102,7 +2111,7 @@ def cli_main(argv=None):
                 output_format=args.output_format, time_log_path=args.time_log,
                 print_output=args.print_output,
                 refine_tile=args.refine_tile, refine_overlap=args.refine_overlap,
-                do_esrgan=not args.no_esrgan,
+                do_esrgan=not args.no_esrgan, refine_first=args.refine_first,
             )
             if not quiet:
                 print(report)

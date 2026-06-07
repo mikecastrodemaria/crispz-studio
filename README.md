@@ -635,6 +635,31 @@ sits right at the 32 GB limit and spills.
 
 ---
 
+## Speed (making img2img / upscale faster)
+
+The img2img **refine** is the slow part of the upscale path because the diffusion
+runs at the **post-ESRGAN** resolution (x2 = 4x the pixels, x4 = 16x). Levers,
+fastest first:
+
+- **Skip the refine** when you only need a clean enlarge: uncheck **"Refine
+  (img2img)"** (UI) or `--no-refine` (CLI). ESRGAN alone is near-instant.
+- **Refine before upscale**: check **"Refine before upscale (faster)"** (UI) or
+  `--refine-first` (CLI). The diffusion runs at the *native* resolution, then ESRGAN
+  enlarges -> the refine is ~4-16x faster (a touch less high-res detail). Default
+  via `default_refine_first` in `config.txt`.
+- **Fewer refine steps / lower denoise** (effective steps = `steps x denoise`).
+- **Attention slicing** is now auto: enabled only with `--cpu-offload model/sequential`
+  (VRAM-constrained). At full VRAM (`none`, default) attention runs natively = faster.
+  TF32 matmul is enabled on CUDA. No action needed.
+
+```bash
+# Fast img2img + upscale: refine small, then ESRGAN to x2
+python app.py --cli -i in.png -m 4x-ClearRealityV1_Soft.safetensors --refine-first \
+    --factor 2 --denoise 0.30 --save-mode local --output-dir out
+```
+
+---
+
 ## Server mode (`--serve`)
 
 For repeated upscales, the per-call model load (Z-Image + Qwen3-4B encoder) dominates
