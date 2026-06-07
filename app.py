@@ -1469,15 +1469,51 @@ def build_output_path(source_path, save_mode, output_dir, output_format,
     return _unique_path(os.path.join(target_dir, fname))
 
 
-def save_image(img, dst_path, output_format):
-    """Sauve avec le bon format Pillow."""
+def save_image(img, dst_path, output_format, meta=None):
+    """Sauve avec le bon format Pillow. Si meta (dict) est fourni: l'embarque dans
+    le PNG (chunk texte 'crispz') ET ecrit un sidecar '<fichier>.json'."""
     fmt = output_format.lower().lstrip(".")
     if fmt in ("jpg", "jpeg"):
         img.convert("RGB").save(dst_path, "JPEG", quality=95)
     elif fmt == "webp":
         img.save(dst_path, "WEBP", quality=95, method=6)
     else:
-        img.save(dst_path, "PNG")
+        pnginfo = None
+        if meta:
+            try:
+                from PIL import PngImagePlugin
+                pnginfo = PngImagePlugin.PngInfo()
+                pnginfo.add_text("crispz", json.dumps(meta, ensure_ascii=False))
+            except Exception:
+                pnginfo = None
+        img.save(dst_path, "PNG", pnginfo=pnginfo)
+    if meta:
+        try:
+            with open(dst_path + ".json", "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            _dbg(f"sidecar json failed: {e}")
+
+
+def _gen_meta(mode, prompt, negative="", seed=None, steps=None, guidance=None,
+              size=None, model=None, extra=None):
+    """Construit le dict de metadonnees de generation (pour sidecar/PNG)."""
+    m = {"app": "crispz-studio", "mode": mode, "prompt": prompt or "",
+         "negative": negative or "", "date": _now_stamp()}
+    if seed is not None and int(seed) >= 0:
+        m["seed"] = int(seed)
+    if steps is not None:
+        m["steps"] = int(steps)
+    if guidance is not None:
+        m["guidance"] = float(guidance)
+    if size:
+        m["size"] = f"{size[0]}x{size[1]}"
+    m["model"] = model or (ZIMAGE_TRANSFORMER or BASE_REPO)
+    if LORAS:
+        m["loras"] = [f"{os.path.basename(p)}@{w}" for p, w in LORAS]
+    if extra:
+        m.update(extra)
+    return m
 
 
 def _list_folder_images(folder):
@@ -1558,7 +1594,11 @@ def run(image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed
                 dst = build_output_path(p, save_mode, output_dir, output_format,
                                         tag=_tag, seed=seed, size=result.size)
                 if dst:
-                    save_image(result, dst, output_format)
+                    save_image(result, dst, output_format, meta=_gen_meta(
+                        "upscale" if do_esrgan else "img2img", prompt, seed=seed,
+                        steps=steps, guidance=GUIDANCE, size=result.size,
+                        extra={"source": os.path.basename(p), "factor": factor,
+                               "denoise": denoise, "esrgan": esrgan_model if do_esrgan else None}))
                     if print_output:
                         print(os.path.abspath(dst))
                 _append_time_log(time_log_path, p, dst, t, save_mode, output_format)
@@ -1597,7 +1637,11 @@ def run(image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed
     else:
         save_warning = ""
     if dst:
-        save_image(result, dst, output_format)
+        save_image(result, dst, output_format, meta=_gen_meta(
+            "upscale" if do_esrgan else "img2img", prompt, seed=seed, steps=steps,
+            guidance=GUIDANCE, size=result.size,
+            extra={"factor": factor, "denoise": denoise,
+                   "esrgan": esrgan_model if do_esrgan else None}))
         if print_output:
             print(os.path.abspath(dst))
     _append_time_log(time_log_path, source_path, dst, t, save_mode, output_format)
@@ -1872,7 +1916,9 @@ def _ui_reframe(image, ratio, steps, prompt, guidance, offload_mode, seed,
                 dst = build_output_path(None, save_mode, output_dir, output_format,
                                         tag="reframe", seed=seed, size=res.size)
                 if dst:
-                    save_image(res, dst, output_format)
+                    save_image(res, dst, output_format, meta=_gen_meta(
+                        "reframe", prompt, seed=seed, steps=steps, guidance=GUIDANCE,
+                        size=res.size, extra={"ratio": ratio}))
             except Exception as e:
                 _dbg(f"save reframe failed: {e}")
         new_hist = ([res] + list(history or []))[:200]
@@ -1906,7 +1952,9 @@ def _ui_inpaint(editor_value, prompt, negative, styles, guidance, offload_mode, 
                 dst = build_output_path(None, save_mode, output_dir, output_format,
                                         tag="inpaint", seed=seed, size=res.size)
                 if dst:
-                    save_image(res, dst, output_format)
+                    save_image(res, dst, output_format, meta=_gen_meta(
+                        "inpaint", full_prompt, seed=seed, steps=steps, guidance=GUIDANCE,
+                        size=res.size, extra={"strength": denoise}))
             except Exception as e:
                 _dbg(f"save inpaint failed: {e}")
         new_hist = ([res] + list(history or []))[:200]
@@ -1944,26 +1992,58 @@ def _gallery_load(output_dir):
     return files, files, f"{len(files)} image(s) in the output folder."
 
 
+def _read_image_meta(path):
+    """Lit les metadonnees: sidecar '<fichier>.json', sinon chunk PNG 'crispz'."""
+    sc = path + ".json"
+    if os.path.isfile(sc):
+        try:
+            with open(sc, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    try:
+        with Image.open(path) as im:
+            txt = (im.info or {}).get("crispz")
+            if txt:
+                return json.loads(txt)
+    except Exception:
+        pass
+    return {}
+
+
 def _gallery_selected(paths, evt: gr.SelectData):
     """Affiche les metadonnees de l'image selectionnee + son chemin."""
     if not paths or evt is None or evt.index is None or evt.index >= len(paths):
         return "*No selection.*", ""
     path = paths[evt.index]
     info = [f"**File:** `{os.path.basename(path)}`"]
-    try:
-        with Image.open(path) as im:
-            info.append(f"**Size:** {im.size[0]}x{im.size[1]}")
-    except Exception:
-        pass
+    meta = _read_image_meta(path)
+    if meta.get("prompt"):
+        info.append(f"**Prompt:** {meta['prompt']}")
+    if meta.get("negative"):
+        info.append(f"**Negative:** {meta['negative']}")
+    line2 = []
+    for k in ("mode", "seed", "steps", "guidance", "size"):
+        if meta.get(k) is not None:
+            line2.append(f"{k}={meta[k]}")
+    if meta.get("model"):
+        line2.append(f"model={os.path.basename(str(meta['model']))}")
+    if meta.get("loras"):
+        line2.append("loras=" + ",".join(meta["loras"]))
+    if line2:
+        info.append("**Params:** " + "  ".join(line2))
+    if not meta:  # pas de sidecar -> infos minimales (taille reelle)
+        try:
+            with Image.open(path) as im:
+                info.append(f"**Size:** {im.size[0]}x{im.size[1]}")
+        except Exception:
+            pass
     try:
         st = os.stat(path)
-        info.append(f"**Weight:** {st.st_size / 1024:.0f} KB")
-        info.append(f"**Modified:** {datetime.datetime.fromtimestamp(st.st_mtime):%Y-%m-%d %H:%M}")
+        info.append(f"**Weight:** {st.st_size / 1024:.0f} KB  ·  "
+                    f"**Modified:** {datetime.datetime.fromtimestamp(st.st_mtime):%Y-%m-%d %H:%M}")
     except Exception:
         pass
-    for tok in os.path.splitext(os.path.basename(path))[0].split("_"):
-        if tok.startswith("seed"):
-            info.append(f"**Seed:** {tok[4:]}")
     info.append(f"**Path:** `{path}`")
     return "  \n".join(info), path
 
@@ -1974,6 +2054,8 @@ def _gallery_delete(path, output_dir):
     if path and os.path.isfile(path):
         try:
             os.remove(path)
+            if os.path.isfile(path + ".json"):   # supprime aussi le sidecar
+                os.remove(path + ".json")
             msg = f"Deleted {os.path.basename(path)}."
         except Exception as e:
             msg = f"Delete failed: {e}"
@@ -2131,7 +2213,9 @@ def _ui_generate(prompt, negative, styles, use_input, input_image,
                     dst = build_output_path(None, save_mode, output_dir, output_format,
                                             tag="omni", seed=seed, size=img.size)
                     if dst:
-                        save_image(img, dst, output_format)
+                        save_image(img, dst, output_format, meta=_gen_meta(
+                            "omni", full_prompt, full_negative, seed, gen_steps, GUIDANCE,
+                            img.size, extra={"refs": len(refs)}))
                         _dbg(f"saved: {dst}")
                 except Exception as e:
                     _dbg(f"save failed: {e}")
@@ -2165,7 +2249,9 @@ def _ui_generate(prompt, negative, styles, use_input, input_image,
                                             tag="txt2img", seed=s, size=img.size,
                                             index=(i + 1 if n > 1 else 0))
                     if dst:
-                        save_image(img, dst, output_format)
+                        save_image(img, dst, output_format, meta=_gen_meta(
+                            "txt2img", full_prompt, full_negative, s, gen_steps, GUIDANCE,
+                            img.size, extra={"styles": styles} if styles else None))
                         _dbg(f"saved: {dst}")
                 except Exception as e:
                     _dbg(f"save failed: {e}")
