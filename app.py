@@ -22,6 +22,7 @@ import sys
 import gc
 import io
 import random
+import threading
 import warnings
 
 # Masque les DeprecationWarning Gradio "pass theme/css/js to launch() instead":
@@ -1588,6 +1589,9 @@ def build_output_path(source_path, save_mode, output_dir, output_format,
         target_dir = output_dir or DEFAULT_OUTPUT_DIR
         if not os.path.isabs(target_dir):
             target_dir = os.path.join(HERE, target_dir)
+    # Sous-dossier par date (facon Fooocus) pour local/custom, si active (defaut oui).
+    if save_mode in ("local", "custom") and CONFIG.get("date_subfolders", True):
+        target_dir = os.path.join(target_dir, datetime.datetime.now().strftime("%Y-%m-%d"))
     os.makedirs(target_dir, exist_ok=True)
     return _unique_path(os.path.join(target_dir, fname))
 
@@ -2197,13 +2201,19 @@ def _ui_clear_history():
 
 
 def _list_output_files(output_dir, limit=300):
-    """Liste les images du dossier de sortie (plus recentes en tete)."""
+    """Liste les images du dossier de sortie, recursif (sous-dossiers date),
+    plus recentes en tete. Ignore _index (artefacts Asset Browser)."""
     d = output_dir or DEFAULT_OUTPUT_DIR
     if not os.path.isabs(d):
         d = os.path.join(HERE, d)
     if not os.path.isdir(d):
         return []
-    files = [os.path.join(d, f) for f in os.listdir(d) if f.lower().endswith(IMG_EXTS)]
+    files = []
+    for root, dirs, fs in os.walk(d):
+        dirs[:] = [x for x in dirs if x != "_index"]
+        for f in fs:
+            if f.lower().endswith(IMG_EXTS):
+                files.append(os.path.join(root, f))
     files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return files[:limit]
 
@@ -2381,7 +2391,8 @@ const grid=document.getElementById('grid'),lb=document.getElementById('lb'),big=
 side=document.getElementById('side'),q=document.getElementById('q'),cnt=document.getElementById('count');
 function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function render(){grid.innerHTML='';VIEW.forEach((e,i)=>{const c=document.createElement('div');c.className='cell';
-c.innerHTML='<img loading="lazy" src="'+encodeURI(e.thumb)+'"><div class="cap">'+esc(e.file)+'</div>';
+c.innerHTML='<img loading="lazy" src="'+encodeURI(e.thumb)+'" onerror="this.onerror=null;this.src=\''+encodeURI(e.file)+'\'">'+
+'<div class="cap">'+esc(e.file)+'</div>';
 c.onclick=()=>open(i);grid.appendChild(c);});cnt.textContent=VIEW.length+' / '+DATA.length;}
 function filter(){const s=q.value.toLowerCase().trim();VIEW=!s?DATA.slice():DATA.filter(e=>
 (e.file+' '+(e.prompt||'')+' '+(e.mode||'')+' '+(e.seed||'')).toLowerCase().includes(s));render();}
@@ -2395,9 +2406,15 @@ h+='file: '+esc(e.file)+'</div>';
 h+='<button onclick="cp(\''+'prompt'+'\')">Copy prompt</button>';
 h+='<button onclick="cp(\''+'all'+'\')">Copy all</button>';
 h+='<a href="'+encodeURI(e.file)+'" download style="margin-left:6px;color:#9fb3d6">Download</a>';
+h+='<button onclick="delAsset()" style="margin-left:6px;background:#5a2230;border-color:#7a2e40">Delete</button>';
 side.innerHTML=h;lb.classList.add('open');}
 function cp(what){const e=VIEW[cur];let t=e.prompt||'';if(what==='all')t=JSON.stringify(e,null,2);
 navigator.clipboard.writeText(t).catch(()=>{});}
+async function delAsset(){const e=VIEW[cur];if(!e||!confirm('Delete '+e.file+' ?'))return;
+try{const r=await fetch('/gradio_api/call/delete_asset',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({data:[e.file]})});const j=await r.json();const eid=j.event_id||j.hash;
+if(eid){await fetch('/gradio_api/call/delete_asset/'+eid);}
+DATA=DATA.filter(x=>x.file!==e.file);close();filter();}catch(err){alert('Delete failed: '+err);}}
 function close(){lb.classList.remove('open');}
 document.getElementById('close').onclick=close;
 document.getElementById('prev').onclick=()=>open((cur-1+VIEW.length)%VIEW.length);
@@ -2415,37 +2432,69 @@ DATA=m.images||[];if(m.blur)document.body.classList.add('blur');filter();})
 """
 
 
-def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=True):
-    """Genere index.html + thumbnails + _index/manifest.json dans le dossier de sortie."""
+def _ab_scan(d):
+    """(relpath, fullpath) de toutes les images sous d (recursif), _index ignore.
+    Plus recentes en tete."""
+    out = []
+    for root, dirs, files in os.walk(d):
+        dirs[:] = [x for x in dirs if x != "_index"]
+        for f in files:
+            if f.lower().endswith(IMG_EXTS):
+                fp = os.path.join(root, f)
+                out.append((os.path.relpath(fp, d).replace("\\", "/"), fp))
+    out.sort(key=lambda t: os.path.getmtime(t[1]), reverse=True)
+    return out
+
+
+def _ab_gen_thumbs(jobs, size, quality):
+    """Genere une liste de thumbnails (utilise en tache de fond)."""
+    for src, tp in jobs:
+        try:
+            os.makedirs(os.path.dirname(tp), exist_ok=True)
+            if not (os.path.isfile(tp) and os.path.getmtime(tp) >= os.path.getmtime(src)):
+                _ab_make_thumb(src, tp, size, quality)
+        except Exception:
+            pass
+    _log(f"asset-browser: {len(jobs)} thumbnail(s) generated (background)")
+
+
+def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=True,
+               background_thumbs=False):
+    """Ecrit index.html + _index/manifest.json (+ thumbnails). Recursif (sous-dossiers
+    date). background_thumbs=True -> ouverture immediate, miniatures en tache de fond
+    (l'image complete sert de fallback en attendant)."""
     d = _ab_resolve_dir(output_dir)
     os.makedirs(d, exist_ok=True)
     idx_dir = os.path.join(d, "_index")
-    thumbs_dir = os.path.join(idx_dir, "thumbs")
-    os.makedirs(thumbs_dir, exist_ok=True)
+    os.makedirs(os.path.join(idx_dir, "thumbs"), exist_ok=True)
     with open(os.path.join(d, "index.html"), "w", encoding="utf-8") as f:
         f.write(ASSET_BROWSER_HTML)
-    imgs = [f for f in os.listdir(d) if f.lower().endswith(IMG_EXTS)]
-    imgs.sort(key=lambda f: os.path.getmtime(os.path.join(d, f)), reverse=True)
-    entries = []
-    for name in imgs:
-        p = os.path.join(d, name)
-        thumb_rel = name
-        if gen_thumbs:
-            try:
-                tname = os.path.splitext(name)[0] + ".jpg"
-                tp = os.path.join(thumbs_dir, tname)
-                if not (os.path.isfile(tp) and os.path.getmtime(tp) >= os.path.getmtime(p)):
+    entries, jobs = [], []
+    for rel, p in _ab_scan(d):
+        thumb_rel = rel  # fallback = image complete
+        trel = "_index/thumbs/" + os.path.splitext(rel)[0] + ".jpg"
+        tp = os.path.join(d, trel)
+        if os.path.isfile(tp) and os.path.getmtime(tp) >= os.path.getmtime(p):
+            thumb_rel = trel
+        elif gen_thumbs:
+            if background_thumbs:
+                jobs.append((p, tp))
+            else:
+                try:
+                    os.makedirs(os.path.dirname(tp), exist_ok=True)
                     _ab_make_thumb(p, tp, thumb_size, quality)
-                thumb_rel = "_index/thumbs/" + tname
-            except Exception as e:
-                _dbg(f"ab thumb failed {name}: {e}")
+                    thumb_rel = trel
+                except Exception as e:
+                    _dbg(f"ab thumb failed {rel}: {e}")
         meta = _read_image_meta(p)
+        sub = os.path.dirname(rel)
         try:
-            date = datetime.datetime.fromtimestamp(os.path.getmtime(p)).strftime("%Y-%m-%d %H:%M")
+            date = sub if (len(sub) == 10 and sub[4] == "-") else \
+                datetime.datetime.fromtimestamp(os.path.getmtime(p)).strftime("%Y-%m-%d %H:%M")
         except Exception:
-            date = ""
+            date = sub
         entries.append({
-            "file": name, "thumb": thumb_rel, "date": date,
+            "file": rel, "thumb": thumb_rel, "date": date, "day": sub or "(root)",
             "prompt": meta.get("prompt", ""), "negative": meta.get("negative", ""),
             "seed": meta.get("seed"), "steps": meta.get("steps"),
             "guidance": meta.get("guidance"), "size": meta.get("size"), "mode": meta.get("mode"),
@@ -2453,33 +2502,60 @@ def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=Tr
             "loras": meta.get("loras"),
         })
     manifest = {"count": len(entries), "blur": bool(blur), "thumb_size": int(thumb_size),
+                "pending_thumbs": len(jobs),
                 "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "images": entries}
     with open(os.path.join(idx_dir, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False)
-    return len(entries), os.path.join(d, "index.html")
+    if jobs and background_thumbs:
+        threading.Thread(target=_ab_gen_thumbs, args=(jobs, int(thumb_size), int(quality)),
+                         daemon=True).start()
+    return len(entries), os.path.join(d, "index.html"), len(jobs)
 
 
 def _ui_ab_reindex(output_dir, thumb_size, quality, blur, gen_thumbs):
+    """Bouton FORCE: regenere TOUTES les miniatures (synchrone) + lien."""
     try:
-        n, idx = ab_reindex(output_dir, thumb_size, quality, blur, gen_thumbs)
+        n, idx, _ = ab_reindex(output_dir, thumb_size, quality, blur, gen_thumbs,
+                               background_thumbs=False)
     except Exception as e:
         return "", f"Asset Browser reindex failed: {e}"
     url = "/gradio_api/file=" + os.path.abspath(idx).replace("\\", "/")
     link = (f'<a href="{url}" target="_blank" style="display:inline-block;padding:8px 14px;'
             f'background:#3b4356;color:#fff;border-radius:6px;text-decoration:none;">'
             f'\U0001F5BC️ Open Asset Browser ({n} images)</a>')
-    return link, f"Indexed {n} image(s) -> {os.path.dirname(idx)}"
+    return link, f"Rebuilt all thumbnails for {n} image(s)."
 
 
 def _ui_gallery_open(output_dir):
-    """(Re)construit l'Asset Browser du dossier de sortie + renvoie l'URL a ouvrir."""
+    """Ouverture RAPIDE: manifest immediat, miniatures generees en tache de fond."""
     try:
-        n, idx = ab_reindex(output_dir, _ab_get("thumbnail_size"), _ab_get("thumbnail_quality"),
-                            bool(_ab_get("blur_thumbnails")), bool(_ab_get("generate_thumbnails")))
+        n, idx, pending = ab_reindex(output_dir, _ab_get("thumbnail_size"),
+                                     _ab_get("thumbnail_quality"), bool(_ab_get("blur_thumbnails")),
+                                     bool(_ab_get("generate_thumbnails")), background_thumbs=True)
     except Exception as e:
         return f"Gallery build failed: {e}", ""
     url = "/gradio_api/file=" + os.path.abspath(idx).replace("\\", "/")
-    return f"Gallery ready ({n} images) - opening in a new tab...", url
+    extra = f" Generating {pending} thumbnail(s) in background (full images shown meanwhile)." if pending else ""
+    return f"Opening {n} image(s) in a new tab...{extra}", url
+
+
+def delete_asset(rel, output_dir=None):
+    """Supprime une image du dossier de sortie (+ sidecar + thumbnail). 'rel' est le
+    chemin relatif fourni par l'Asset Browser. Verifie que ca reste DANS le dossier."""
+    d = os.path.abspath(_ab_resolve_dir(output_dir or DEFAULT_OUTPUT_DIR))
+    target = os.path.abspath(os.path.join(d, rel or ""))
+    if not target.startswith(d + os.sep) or not os.path.isfile(target):
+        return "not found"
+    try:
+        os.remove(target)
+        for extra in (target + ".json",
+                      os.path.join(d, "_index", "thumbs", os.path.splitext(rel)[0] + ".jpg")):
+            if os.path.isfile(extra):
+                os.remove(extra)
+        _log(f"asset deleted: {rel}")
+        return "deleted"
+    except Exception as e:
+        return f"error: {e}"
 
 
 def _pil_to_b64_jpeg(img, max_side=1600, quality=85):
@@ -2809,6 +2885,11 @@ def build_ui():
         # La galerie du dossier de sortie s'ouvre dans un nouvel onglet (Asset Browser),
         # via le bouton sous l'apercu. Pas de panneau galerie inline.
         gallery_url = gr.Textbox(visible=False)
+        # Endpoint API (appele par l'Asset Browser pour supprimer une image)
+        del_in = gr.Textbox(visible=False)
+        del_out = gr.Textbox(visible=False)
+        del_btn = gr.Button(visible=False)
+        del_btn.click(delete_asset, del_in, del_out, api_name="delete_asset")
 
         with gr.Row():
             # ===== Colonne principale (apercu en haut, prompt + Generate, negative, input) =====
@@ -3119,7 +3200,8 @@ def build_ui():
                                                   label="Blur thumbnails (NSFW)")
                             ab_gen_thumbs = gr.Checkbox(value=bool(_ab_get("generate_thumbnails")),
                                                         label="Generate thumbnails")
-                        ab_reindex_btn = gr.Button("Reindex + open link", variant="primary", size="sm")
+                        ab_reindex_btn = gr.Button("Rebuild ALL thumbnails (force) + open link",
+                                                   variant="primary", size="sm")
                         ab_open_link = gr.HTML("")
                         ab_status = gr.Markdown("")
 
