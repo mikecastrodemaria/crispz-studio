@@ -359,14 +359,14 @@ def _ensure_base():
                 pipe.set_adapters(names, weights)
         except Exception as e:
             _log(f"LoRA load failed ({e}); continuing without LoRA")
-    # Attention slicing economise la VRAM mais ralentit (attention chunkee). On ne
-    # l'active que pour les modes offload (VRAM contrainte). En plein VRAM (offload
-    # none, defaut) -> attention native = plus rapide.
-    if OFFLOAD_MODE in ("model", "sequential"):
-        try:
-            pipe.enable_attention_slicing()
-        except Exception:
-            pass
+    # Attention slicing: INDISPENSABLE pour le refine haute-resolution (2K+). Sans lui,
+    # le pic VRAM de l'attention deborde au-dela des 32 Go et spille en RAM partagee
+    # Windows -> la passe devient 4-5x plus lente. On le garde toujours actif (le
+    # surcout en 1024 est negligeable; le desactiver casse le refine x2/x4).
+    try:
+        pipe.enable_attention_slicing()
+    except Exception:
+        pass
     # enable_*_cpu_offload gere lui-meme le device -> ne PAS faire .to(cuda) alors.
     if DEVICE == "cuda" and OFFLOAD_MODE == "model":
         pipe.enable_model_cpu_offload()
@@ -420,12 +420,11 @@ def _load_omni():
     _log(f"loading Z-Image Omni: {repo} (offload={OFFLOAD_MODE}) ...")
     t0 = time.time()
     pipe = ZImageOmniPipeline.from_pretrained(repo, torch_dtype=DTYPE)
-    # Attention slicing seulement en mode offload (VRAM contrainte); plein VRAM -> rapide.
-    if OFFLOAD_MODE in ("model", "sequential"):
-        try:
-            pipe.enable_attention_slicing()
-        except Exception:
-            pass
+    # Attention slicing toujours actif (cf. _ensure_base): evite le spill VRAM en haute-def.
+    try:
+        pipe.enable_attention_slicing()
+    except Exception:
+        pass
     if DEVICE == "cuda" and OFFLOAD_MODE == "model":
         pipe.enable_model_cpu_offload()
     elif DEVICE == "cuda" and OFFLOAD_MODE == "sequential":

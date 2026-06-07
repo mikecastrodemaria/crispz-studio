@@ -647,10 +647,12 @@ fastest first:
   `--refine-first` (CLI). The diffusion runs at the *native* resolution, then ESRGAN
   enlarges -> the refine is ~4-16x faster (a touch less high-res detail). Default
   via `default_refine_first` in `config.txt`.
+- **`--cpu-offload model`**: on a 32 GB card the x2 refine at ~2K *spills* into
+  Windows shared memory in `none` mode (slow); `model` fits in ~24 GB with no spill
+  and is actually **faster**. This is the single biggest fix if the refine crawls.
 - **Fewer refine steps / lower denoise** (effective steps = `steps x denoise`).
-- **Attention slicing** is now auto: enabled only with `--cpu-offload model/sequential`
-  (VRAM-constrained). At full VRAM (`none`, default) attention runs natively = faster.
-  TF32 matmul is enabled on CUDA. No action needed.
+- Attention slicing stays on (it caps the refine's VRAM peak; turning it off makes
+  high-res refines spill and run ~4-5x slower). TF32 matmul is enabled on CUDA.
 
 ```bash
 # Fast img2img + upscale: refine small, then ESRGAN to x2
