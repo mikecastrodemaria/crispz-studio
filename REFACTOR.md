@@ -19,19 +19,21 @@ Do NOT do it all at once. One module per PR, smoke-green between each.
 - [x] **Step 5 — `cz_prompt.py`**: styles + wildcards (STYLES/_apply_styles/_pick_styles
   + WILDCARDS_DIR/set_wildcards_dir/_apply_wildcards/list_wildcards). App reads the live
   `cz_prompt.WILDCARDS_DIR`. Validated: style applied, setter propagation, smoke 19/19.
-- [~] **Step 6 — `cz_esrgan.py` / `cz_face.py`**: leaf compute. Mutable caches
+- [x] **Step 6 — `cz_esrgan.py` / `cz_face.py`**: leaf compute. Mutable caches
   (_ESRGAN_CACHE / _FACE_APP/_FACE_SWAPPER/_FACE_RESTORE_SESSION/_BLIP) + setters must
   move WITH the functions so bare refs stay valid.
   - [x] **6a — `cz_esrgan.py`**: ESRGAN_DIR + _ESRGAN_CACHE + set_esrgan_dir +
     list_esrgan_models + load_esrgan + _pil_to_tensor/_tensor_to_pil + esrgan_upscale.
     App reads the live `cz_esrgan.ESRGAN_DIR` (~13 sites). Validated: `is`-identity +
     setter clears cache + build_ui + smoke 19/19. (in-browser pass pending)
-  - [ ] **6b — `cz_face.py`**: _BLIP/_local_caption + _FACE_APP/_FACE_SWAPPER/
+  - [x] **6b — `cz_face.py`**: _BLIP/_local_caption + _FACE_APP/_FACE_SWAPPER/
     _FACE_RESTORE_SESSION + faceswap/restore + set_faceswap_restore + _remove_bg.
-    NOTE: smoke reads `app.set_faceswap_restore` and `app.FACESWAP_RESTORE` (live) ->
-    keep a thin app wrapper that mirrors cz_face.FACESWAP_RESTORE back into app.
-    `_resolve_faceswap_model` needs CHECKPOINTS_DIR (still in app until step 7) ->
-    thread it as a param to _faceswap/_resolve (2 call sites), don't import app.
+    app keeps thin wrappers: `set_faceswap_restore` delegates + mirrors
+    cz_face.FACESWAP_RESTORE back into app (smoke/UI read app.FACESWAP_RESTORE live);
+    `_faceswap` passes app's CHECKPOINTS_DIR (still here until step 7) to
+    cz_face._faceswap(checkpoints_dir=...). _local_caption/_remove_bg re-exported.
+    Validated: is-identity + live app<->cz_face sync + build_ui + smoke 19/19.
+    (in-browser pass pending)
 - [ ] **Step 7 — `cz_models.py` + `cz_generate.py`** (HIGH risk): BASE_REPO/
   ZIMAGE_TRANSFORMER/LORAS/OFFLOAD_MODE/GUIDANCE + pipe caches + setters + generate.
   Keep them in ONE module so the many bare refs stay intra-module.

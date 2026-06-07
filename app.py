@@ -171,199 +171,29 @@ from cz_ollama import (  # noqa: E402,F401
 )
 
 
-_BLIP = None
-
-
-def _local_caption(image):
-    """Fallback local (sans Ollama): petit captioneur BLIP via transformers (lazy)."""
-    global _BLIP
-    if _BLIP is None:
-        from transformers import BlipProcessor, BlipForConditionalGeneration
-        _log("loading local captioner BLIP base (first time downloads ~1GB)...")
-        proc = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-        mdl = BlipForConditionalGeneration.from_pretrained(
-            "Salesforce/blip-image-captioning-base").to(DEVICE)
-        _BLIP = (proc, mdl)
-    proc, mdl = _BLIP
-    inputs = proc(image.convert("RGB"), return_tensors="pt").to(DEVICE)
-    out = mdl.generate(**inputs, max_new_tokens=50)
-    return proc.decode(out[0], skip_special_tokens=True).strip()
-
-
-# ----------------------------------------------------------------------------
-# FaceSwap (post-process, optionnel). InsightFace + modele inswapper. Active
-# seulement si insightface/onnxruntime sont installes ET faceswap_model_path
-# pointe sur un inswapper (.onnx). Sinon -> message clair (feature gated).
-# ----------------------------------------------------------------------------
-_FACE_APP = None
-_FACE_SWAPPER = None
-
-
-def _resolve_faceswap_model():
-    """Trouve le modele inswapper: faceswap_model_path, sinon recherche dans des
-    emplacements usuels, sinon telechargement si faceswap_model_url est defini."""
-    cfg = (os.environ.get("FACESWAP_MODEL") or CONFIG.get("faceswap_model_path") or "").strip()
-    cands = [cfg] if cfg else []
-    search_dirs = [os.path.join(HERE, "faceswap"), os.path.join(HERE, "models"),
-                   CHECKPOINTS_DIR, os.path.join(os.path.expanduser("~"), ".insightface", "models")]
-    for d in search_dirs:
-        cands += [os.path.join(d, "inswapper_128.onnx"),
-                  os.path.join(d, "inswapper_128_fp16.onnx")]
-    for p in cands:
-        if p and os.path.isfile(p):
-            return p
-    # Telechargement optionnel (URL fournie par l'utilisateur dans config.txt).
-    url = (CONFIG.get("faceswap_model_url") or "").strip()
-    if url:
-        import urllib.request
-        dst_dir = os.path.join(HERE, "faceswap")
-        os.makedirs(dst_dir, exist_ok=True)
-        dst = os.path.join(dst_dir, "inswapper_128.onnx")
-        _log(f"downloading inswapper model from {url} ...")
-        urllib.request.urlretrieve(url, dst)
-        return dst
-    return None
+# Caption local BLIP (fallback Ollama), FaceSwap (InsightFace/inswapper) + restore
+# GFPGAN, detourage rembg -> cz_face.py. L'etat mutable (caches modeles + reglages
+# restore) vit dans le module.
+import cz_face
+from cz_face import (  # noqa: E402,F401
+    _local_caption, _remove_bg,
+)
 
 
 def _faceswap(target_img, source_img):
-    """Remplace le(s) visage(s) de target_img par celui de source_img."""
-    global _FACE_APP, _FACE_SWAPPER
-    try:
-        import insightface
-        from insightface.app import FaceAnalysis
-    except Exception:
-        raise RuntimeError("insightface not installed (pip install insightface onnxruntime-gpu).")
-    model_path = _resolve_faceswap_model()
-    if not model_path:
-        raise RuntimeError(
-            "inswapper model not found. Put 'inswapper_128.onnx' in the 'faceswap' folder "
-            "(next to app.py), or set 'faceswap_model_path' in config.txt, or set "
-            "'faceswap_model_url' to download it once.")
-    if _FACE_APP is None:
-        _log("loading insightface buffalo_l (face detection) ...")
-        app = FaceAnalysis(name="buffalo_l")
-        app.prepare(ctx_id=0 if DEVICE == "cuda" else -1, det_size=(640, 640))
-        _FACE_APP = app
-    if _FACE_SWAPPER is None:
-        _log(f"loading inswapper: {model_path}")
-        _FACE_SWAPPER = insightface.model_zoo.get_model(model_path)
-    tgt = np.asarray(target_img.convert("RGB"))[:, :, ::-1].copy()  # RGB -> BGR
-    src = np.asarray(source_img.convert("RGB"))[:, :, ::-1].copy()
-    src_faces = _FACE_APP.get(src)
-    if not src_faces:
-        raise RuntimeError("No face found in the source image.")
-    src_face = max(src_faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
-    tgt_faces = _FACE_APP.get(tgt)
-    if not tgt_faces:
-        raise RuntimeError("No face found in the generated image.")
-    res = tgt
-    for f in tgt_faces:
-        res = _FACE_SWAPPER.get(res, f, src_face, paste_back=True)
-    out_img = Image.fromarray(res[:, :, ::-1])  # BGR -> RGB
-    # Restauration optionnelle du visage (GFPGAN) -> nettete (inswapper sort en 128px).
-    if FACESWAP_RESTORE:
-        out_img = _face_restore(out_img, tgt_faces, FACESWAP_RESTORE_BLEND)
-    return out_img
-
-
-# FFHQ 5-point template (alignement attendu par GFPGAN), normalise -> x512.
-_FFHQ_512 = np.array([
-    [0.37691676, 0.46864664], [0.62285697, 0.46912813], [0.50123859, 0.61331904],
-    [0.39308822, 0.72541100], [0.61150205, 0.72490465]], dtype=np.float32) * 512.0
-_FACE_RESTORE_SESSION = None
-
-
-def _resolve_face_restore_model():
-    """Trouve le modele GFPGAN (.onnx): config, emplacements usuels, sinon download."""
-    cfg = (CONFIG.get("faceswap_restore_path") or "").strip()
-    cands = [cfg] if cfg else []
-    for d in (os.path.join(HERE, "faceswap"), os.path.join(HERE, "models")):
-        cands += [os.path.join(d, "gfpgan_1.4.onnx")]
-    for p in cands:
-        if p and os.path.isfile(p):
-            return p
-    url = (CONFIG.get("faceswap_restore_url") or "").strip()
-    if url:
-        import urllib.request
-        dst_dir = os.path.join(HERE, "faceswap")
-        os.makedirs(dst_dir, exist_ok=True)
-        dst = os.path.join(dst_dir, "gfpgan_1.4.onnx")
-        _log(f"downloading GFPGAN restore model from {url} ...")
-        urllib.request.urlretrieve(url, dst)
-        return dst
-    return None
-
-
-def _get_face_restore_session():
-    global _FACE_RESTORE_SESSION
-    if _FACE_RESTORE_SESSION is not None:
-        return _FACE_RESTORE_SESSION
-    path = _resolve_face_restore_model()
-    if not path:
-        _log("GFPGAN restore model not found -> skip restore "
-             "(set faceswap_restore_url/path or drop gfpgan_1.4.onnx in faceswap/).")
-        return None
-    import onnxruntime as ort
-    # On evite TensorRT (nvinfer_*.dll souvent absent) -> CUDA puis CPU.
-    provs = [p for p in ort.get_available_providers() if p != "TensorrtExecutionProvider"]
-    _log(f"loading GFPGAN restore: {path} (providers={provs})")
-    _FACE_RESTORE_SESSION = ort.InferenceSession(path, providers=provs)
-    return _FACE_RESTORE_SESSION
-
-
-def _face_restore(image, faces, blend=0.8):
-    """Restaure (GFPGAN ONNX) chaque visage detecte: aligne en 512 (template FFHQ),
-    debruite/affine, recolle avec un masque adouci. Renvoie l'image PIL."""
-    sess = _get_face_restore_session()
-    if sess is None:
-        return image
-    import cv2
-    arr = np.asarray(image.convert("RGB"))[:, :, ::-1].astype(np.uint8).copy()  # BGR
-    h, w = arr.shape[:2]
-    iname = sess.get_inputs()[0].name
-    for f in faces:
-        try:
-            M, _ = cv2.estimateAffinePartial2D(f.kps.astype(np.float32), _FFHQ_512,
-                                               method=cv2.LMEDS)
-            if M is None:
-                continue
-            aligned = cv2.warpAffine(arr, M, (512, 512), borderMode=cv2.BORDER_REPLICATE)
-            blob = cv2.cvtColor(aligned, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-            blob = ((blob - 0.5) / 0.5).transpose(2, 0, 1)[None].astype(np.float32)
-            out = sess.run(None, {iname: blob})[0][0]
-            out = np.clip(out.transpose(1, 2, 0) * 0.5 + 0.5, 0, 1)
-            out = cv2.cvtColor((out * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
-            IM = cv2.invertAffineTransform(M)
-            back = cv2.warpAffine(out, IM, (w, h))
-            # Masque ELLIPTIQUE adouci dans l'espace du crop 512 (s'estompe AVANT
-            # les bords) -> recollage sans bord carre visible.
-            m512 = np.zeros((512, 512), np.uint8)
-            cv2.ellipse(m512, (256, 256), (256 - 28, 256 - 28), 0, 0, 360, 255, -1)
-            m512 = cv2.GaussianBlur(m512, (0, 0), 24)
-            mask = cv2.warpAffine(m512, IM, (w, h)).astype(np.float32) / 255.0
-            mask = (mask * float(blend))[:, :, None]
-            arr = (back * mask + arr * (1 - mask)).astype(np.uint8)
-        except Exception as e:
-            _log(f"face restore (one face) skipped: {e}")
-    return Image.fromarray(arr[:, :, ::-1])
+    """Wrapper: passe le dossier checkpoints courant (reste dans app.py jusqu'au
+    step 7) a cz_face._faceswap, qui l'ajoute aux emplacements de recherche."""
+    return cz_face._faceswap(target_img, source_img, CHECKPOINTS_DIR)
 
 
 def set_faceswap_restore(enabled, blend):
-    """Active/desactive la restauration GFPGAN apres le swap + son intensite."""
+    """Wrapper: delegue a cz_face puis recopie l'etat dans app. Le smoke et l'UI
+    lisent app.FACESWAP_RESTORE / app.FACESWAP_RESTORE_BLEND (doivent rester live)."""
     global FACESWAP_RESTORE, FACESWAP_RESTORE_BLEND
-    FACESWAP_RESTORE = bool(enabled)
-    FACESWAP_RESTORE_BLEND = float(blend)
-    return f"Face restore (GFPGAN): {'on' if enabled else 'off'} (blend {blend})"
-
-
-def _remove_bg(image):
-    """Detoure le sujet (fond transparent). Local via rembg (telecharge u2net au
-    1er usage). Renvoie une image RGBA."""
-    try:
-        from rembg import remove
-    except Exception:
-        raise RuntimeError("rembg not installed. pip install rembg (or requirements-faceswap.txt).")
-    return remove(image.convert("RGBA"))
+    msg = cz_face.set_faceswap_restore(enabled, blend)
+    FACESWAP_RESTORE = cz_face.FACESWAP_RESTORE
+    FACESWAP_RESTORE_BLEND = cz_face.FACESWAP_RESTORE_BLEND
+    return msg
 
 # ----------------------------------------------------------------------------
 # Config (persistance dans preferences.json a cote de app.py)
@@ -420,9 +250,10 @@ LORA_WEIGHT = float(CONFIG.get("default_lora_weight", 1.0))  # poids par defaut 
 # Modele Omni/Edit (multi-reference). Reglable via config.txt ou l'UI.
 OMNI_MODEL = (os.environ.get("ZIMAGE_OMNI_MODEL") or CONFIG.get("zimage_omni_model") or "").strip()
 # OLLAMA_URL / OLLAMA_KEEP_ALIVE / OLLAMA_CPU / _ollama_gen_opts -> cz_ollama.py.
-# FaceSwap: restauration GFPGAN post-swap (nettete du visage). Reglable via l'UI.
-FACESWAP_RESTORE = bool(CONFIG.get("faceswap_restore", False))
-FACESWAP_RESTORE_BLEND = float(CONFIG.get("faceswap_restore_blend", 0.8))
+# FaceSwap restore: etat dans cz_face. Alias app maintenus a jour par le wrapper
+# set_faceswap_restore (lus par l'UI et le smoke).
+FACESWAP_RESTORE = cz_face.FACESWAP_RESTORE
+FACESWAP_RESTORE_BLEND = cz_face.FACESWAP_RESTORE_BLEND
 # DEVICE / DTYPE -> cz_core.py (importes en tete).
 
 # Caches process-wide. Un pipeline "base" (txt2img ZImagePipeline) detient les
