@@ -1,0 +1,141 @@
+"""crispz-studio - Asset Browser (standalone SPA in the output folder).
+
+Extrait de app.py. Ecrit index.html (SPA) + _index/manifest.json + miniatures dans
+le dossier de sortie, scanne recursivement (sous-dossiers date), et supprime une
+image (delete_asset, appele via l'API Gradio par la SPA). Depend de cz_core,
+cz_imageio (_read_image_meta) et cz_assets (ASSET_BROWSER_HTML). Les boutons UI
+(_ui_ab_reindex/_ui_gallery_open) restent dans app.py.
+"""
+
+import os
+import json
+import datetime
+import threading
+
+from PIL import Image
+
+from cz_core import CONFIG, DEFAULT_OUTPUT_DIR, HERE, IMG_EXTS, _log, _dbg
+from cz_imageio import _read_image_meta
+from cz_assets import ASSET_BROWSER_HTML
+
+_AB_DEFAULTS = {"enabled": False, "generate_thumbnails": True,
+                "thumbnail_size": 256, "thumbnail_quality": 85, "blur_thumbnails": False}
+
+
+def _ab_get(key):
+    cfg = CONFIG.get("asset_browser") or {}
+    return cfg.get(key, _AB_DEFAULTS.get(key))
+
+
+def _ab_resolve_dir(output_dir):
+    d = output_dir or DEFAULT_OUTPUT_DIR
+    return d if os.path.isabs(d) else os.path.join(HERE, d)
+
+
+def _ab_make_thumb(src, dst, size, quality):
+    with Image.open(src) as im:
+        im = im.convert("RGB")
+        w, h = im.size
+        side = min(w, h)
+        im = im.crop(((w - side) // 2, (h - side) // 2, (w - side) // 2 + side, (h - side) // 2 + side))
+        im = im.resize((int(size), int(size)), Image.LANCZOS)
+        im.save(dst, "JPEG", quality=int(quality), optimize=True)
+
+
+def _ab_scan(d):
+    """(relpath, fullpath) de toutes les images sous d (recursif), _index ignore.
+    Plus recentes en tete."""
+    out = []
+    for root, dirs, files in os.walk(d):
+        dirs[:] = [x for x in dirs if x != "_index"]
+        for f in files:
+            if f.lower().endswith(IMG_EXTS):
+                fp = os.path.join(root, f)
+                out.append((os.path.relpath(fp, d).replace("\\", "/"), fp))
+    out.sort(key=lambda t: os.path.getmtime(t[1]), reverse=True)
+    return out
+
+
+def _ab_gen_thumbs(jobs, size, quality):
+    """Genere une liste de thumbnails (utilise en tache de fond)."""
+    for src, tp in jobs:
+        try:
+            os.makedirs(os.path.dirname(tp), exist_ok=True)
+            if not (os.path.isfile(tp) and os.path.getmtime(tp) >= os.path.getmtime(src)):
+                _ab_make_thumb(src, tp, size, quality)
+        except Exception:
+            pass
+    _log(f"asset-browser: {len(jobs)} thumbnail(s) generated (background)")
+
+
+def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=True,
+               background_thumbs=False):
+    """Ecrit index.html + _index/manifest.json (+ thumbnails). Recursif (sous-dossiers
+    date). background_thumbs=True -> ouverture immediate, miniatures en tache de fond
+    (l'image complete sert de fallback en attendant)."""
+    d = _ab_resolve_dir(output_dir)
+    os.makedirs(d, exist_ok=True)
+    idx_dir = os.path.join(d, "_index")
+    os.makedirs(os.path.join(idx_dir, "thumbs"), exist_ok=True)
+    with open(os.path.join(d, "index.html"), "w", encoding="utf-8") as f:
+        f.write(ASSET_BROWSER_HTML)
+    entries, jobs = [], []
+    for rel, p in _ab_scan(d):
+        thumb_rel = rel  # fallback = image complete
+        trel = "_index/thumbs/" + os.path.splitext(rel)[0] + ".jpg"
+        tp = os.path.join(d, trel)
+        if os.path.isfile(tp) and os.path.getmtime(tp) >= os.path.getmtime(p):
+            thumb_rel = trel
+        elif gen_thumbs:
+            if background_thumbs:
+                jobs.append((p, tp))
+            else:
+                try:
+                    os.makedirs(os.path.dirname(tp), exist_ok=True)
+                    _ab_make_thumb(p, tp, thumb_size, quality)
+                    thumb_rel = trel
+                except Exception as e:
+                    _dbg(f"ab thumb failed {rel}: {e}")
+        meta = _read_image_meta(p)
+        sub = os.path.dirname(rel)
+        try:
+            date = sub if (len(sub) == 10 and sub[4] == "-") else \
+                datetime.datetime.fromtimestamp(os.path.getmtime(p)).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            date = sub
+        entries.append({
+            "file": rel, "thumb": thumb_rel, "date": date, "day": sub or "(root)",
+            "prompt": meta.get("prompt", ""), "negative": meta.get("negative", ""),
+            "seed": meta.get("seed"), "steps": meta.get("steps"),
+            "guidance": meta.get("guidance"), "size": meta.get("size"), "mode": meta.get("mode"),
+            "model": (os.path.basename(str(meta["model"])) if meta.get("model") else ""),
+            "loras": meta.get("loras"),
+        })
+    manifest = {"count": len(entries), "blur": bool(blur), "thumb_size": int(thumb_size),
+                "pending_thumbs": len(jobs),
+                "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "images": entries}
+    with open(os.path.join(idx_dir, "manifest.json"), "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False)
+    if jobs and background_thumbs:
+        threading.Thread(target=_ab_gen_thumbs, args=(jobs, int(thumb_size), int(quality)),
+                         daemon=True).start()
+    return len(entries), os.path.join(d, "index.html"), len(jobs)
+
+
+def delete_asset(rel, output_dir=None):
+    """Supprime une image du dossier de sortie (+ sidecar + thumbnail). 'rel' est le
+    chemin relatif fourni par l'Asset Browser. Verifie que ca reste DANS le dossier."""
+    d = os.path.abspath(_ab_resolve_dir(output_dir or DEFAULT_OUTPUT_DIR))
+    target = os.path.abspath(os.path.join(d, rel or ""))
+    if not target.startswith(d + os.sep) or not os.path.isfile(target):
+        return "not found"
+    try:
+        os.remove(target)
+        for extra in (target + ".json",
+                      os.path.join(d, "_index", "thumbs", os.path.splitext(rel)[0] + ".jpg")):
+            if os.path.isfile(extra):
+                os.remove(extra)
+        _log(f"asset deleted: {rel}")
+        return "deleted"
+    except Exception as e:
+        return f"error: {e}"
