@@ -31,6 +31,11 @@ ollama_vision_blocklist List of model-name substrings to EXCLUDE from the vision
                         model list (Describe / Vision Mix), even if Ollama reports
                         them as vision-capable. e.g. ["qwen3.6"] to hide a model
                         that claims vision but doesn't work well.
+ollama_keep_alive       How long Ollama keeps the model in VRAM after a call.
+                        0 (default) = unload immediately so the VRAM is freed
+                        before Z-Image generates (avoids GPU competition on one
+                        card). Use "30s"/"5m" or -1 (keep) if you have VRAM to
+                        spare and want faster repeated Describe/Vision Mix.
 
 default_prompt          Prompt prefilled at startup.
 default_negative_prompt Negative prompt prefilled at startup.

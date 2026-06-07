@@ -222,7 +222,8 @@ def _ollama_describe(image, model, base=None):
     _dbg(f"ollama describe: url={base or OLLAMA_URL} model={model}")
     b64 = _pil_to_b64_jpeg(image, max_side=1024)
     out = _ollama_http("/api/generate",
-                       {"model": model, "prompt": DESCRIBE_INSTRUCTION, "images": [b64], "stream": False},
+                       {"model": model, "prompt": DESCRIBE_INSTRUCTION, "images": [b64],
+                        "stream": False, "keep_alive": OLLAMA_KEEP_ALIVE},
                        base=base, timeout=180)
     return (out.get("response") or "").strip()
 
@@ -233,7 +234,8 @@ def _ollama_improve(prompt_text, model, base=None):
     pt = prompt_text or ""
     instr = (IMPROVE_INSTRUCTION.replace("{prompt}", pt) if "{prompt}" in IMPROVE_INSTRUCTION
              else f"{IMPROVE_INSTRUCTION}\n\nPROMPT: {pt}")
-    out = _ollama_http("/api/generate", {"model": model, "prompt": instr, "stream": False},
+    out = _ollama_http("/api/generate", {"model": model, "prompt": instr, "stream": False,
+                                         "keep_alive": OLLAMA_KEEP_ALIVE},
                        base=base, timeout=120)
     return (out.get("response") or "").strip()
 
@@ -244,7 +246,8 @@ def _ollama_compose(captions, model, base=None):
     instr = (COMPOSE_INSTRUCTION.replace("{descriptions}", listing)
              if "{descriptions}" in COMPOSE_INSTRUCTION
              else f"{COMPOSE_INSTRUCTION}\n\n{listing}")
-    out = _ollama_http("/api/generate", {"model": model, "prompt": instr, "stream": False},
+    out = _ollama_http("/api/generate", {"model": model, "prompt": instr, "stream": False,
+                                         "keep_alive": OLLAMA_KEEP_ALIVE},
                        base=base, timeout=120)
     return (out.get("response") or "").strip()
 
@@ -492,6 +495,10 @@ OMNI_MODEL = (os.environ.get("ZIMAGE_OMNI_MODEL") or CONFIG.get("zimage_omni_mod
 # Ollama (Describe image->prompt + Improve prompt). URL configurable, persistee.
 OLLAMA_URL = (os.environ.get("OLLAMA_URL") or _prefs.get("ollama_url")
               or CONFIG.get("ollama_url") or "http://localhost:11434")
+# Duree de maintien du modele Ollama en VRAM apres un appel (keep_alive). 0 =
+# decharge immediatement -> libere la VRAM avant la generation Z-Image (evite la
+# concurrence VRAM sur un seul GPU). Peut etre un nombre (s) ou "30s"/"5m"/-1.
+OLLAMA_KEEP_ALIVE = CONFIG.get("ollama_keep_alive", 0)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DTYPE = torch.bfloat16
 

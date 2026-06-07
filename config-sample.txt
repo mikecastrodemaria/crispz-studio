@@ -4,6 +4,7 @@
     "ollama_improve_prompt": "Rewrite the following text-to-image prompt to be more vivid and detailed while keeping the same subject and intent. Output ONLY the improved prompt (comma-separated), no preamble.\n\nPROMPT: {prompt}",
     "ollama_compose_prompt": "You are an expert text-to-image prompt writer. Below are descriptions of several reference images. Merge their key elements (subject, clothing, pose, setting, style) into ONE single coherent, detailed image prompt. Output ONLY the prompt (comma-separated), no preamble.\n\n{descriptions}",
     "ollama_vision_blocklist": [],
+    "ollama_keep_alive": 0,
 
     "default_prompt": "",
     "default_negative_prompt": "",
