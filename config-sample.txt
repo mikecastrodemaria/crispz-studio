@@ -29,6 +29,7 @@
     "default_gen_steps": 8,
     "default_guidance": 0.0,
     "default_sampler": "euler",
+    "default_schedule": "sgm_uniform",
     "default_image_number": 1,
     "default_seed": -1,
 

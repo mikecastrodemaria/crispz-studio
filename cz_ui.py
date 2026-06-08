@@ -197,7 +197,7 @@ from cz_pipeline import (  # noqa: E402,F401
     set_guidance, request_stop, set_zimage_model, set_zimage_transformer,
     list_checkpoints, list_loras, set_checkpoints_dir, set_loras_dir, lora_keywords,
     set_omni_model, check_omni_available, set_offload_mode, free_vram, set_loras,
-    set_sampler, SAMPLER_CHOICES,
+    set_sampler, SAMPLER_CHOICES, set_schedule, SCHEDULE_CHOICES,
     generate, generate_omni, inpaint_run, outpaint, txt2img_run, process_one,
     round_to_multiple, _reframe_canvas, _gen_meta,
 )
@@ -1365,8 +1365,16 @@ def build_ui():
                                 if (CONFIG.get("default_sampler") or "euler").strip().lower() in SAMPLER_CHOICES
                                 else "euler",
                                 label="Sampler", scale=1,
-                                info="euler = native flow-matching (default). unipc = UniPC multistep. "
-                                     "(Z-Image forces custom sigmas, so DPM++/DPM2a are incompatible.)")
+                                info="euler = native flow. unipc = UniPC. (DPM++/DPM2a impossible: "
+                                     "Z-Image forces custom sigmas.)")
+                            schedule_dd = gr.Dropdown(
+                                list(SCHEDULE_CHOICES),
+                                value=(CONFIG.get("default_schedule") or "sgm_uniform").strip().lower()
+                                if (CONFIG.get("default_schedule") or "sgm_uniform").strip().lower() in SCHEDULE_CHOICES
+                                else "sgm_uniform",
+                                label="Schedule", scale=1,
+                                info="sigma schedule (ComfyUI-style). sgm_uniform = native Z-Image. "
+                                     "beta/karras/exponential remap the sigmas.")
                         image_number = gr.Slider(1, 30, value=int(CONFIG.get("default_image_number", 1)),
                                                  step=1, label="Image number (batch)")
                         seed = gr.Number(value=int(CONFIG.get("default_seed", -1)),
@@ -1584,8 +1592,10 @@ def build_ui():
             None, [gallery_url], None, js="(u) => { if (u) window.open(u, '_blank'); }")
         preset.change(_apply_preset, [preset],
                       [factor, denoise, refine_steps, tile, overlap, refine_tile, refine_overlap, offload])
-        # Sampler (euler/dpm2a/dpmpp2m): applique le scheduler choisi aux pipes en cache.
+        # Sampler (euler/unipc) + schedule (sgm_uniform/beta/karras/exp): applique le
+        # scheduler choisi aux pipes en cache (pas de rechargement).
         sampler_dd.change(set_sampler, [sampler_dd], None)
+        schedule_dd.change(set_schedule, [schedule_dd], None)
         _gen_inputs = [prompt, negative, styles, style_random, use_input, inp, input_mode,
                        ref1, ref2, ref3, ref4,
                        faceswap_enable, faceswap_src,

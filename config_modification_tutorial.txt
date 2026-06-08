@@ -57,9 +57,11 @@ default_model_profile   {steps, guidance} used when no model_profiles key matche
 default_width/height    txt2img size (multiples of 16).
 default_gen_steps       txt2img steps.
 default_guidance        CFG. 0 = Z-Image Turbo. Z-Image Base: ~3.5-5.
-default_sampler         Scheduler par defaut: euler (natif flow-matching) ou unipc
+default_sampler         Sampler par defaut: euler (natif flow-matching) ou unipc
                         (UniPC multistep). Z-Image impose des sigmas custom -> DPM++/DPM2a
                         incompatibles. Choix aussi dans l'UI (a cote du CFG).
+default_schedule        Schedule de sigmas (facon ComfyUI): sgm_uniform (natif Z-Image),
+                        beta, karras, exponential. Choix aussi dans l'UI (a cote du sampler).
 default_image_number    Batch size at startup (1-30).
 default_seed            -1 = random.
 

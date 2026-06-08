@@ -85,6 +85,16 @@ SAMPLER_CHOICES = ("euler", "unipc")
 SAMPLER = (os.environ.get("ZIMAGE_SAMPLER") or CONFIG.get("default_sampler") or "euler").strip().lower()
 if SAMPLER not in SAMPLER_CHOICES:
     SAMPLER = "euler"
+
+# Schedule de sigmas (= le "scheduler" facon ComfyUI). sgm_uniform = natif Z-Image
+# (linspace + dynamic shift). beta/karras/exponential = re-mapping des sigmas applique
+# PAR-DESSUS le schedule du pipeline (FlowMatchEuler/UniPC: use_*_sigmas). beta -> scipy.
+SCHEDULE_CHOICES = ("sgm_uniform", "beta", "karras", "exponential")
+SCHEDULE = (os.environ.get("ZIMAGE_SCHEDULE") or CONFIG.get("default_schedule") or "sgm_uniform").strip().lower()
+if SCHEDULE not in SCHEDULE_CHOICES:
+    SCHEDULE = "sgm_uniform"
+_SCHEDULE_FLAG = {"beta": "use_beta_sigmas", "karras": "use_karras_sigmas",
+                  "exponential": "use_exponential_sigmas"}  # sgm_uniform -> aucun flag (natif)
 # Config natif du scheduler du modele (capture au 1er chargement) -> base de construction
 # des autres samplers (conserve shift/flow params quel que soit le sampler courant).
 _BASE_SCHED_CONFIG = None
@@ -112,53 +122,76 @@ def _scheduler_accepts_sigmas(sched):
         return False
 
 
-def _build_scheduler(name, config):
-    """Construit le scheduler choisi a partir du config natif (flow-matching) du modele."""
+def _build_scheduler(sampler, schedule, config):
+    """Construit le scheduler choisi (sampler x schedule) depuis le config natif du modele.
+    schedule (sgm_uniform/beta/karras/exponential) = remapping des sigmas (use_*_sigmas)."""
     from diffusers import FlowMatchEulerDiscreteScheduler
-    name = (name or "euler").lower()
-    if name == "unipc":
+    kw = {}
+    flag = _SCHEDULE_FLAG.get((schedule or "").lower())
+    if flag:
+        kw[flag] = True
+    if (sampler or "euler").lower() == "unipc":
         from diffusers import UniPCMultistepScheduler
         try:
-            return UniPCMultistepScheduler.from_config(config, use_flow_sigmas=True)
+            return UniPCMultistepScheduler.from_config(config, use_flow_sigmas=True, **kw)
         except Exception:
-            return UniPCMultistepScheduler.from_config(config)
-    return FlowMatchEulerDiscreteScheduler.from_config(config)
+            return UniPCMultistepScheduler.from_config(config, **kw)
+    return FlowMatchEulerDiscreteScheduler.from_config(config, **kw)
 
 
 def _apply_sampler(pipe):
-    """Pose le scheduler courant (SAMPLER) sur un pipe. Verifie la compatibilite (sigmas
-    custom) et retombe sur Euler flow-matching si KO -> jamais de crash a la generation."""
+    """Pose le scheduler courant (SAMPLER x SCHEDULE) sur un pipe. Verifie la compatibilite
+    (sigmas custom) et retombe sur Euler/sgm_uniform si KO -> jamais de crash a la generation."""
     if _BASE_SCHED_CONFIG is None:
         return
     from diffusers import FlowMatchEulerDiscreteScheduler
     try:
-        sched = _build_scheduler(SAMPLER, _BASE_SCHED_CONFIG)
+        sched = _build_scheduler(SAMPLER, SCHEDULE, _BASE_SCHED_CONFIG)
         if not _scheduler_accepts_sigmas(sched):
             raise ValueError(f"{type(sched).__name__} n'accepte pas les sigmas custom de Z-Image")
         pipe.scheduler = sched
-        _dbg(f"sampler applied: {SAMPLER} -> {type(pipe.scheduler).__name__}")
+        _dbg(f"sampler applied: {SAMPLER}/{SCHEDULE} -> {type(pipe.scheduler).__name__}")
     except Exception as e:
-        _log(f"sampler '{SAMPLER}' incompatible ({e}); fallback Euler (flow)")
+        _log(f"sampler '{SAMPLER}/{SCHEDULE}' incompatible ({e}); fallback Euler/sgm_uniform")
         try:
             pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(_BASE_SCHED_CONFIG)
         except Exception:
             pass
 
 
+def _reapply_sampler_all():
+    """Re-applique le scheduler courant a tous les pipes en cache (base + derives)."""
+    for p in [_BASE_PIPE] + list(_DERIVED.values()):
+        if p is not None:
+            _apply_sampler(p)
+
+
 def set_sampler(name):
-    """Change le sampler (euler/dpm2a/dpmpp2m) et le ré-applique aux pipes en cache
-    (pas de rechargement). Pas d'effet sur le pipe Omni (scheduler propre)."""
+    """Change le sampler (euler/unipc) et le re-applique aux pipes en cache (pas de
+    rechargement). Pas d'effet sur le pipe Omni (scheduler propre)."""
     global SAMPLER
     name = (name or "euler").strip().lower()
     if name not in SAMPLER_CHOICES:
         name = "euler"
     if name != SAMPLER:
         SAMPLER = name
-        for p in [_BASE_PIPE] + list(_DERIVED.values()):
-            if p is not None:
-                _apply_sampler(p)
+        _reapply_sampler_all()
         _log(f"sampler -> {SAMPLER}")
-    return f"Sampler: {SAMPLER}"
+    return f"Sampler: {SAMPLER} / {SCHEDULE}"
+
+
+def set_schedule(name):
+    """Change le schedule de sigmas (sgm_uniform/beta/karras/exponential) et le
+    re-applique aux pipes en cache."""
+    global SCHEDULE
+    name = (name or "sgm_uniform").strip().lower()
+    if name not in SCHEDULE_CHOICES:
+        name = "sgm_uniform"
+    if name != SCHEDULE:
+        SCHEDULE = name
+        _reapply_sampler_all()
+        _log(f"schedule -> {SCHEDULE}")
+    return f"Sampler: {SAMPLER} / {SCHEDULE}"
 
 
 def _progress(frac, desc=""):
@@ -455,7 +488,7 @@ def _ensure_base():
     _BASE_PIPE = pipe
     _DERIVED = {"txt2img": pipe}
     _LOADED_KEY = key
-    _log(f"Z-Image base ready in {time.time() - t0:.1f}s (sampler={SAMPLER})")
+    _log(f"Z-Image base ready in {time.time() - t0:.1f}s (sampler={SAMPLER}/{SCHEDULE})")
     return pipe
 
 

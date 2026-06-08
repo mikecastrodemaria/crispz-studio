@@ -189,12 +189,20 @@ python app.py --txt2img --prompt "..." --zimage-model "D:/models/z-image-base.sa
     --gen-steps 24 --guidance 4 --save-mode local --output-dir out
 ```
 
-In the UI, both tabs have a **CFG guidance** slider, with a **Sampler** dropdown
-next to it: `euler` (the native flow-matching scheduler, default) and `unipc`
-(UniPC multistep). The Z-Image pipeline forces a custom sigma schedule, so the
-diffusers DPM++ 2M / DPM2a schedulers are **incompatible** (they reject custom
-sigmas) and are not offered; an incompatible choice falls back to Euler. The
-sampler applies to txt2img / img2img / inpaint (not Omni). CLI: `--sampler`.
+Next to the **CFG guidance** slider there are two dropdowns, ComfyUI-style:
+
+- **Sampler**: `euler` (native flow-matching, default) or `unipc` (UniPC multistep).
+  Both accept the pipeline's custom sigmas + dynamic shift. The diffusers DPM++ 2M /
+  DPM2a schedulers reject custom sigmas, so they are **not available** for Z-Image
+  (this is a diffusers limitation, unlike ComfyUI). An incompatible choice falls
+  back to Euler.
+- **Schedule** (the sigma schedule, = ComfyUI's "scheduler"): `sgm_uniform` (the
+  native Z-Image linear schedule, default), `beta`, `karras`, `exponential`. These
+  remap the sigmas on top of the model's dynamic shift.
+
+Both apply to txt2img / img2img / inpaint (not Omni). CLI: `--sampler`, `--schedule`.
+For a **Z-Image Base** checkpoint (e.g. Civitai), the typical recipe is CFG ~4-5,
+~30 steps (Performance "Base CFG"), sampler `euler`, schedule `sgm_uniform` or `beta`.
 
 ## Switching models in the UI (Advanced → Models)
 
@@ -503,7 +511,8 @@ Every UI setting has a CLI flag and a prefs key:
 | Seed | `--seed` | `seed` | `-1` |
 | ESRGAN tile | `--tile` | `tile` | `760` |
 | Overlap | `--overlap` | `overlap` | `32` |
-| Sampler / scheduler | `--sampler {euler,unipc}` | "Sampler" dropdown (next to CFG) | `default_sampler` (`euler`) |
+| Sampler | `--sampler {euler,unipc}` | "Sampler" dropdown (next to CFG) | `default_sampler` (`euler`) |
+| Sigma schedule | `--schedule {sgm_uniform,beta,karras,exponential}` | "Schedule" dropdown | `default_schedule` (`sgm_uniform`) |
 | CPU offload (diffusion) | `--cpu-offload` | - | `none` |
 | Diffusion tile (4K+) | `--refine-tile` | - | `0` (whole image) |
 | Diffusion tile overlap | `--refine-overlap` | - | `64` |

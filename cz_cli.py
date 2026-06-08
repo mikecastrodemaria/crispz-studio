@@ -23,7 +23,7 @@ from cz_ui import (  # noqa: F401
     # orchestration / pipeline (re-exportes par cz_ui)
     run, process_one, txt2img_run, outpaint, build_ui,
     free_vram, set_offload_mode, set_guidance, set_sampler, SAMPLER_CHOICES,
-    set_esrgan_dir, set_zimage_model,
+    set_schedule, SCHEDULE_CHOICES, set_esrgan_dir, set_zimage_model,
     set_zimage_transformer, set_loras_dir, set_loras, list_esrgan_models,
     build_output_path, save_image, _faceswap, _remove_bg,
     _ollama_vision_models, _ollama_describe, _ollama_compose,
@@ -214,8 +214,12 @@ def cli_main(argv=None):
                         help="CFG guidance scale. 0 for Z-Image Turbo (default). "
                              "Z-Image Base needs ~3.5-5 (and ~20+ steps).")
     parser.add_argument("--sampler", choices=list(SAMPLER_CHOICES), default=None,
-                        help="Scheduler: euler (native flow, default), dpmpp2m (DPM++ 2M), "
-                             "dpm2a (ancestral, experimental). Default from config default_sampler.")
+                        help="Sampler: euler (native flow, default) or unipc (UniPC multistep). "
+                             "Default from config default_sampler. (DPM++/DPM2a unavailable: "
+                             "Z-Image forces custom sigmas.)")
+    parser.add_argument("--schedule", choices=list(SCHEDULE_CHOICES), default=None,
+                        help="Sigma schedule (ComfyUI-style): sgm_uniform (native Z-Image, "
+                             "default), beta, karras, exponential. Default from default_schedule.")
     parser.add_argument("--no-esrgan", action="store_true",
                         help="img2img only: skip the ESRGAN upscale, just run the Z-Image refine "
                              "on the input at native size (no enlargement).")
@@ -304,6 +308,8 @@ def cli_main(argv=None):
     set_guidance(args.guidance)
     if args.sampler:
         set_sampler(args.sampler)
+    if args.schedule:
+        set_schedule(args.schedule)
 
     # LoRA(s) en CLI: --lora NAME[:WEIGHT] (repetable)
     if args.loras_dir:
