@@ -1365,7 +1365,8 @@ def build_ui():
                                 if (CONFIG.get("default_sampler") or "euler").strip().lower() in SAMPLER_CHOICES
                                 else "euler",
                                 label="Sampler", scale=1,
-                                info="euler = native (flow). dpmpp2m = DPM++ 2M. dpm2a = experimental.")
+                                info="euler = native flow-matching (default). unipc = UniPC multistep. "
+                                     "(Z-Image forces custom sigmas, so DPM++/DPM2a are incompatible.)")
                         image_number = gr.Slider(1, 30, value=int(CONFIG.get("default_image_number", 1)),
                                                  step=1, label="Image number (batch)")
                         seed = gr.Number(value=int(CONFIG.get("default_seed", -1)),

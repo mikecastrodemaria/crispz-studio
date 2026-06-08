@@ -77,11 +77,14 @@ OFFLOAD_CHOICES = ("none", "model", "sequential")
 # besoin d'une vraie guidance (~3.5-5) et de plus de steps (~20-28). Reglable par run.
 GUIDANCE = 0.0
 
-# Sampler / scheduler. Z-Image est un modele flow-matching: Euler (natif) est le defaut.
-# DPM++ 2M = DPMSolverMultistep en mode flow-sigmas (marche bien). DPM2a (ancestral) n'a
-# pas d'equivalent flow-matching propre dans diffusers -> best-effort, fallback si KO.
+# Sampler / scheduler. Le pipeline Z-Image impose un schedule `sigmas` custom: seuls
+# les schedulers dont set_timesteps accepte `sigmas` fonctionnent. En pratique -> Euler
+# flow-matching (natif, defaut) et UniPC (multistep). Les DPM++ 2M / DPM2a de diffusers
+# ne prennent PAS de sigmas custom -> incompatibles (retires).
+SAMPLER_CHOICES = ("euler", "unipc")
 SAMPLER = (os.environ.get("ZIMAGE_SAMPLER") or CONFIG.get("default_sampler") or "euler").strip().lower()
-SAMPLER_CHOICES = ("euler", "dpm2a", "dpmpp2m")
+if SAMPLER not in SAMPLER_CHOICES:
+    SAMPLER = "euler"
 # Config natif du scheduler du modele (capture au 1er chargement) -> base de construction
 # des autres samplers (conserve shift/flow params quel que soit le sampler courant).
 _BASE_SCHED_CONFIG = None
@@ -99,29 +102,47 @@ def set_guidance(g):
     GUIDANCE = float(g)
 
 
+def _scheduler_accepts_sigmas(sched):
+    """Le pipeline Z-Image appelle set_timesteps(..., sigmas=<schedule custom>). Un
+    scheduler dont set_timesteps n'accepte pas `sigmas` plante a la generation."""
+    import inspect
+    try:
+        return "sigmas" in inspect.signature(sched.set_timesteps).parameters
+    except Exception:
+        return False
+
+
 def _build_scheduler(name, config):
     """Construit le scheduler choisi a partir du config natif (flow-matching) du modele."""
-    from diffusers import FlowMatchEulerDiscreteScheduler, DPMSolverMultistepScheduler
+    from diffusers import FlowMatchEulerDiscreteScheduler
     name = (name or "euler").lower()
-    if name == "dpmpp2m":
-        return DPMSolverMultistepScheduler.from_config(
-            config, algorithm_type="dpmsolver++", solver_order=2, use_flow_sigmas=True)
-    if name == "dpm2a":
-        from diffusers import KDPM2AncestralDiscreteScheduler
-        return KDPM2AncestralDiscreteScheduler.from_config(config)
+    if name == "unipc":
+        from diffusers import UniPCMultistepScheduler
+        try:
+            return UniPCMultistepScheduler.from_config(config, use_flow_sigmas=True)
+        except Exception:
+            return UniPCMultistepScheduler.from_config(config)
     return FlowMatchEulerDiscreteScheduler.from_config(config)
 
 
 def _apply_sampler(pipe):
-    """Pose le scheduler courant (SAMPLER) sur un pipe. Best-effort: garde le scheduler
-    actuel si le sampler choisi n'est pas compatible (jamais de crash)."""
+    """Pose le scheduler courant (SAMPLER) sur un pipe. Verifie la compatibilite (sigmas
+    custom) et retombe sur Euler flow-matching si KO -> jamais de crash a la generation."""
     if _BASE_SCHED_CONFIG is None:
         return
+    from diffusers import FlowMatchEulerDiscreteScheduler
     try:
-        pipe.scheduler = _build_scheduler(SAMPLER, _BASE_SCHED_CONFIG)
+        sched = _build_scheduler(SAMPLER, _BASE_SCHED_CONFIG)
+        if not _scheduler_accepts_sigmas(sched):
+            raise ValueError(f"{type(sched).__name__} n'accepte pas les sigmas custom de Z-Image")
+        pipe.scheduler = sched
         _dbg(f"sampler applied: {SAMPLER} -> {type(pipe.scheduler).__name__}")
     except Exception as e:
-        _log(f"sampler '{SAMPLER}' not applied ({e}); keeping default scheduler")
+        _log(f"sampler '{SAMPLER}' incompatible ({e}); fallback Euler (flow)")
+        try:
+            pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(_BASE_SCHED_CONFIG)
+        except Exception:
+            pass
 
 
 def set_sampler(name):
