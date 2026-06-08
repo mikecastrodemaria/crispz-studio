@@ -77,6 +77,15 @@ OFFLOAD_CHOICES = ("none", "model", "sequential")
 # besoin d'une vraie guidance (~3.5-5) et de plus de steps (~20-28). Reglable par run.
 GUIDANCE = 0.0
 
+# Sampler / scheduler. Z-Image est un modele flow-matching: Euler (natif) est le defaut.
+# DPM++ 2M = DPMSolverMultistep en mode flow-sigmas (marche bien). DPM2a (ancestral) n'a
+# pas d'equivalent flow-matching propre dans diffusers -> best-effort, fallback si KO.
+SAMPLER = (os.environ.get("ZIMAGE_SAMPLER") or CONFIG.get("default_sampler") or "euler").strip().lower()
+SAMPLER_CHOICES = ("euler", "dpm2a", "dpmpp2m")
+# Config natif du scheduler du modele (capture au 1er chargement) -> base de construction
+# des autres samplers (conserve shift/flow params quel que soit le sampler courant).
+_BASE_SCHED_CONFIG = None
+
 # Hook de progression UI (gradio gr.Progress). None hors UI (CLI/serveur). Pose par
 # les handlers via cz_pipeline._PROGRESS = ...
 _PROGRESS = None
@@ -88,6 +97,47 @@ _STOP = False
 def set_guidance(g):
     global GUIDANCE
     GUIDANCE = float(g)
+
+
+def _build_scheduler(name, config):
+    """Construit le scheduler choisi a partir du config natif (flow-matching) du modele."""
+    from diffusers import FlowMatchEulerDiscreteScheduler, DPMSolverMultistepScheduler
+    name = (name or "euler").lower()
+    if name == "dpmpp2m":
+        return DPMSolverMultistepScheduler.from_config(
+            config, algorithm_type="dpmsolver++", solver_order=2, use_flow_sigmas=True)
+    if name == "dpm2a":
+        from diffusers import KDPM2AncestralDiscreteScheduler
+        return KDPM2AncestralDiscreteScheduler.from_config(config)
+    return FlowMatchEulerDiscreteScheduler.from_config(config)
+
+
+def _apply_sampler(pipe):
+    """Pose le scheduler courant (SAMPLER) sur un pipe. Best-effort: garde le scheduler
+    actuel si le sampler choisi n'est pas compatible (jamais de crash)."""
+    if _BASE_SCHED_CONFIG is None:
+        return
+    try:
+        pipe.scheduler = _build_scheduler(SAMPLER, _BASE_SCHED_CONFIG)
+        _dbg(f"sampler applied: {SAMPLER} -> {type(pipe.scheduler).__name__}")
+    except Exception as e:
+        _log(f"sampler '{SAMPLER}' not applied ({e}); keeping default scheduler")
+
+
+def set_sampler(name):
+    """Change le sampler (euler/dpm2a/dpmpp2m) et le ré-applique aux pipes en cache
+    (pas de rechargement). Pas d'effet sur le pipe Omni (scheduler propre)."""
+    global SAMPLER
+    name = (name or "euler").strip().lower()
+    if name not in SAMPLER_CHOICES:
+        name = "euler"
+    if name != SAMPLER:
+        SAMPLER = name
+        for p in [_BASE_PIPE] + list(_DERIVED.values()):
+            if p is not None:
+                _apply_sampler(p)
+        _log(f"sampler -> {SAMPLER}")
+    return f"Sampler: {SAMPLER}"
 
 
 def _progress(frac, desc=""):
@@ -317,7 +367,7 @@ def free_vram():
 def _ensure_base():
     """Charge (si besoin) le pipeline de base txt2img. Gere le transformer
     single-file (Civitai) et l'offload. Cache par (repo, transformer, offload)."""
-    global _BASE_PIPE, _DERIVED, _LOADED_KEY
+    global _BASE_PIPE, _DERIVED, _LOADED_KEY, _BASE_SCHED_CONFIG
     key = (BASE_REPO, ZIMAGE_TRANSFORMER, OFFLOAD_MODE, tuple(LORAS))
     _dbg(f"_ensure_base key={key} cached={_LOADED_KEY}")
     if _BASE_PIPE is not None and _LOADED_KEY == key:
@@ -344,6 +394,12 @@ def _ensure_base():
     _log(f"loading Z-Image base: {BASE_REPO} (offload={OFFLOAD_MODE}, dtype=bf16) ... "
          "first time downloads from HF, then cached")
     pipe = ZImagePipeline.from_pretrained(BASE_REPO, torch_dtype=DTYPE, **kwargs)
+    # Capture le config natif (flow-matching) du scheduler -> base pour construire les
+    # autres samplers (euler/dpm2a/dpmpp2m) sans perdre shift/flow params.
+    try:
+        _BASE_SCHED_CONFIG = dict(pipe.scheduler.config)
+    except Exception:
+        _BASE_SCHED_CONFIG = None
     # LoRA Z-Image (sur le transformer du base -> partage par les pipes derives).
     if LORAS:
         try:
@@ -374,10 +430,11 @@ def _ensure_base():
         pipe.enable_sequential_cpu_offload()
     else:
         pipe = pipe.to(DEVICE)
+    _apply_sampler(pipe)   # pose le sampler choisi (euler par defaut) sur le pipe de base
     _BASE_PIPE = pipe
     _DERIVED = {"txt2img": pipe}
     _LOADED_KEY = key
-    _log(f"Z-Image base ready in {time.time() - t0:.1f}s")
+    _log(f"Z-Image base ready in {time.time() - t0:.1f}s (sampler={SAMPLER})")
     return pipe
 
 
@@ -397,6 +454,7 @@ def get_pipe(kind="img2img"):
         return base
     _log(f"deriving {kind} pipeline (shared weights, no extra VRAM)")
     p = cls.from_pipe(base)
+    _apply_sampler(p)   # meme sampler que le base (au cas ou from_pipe recree le scheduler)
     _DERIVED[kind] = p
     return p
 

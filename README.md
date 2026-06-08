@@ -189,7 +189,11 @@ python app.py --txt2img --prompt "..." --zimage-model "D:/models/z-image-base.sa
     --gen-steps 24 --guidance 4 --save-mode local --output-dir out
 ```
 
-In the UI, both tabs have a **CFG guidance** slider.
+In the UI, both tabs have a **CFG guidance** slider, with a **Sampler** dropdown
+next to it: `euler` (the native flow-matching scheduler, default), `dpmpp2m`
+(DPM++ 2M, flow sigmas), and `dpm2a` (ancestral — experimental, may not suit
+Z-Image; it falls back to the default scheduler if incompatible). The sampler
+applies to txt2img / img2img / inpaint (not Omni). CLI: `--sampler`.
 
 ## Switching models in the UI (Advanced → Models)
 
@@ -498,6 +502,7 @@ Every UI setting has a CLI flag and a prefs key:
 | Seed | `--seed` | `seed` | `-1` |
 | ESRGAN tile | `--tile` | `tile` | `760` |
 | Overlap | `--overlap` | `overlap` | `32` |
+| Sampler / scheduler | `--sampler {euler,dpm2a,dpmpp2m}` | "Sampler" dropdown (next to CFG) | `default_sampler` (`euler`) |
 | CPU offload (diffusion) | `--cpu-offload` | - | `none` |
 | Diffusion tile (4K+) | `--refine-tile` | - | `0` (whole image) |
 | Diffusion tile overlap | `--refine-overlap` | - | `64` |

@@ -197,6 +197,7 @@ from cz_pipeline import (  # noqa: E402,F401
     set_guidance, request_stop, set_zimage_model, set_zimage_transformer,
     list_checkpoints, list_loras, set_checkpoints_dir, set_loras_dir, lora_keywords,
     set_omni_model, check_omni_available, set_offload_mode, free_vram, set_loras,
+    set_sampler, SAMPLER_CHOICES,
     generate, generate_omni, inpaint_run, outpaint, txt2img_run, process_one,
     round_to_multiple, _reframe_canvas, _gen_meta,
 )
@@ -1354,9 +1355,17 @@ def build_ui():
                                                step=16, label="Height")
                         gen_steps = gr.Slider(2, 40, value=int(CONFIG.get("default_gen_steps", 8)),
                                               step=1, label="Generation steps (txt2img)")
-                        guidance = gr.Slider(0.0, 8.0, value=float(CONFIG.get("default_guidance", 0.0)),
-                                             step=0.5, label="CFG guidance",
-                                             info="0 = Z-Image Turbo. Z-Image Base: ~3.5-5.")
+                        with gr.Row():
+                            guidance = gr.Slider(0.0, 8.0, value=float(CONFIG.get("default_guidance", 0.0)),
+                                                 step=0.5, label="CFG guidance", scale=2,
+                                                 info="0 = Z-Image Turbo. Z-Image Base: ~3.5-5.")
+                            sampler_dd = gr.Dropdown(
+                                list(SAMPLER_CHOICES),
+                                value=(CONFIG.get("default_sampler") or "euler").strip().lower()
+                                if (CONFIG.get("default_sampler") or "euler").strip().lower() in SAMPLER_CHOICES
+                                else "euler",
+                                label="Sampler", scale=1,
+                                info="euler = native (flow). dpmpp2m = DPM++ 2M. dpm2a = experimental.")
                         image_number = gr.Slider(1, 30, value=int(CONFIG.get("default_image_number", 1)),
                                                  step=1, label="Image number (batch)")
                         seed = gr.Number(value=int(CONFIG.get("default_seed", -1)),
@@ -1574,6 +1583,8 @@ def build_ui():
             None, [gallery_url], None, js="(u) => { if (u) window.open(u, '_blank'); }")
         preset.change(_apply_preset, [preset],
                       [factor, denoise, refine_steps, tile, overlap, refine_tile, refine_overlap, offload])
+        # Sampler (euler/dpm2a/dpmpp2m): applique le scheduler choisi aux pipes en cache.
+        sampler_dd.change(set_sampler, [sampler_dd], None)
         _gen_inputs = [prompt, negative, styles, style_random, use_input, inp, input_mode,
                        ref1, ref2, ref3, ref4,
                        faceswap_enable, faceswap_src,

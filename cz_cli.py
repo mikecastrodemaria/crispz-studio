@@ -22,7 +22,8 @@ from cz_ui import (  # noqa: F401
     DEFAULT_OUTPUT_DIR, DEFAULT_OUTPUT_FORMAT,
     # orchestration / pipeline (re-exportes par cz_ui)
     run, process_one, txt2img_run, outpaint, build_ui,
-    free_vram, set_offload_mode, set_guidance, set_esrgan_dir, set_zimage_model,
+    free_vram, set_offload_mode, set_guidance, set_sampler, SAMPLER_CHOICES,
+    set_esrgan_dir, set_zimage_model,
     set_zimage_transformer, set_loras_dir, set_loras, list_esrgan_models,
     build_output_path, save_image, _faceswap, _remove_bg,
     _ollama_vision_models, _ollama_describe, _ollama_compose,
@@ -212,6 +213,9 @@ def cli_main(argv=None):
     parser.add_argument("--guidance", type=float, default=0.0,
                         help="CFG guidance scale. 0 for Z-Image Turbo (default). "
                              "Z-Image Base needs ~3.5-5 (and ~20+ steps).")
+    parser.add_argument("--sampler", choices=list(SAMPLER_CHOICES), default=None,
+                        help="Scheduler: euler (native flow, default), dpmpp2m (DPM++ 2M), "
+                             "dpm2a (ancestral, experimental). Default from config default_sampler.")
     parser.add_argument("--no-esrgan", action="store_true",
                         help="img2img only: skip the ESRGAN upscale, just run the Z-Image refine "
                              "on the input at native size (no enlargement).")
@@ -298,6 +302,8 @@ def cli_main(argv=None):
         set_zimage_transformer(args.zimage_transformer)
     set_offload_mode(args.cpu_offload)
     set_guidance(args.guidance)
+    if args.sampler:
+        set_sampler(args.sampler)
 
     # LoRA(s) en CLI: --lora NAME[:WEIGHT] (repetable)
     if args.loras_dir:
