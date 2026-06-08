@@ -70,7 +70,7 @@ if(e.loras&&e.loras.length)h+='loras: '+esc(e.loras.join(', '))+'\n';
 h+='file: '+esc(e.file)+'</div>';
 h+='<button onclick="cp(\''+'prompt'+'\')">Copy prompt</button>';
 h+='<button onclick="cp(\''+'all'+'\')">Copy all</button>';
-h+='<a href="'+encodeURI(e.file)+'" download style="margin-left:6px;color:#9fb3d6">Download</a>';
+h+='<a href="'+encodeURI(e.file)+'" download="'+esc(e.file.split('/').pop())+'" style="margin-left:6px;color:#9fb3d6">Download</a>';
 h+='<button onclick="delAsset()" style="margin-left:6px;background:#5a2230;border-color:#7a2e40">Delete</button>';
 side.innerHTML=h;lb.classList.add('open');}
 function cp(what){const e=VIEW[cur];let t=e.prompt||'';if(what==='all')t=JSON.stringify(e,null,2);
