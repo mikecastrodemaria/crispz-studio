@@ -89,6 +89,15 @@ refine_tile_denoise_cap Plafond de denoise pour le refine TUILE (4K+). En tuiles
                         plafond. Le refine "whole image" (image entiere) garde le denoise demande
                         (une seule passe -> aucune duplication possible). Baisse a 0.30 si tu vois
                         encore le sujet se repeter dans les tuiles.
+refine_tile_prompt      Prompt utilise PAR TUILE pour le refine tuile. Le prompt global decrit
+                        TOUTE la composition (pas la tuile) -> le passer a chaque tuile pousse la
+                        diffusion a recreer le sujet (ex: la tasse) dans des tuiles de fond.
+                        Defaut "" = prompt VIDE par tuile (chaque tuile affine juste le detail
+                        local = pas de duplication). "global" ou "scene" = reutilise le prompt de
+                        la scene (ancien comportement). Tout autre texte = prompt generique
+                        applique a chaque tuile, ex: "high detail, sharp focus, fine texture".
+                        Avec un prompt vide tu peux remonter refine_tile_denoise_cap sans
+                        reintroduire de duplication.
 default_cpu_offload     "none" | "model" (~half VRAM) | "sequential" (~9GB, slower).
 
 checkpoints_dir         Folder of single-file Z-Image models (.safetensors). Scanned

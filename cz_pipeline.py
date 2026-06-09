@@ -432,6 +432,22 @@ _AUTO_TILE_ABOVE = int(CONFIG.get("auto_refine_tile_above", _SLICE_ABOVE))
 # Reglable via config refine_tile_denoise_cap (0 = pas de plafond).
 _TILE_DENOISE_CAP = float(CONFIG.get("refine_tile_denoise_cap", 0.40))
 
+# Prompt utilise pour le refine TUILE. Le prompt global decrit TOUTE la composition (pas
+# la tuile) -> le passer a chaque tuile pousse la diffusion a recreer le sujet (la tasse)
+# dans des tuiles qui ne sont que du fond. Par defaut on passe donc un prompt VIDE: chaque
+# tuile se contente d'affiner le detail local. Valeurs config refine_tile_prompt:
+#   "" (defaut) = prompt vide par tuile
+#   "global"/"scene" = reutilise le prompt de la scene (ancien comportement)
+#   tout autre texte = prompt generique applique a chaque tuile (ex: "high detail, sharp")
+_TILE_PROMPT = str(CONFIG.get("refine_tile_prompt", ""))
+
+
+def _tile_prompt(scene_prompt):
+    """Prompt a utiliser par tuile selon la config (vide par defaut, anti-duplication)."""
+    if _TILE_PROMPT.strip().lower() in ("global", "scene"):
+        return scene_prompt or ""
+    return _TILE_PROMPT
+
 
 def _set_slicing(pipe, longest_side):
     """Active/desactive l'attention slicing selon le plus grand cote a traiter. Appele
@@ -807,12 +823,15 @@ def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
     if w <= tile and h <= tile:
         # Une seule tuile = image entiere -> pas de duplication possible: denoise demande.
         return _refine_whole(pipe, image, denoise, steps, prompt, seed)
-    # Plafond anti-duplication: a fort denoise chaque tuile redessine le sujet du prompt.
+    # Anti-duplication 1: prompt vide par tuile (le prompt global decrit toute la compo).
+    prompt = _tile_prompt(prompt)
+    if not (prompt or "").strip():
+        _log("refine tiled: prompt vide par tuile (anti-duplication; regle refine_tile_prompt).")
+    # Anti-duplication 2 (filet): a fort denoise chaque tuile peut encore deriver.
     denoise = float(denoise)
     if _TILE_DENOISE_CAP > 0 and denoise > _TILE_DENOISE_CAP:
         _log(f"refine tiled: denoise {denoise:.2f} > plafond {_TILE_DENOISE_CAP:.2f} -> "
-             f"reduit a {_TILE_DENOISE_CAP:.2f} (evite que chaque tuile recree le sujet du "
-             "prompt). Regle: refine_tile_denoise_cap.")
+             f"reduit a {_TILE_DENOISE_CAP:.2f} (regle refine_tile_denoise_cap).")
         denoise = _TILE_DENOISE_CAP
 
     acc = np.zeros((h, w, 3), dtype=np.float32)

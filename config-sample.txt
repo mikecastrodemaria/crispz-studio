@@ -46,6 +46,7 @@
     "attention_slice_above": 1664,
     "auto_refine_tile_above": 1664,
     "refine_tile_denoise_cap": 0.40,
+    "refine_tile_prompt": "",
 
     "checkpoints_dir": "",
     "loras_dir": "",
