@@ -516,11 +516,14 @@ def _ensure_base():
     # deborder les 32 Go -> spill RAM partagee -> ~300s/step. Tuiler le VAE plafonne ce pic
     # (comme le "tiled decode" de ComfyUI). Le VAE est partage par les pipes derives.
     try:
+        pipe.vae.config.force_upcast = False   # VAE en bf16 (fp32 lent sur Blackwell) -- TOUJOURS
+    except Exception:
+        pass
+    try:
         pipe.enable_vae_slicing()
         pipe.enable_vae_tiling()
-        pipe.vae.config.force_upcast = False   # VAE en bf16 (fp32 lent sur Blackwell)
     except Exception as e:
-        _dbg(f"VAE tiling not enabled: {e}")
+        _dbg(f"VAE tiling not available: {e}")
     _apply_sampler(pipe)   # pose le sampler choisi (euler par defaut) sur le pipe de base
     _BASE_PIPE = pipe
     _DERIVED = {"txt2img": pipe}
