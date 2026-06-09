@@ -518,6 +518,7 @@ def _ensure_base():
     try:
         pipe.enable_vae_slicing()
         pipe.enable_vae_tiling()
+        pipe.vae.config.force_upcast = False   # VAE en bf16 (fp32 lent sur Blackwell)
     except Exception as e:
         _dbg(f"VAE tiling not enabled: {e}")
     _apply_sampler(pipe)   # pose le sampler choisi (euler par defaut) sur le pipe de base
@@ -543,7 +544,22 @@ def get_pipe(kind="img2img"):
     if cls is None:
         return base
     _log(f"deriving {kind} pipeline (shared weights, no extra VRAM)")
-    p = cls.from_pipe(base)
+    # BUG diffusers: ZImage*Pipeline.from_pipe() UPCASTE tout le pipe (transformer + VAE)
+    # en float32. Sur Blackwell (5090: pas de tensor cores fp32) l'img2img/inpaint devient
+    # 100-300x plus lent que txt2img (transformer 0.5s -> 108s, mesure). On force bf16 a la
+    # derivation, on recaste (composants partages avec le base), on coupe le re-upcast fp32
+    # du VAE, et on vide le cache (les copies fp32 transitoires reservaient ~49 Go -> spill).
+    try:
+        p = cls.from_pipe(base, torch_dtype=DTYPE)
+    except TypeError:
+        p = cls.from_pipe(base)
+    try:
+        p = p.to(DTYPE)
+        p.vae.config.force_upcast = False
+        if DEVICE == "cuda":
+            torch.cuda.empty_cache()
+    except Exception as e:
+        _log(f"img2img bf16 recast failed ({e})")
     _apply_sampler(p)   # meme sampler que le base (au cas ou from_pipe recree le scheduler)
     # Diagnostic vitesse: si le pipe derive n'est PAS sur cuda -> img2img/refine tourne
     # sur CPU = ultra lent. On le force sur DEVICE en mode plein VRAM (offload gere seul).
