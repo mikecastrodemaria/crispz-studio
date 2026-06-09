@@ -424,6 +424,14 @@ _SLICE_ABOVE = int(CONFIG.get("attention_slice_above", 1664))
 # (lent: ~120s en 2K) ET risque le spill VRAM (4K -> crash). Tuiler est plus rapide ET sur.
 _AUTO_TILE_ABOVE = int(CONFIG.get("auto_refine_tile_above", _SLICE_ABOVE))
 
+# Plafond de denoise pour le refine TUILE. En tuiles, chaque tuile est rediffusee avec le
+# prompt global -> a fort denoise la diffusion reconstruit le sujet (ex: la tasse) DANS
+# chaque tuile = duplications. On plafonne donc le denoise par tuile (le contenu existant
+# guide alors la diffusion, facon Ultimate SD Upscale). Le refine "whole image" garde le
+# denoise demande (pas de duplication possible: une seule passe sur toute la compo).
+# Reglable via config refine_tile_denoise_cap (0 = pas de plafond).
+_TILE_DENOISE_CAP = float(CONFIG.get("refine_tile_denoise_cap", 0.40))
+
 
 def _set_slicing(pipe, longest_side):
     """Active/desactive l'attention slicing selon le plus grand cote a traiter. Appele
@@ -797,7 +805,15 @@ def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
     tile = round_to_multiple(tile)                       # multiple de 16 pour le VAE
     overlap = max(0, min(int(overlap), tile - 16))
     if w <= tile and h <= tile:
+        # Une seule tuile = image entiere -> pas de duplication possible: denoise demande.
         return _refine_whole(pipe, image, denoise, steps, prompt, seed)
+    # Plafond anti-duplication: a fort denoise chaque tuile redessine le sujet du prompt.
+    denoise = float(denoise)
+    if _TILE_DENOISE_CAP > 0 and denoise > _TILE_DENOISE_CAP:
+        _log(f"refine tiled: denoise {denoise:.2f} > plafond {_TILE_DENOISE_CAP:.2f} -> "
+             f"reduit a {_TILE_DENOISE_CAP:.2f} (evite que chaque tuile recree le sujet du "
+             "prompt). Regle: refine_tile_denoise_cap.")
+        denoise = _TILE_DENOISE_CAP
 
     acc = np.zeros((h, w, 3), dtype=np.float32)
     weight = np.zeros((h, w, 1), dtype=np.float32)

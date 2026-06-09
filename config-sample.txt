@@ -45,6 +45,7 @@
     "default_cpu_offload": "none",
     "attention_slice_above": 1664,
     "auto_refine_tile_above": 1664,
+    "refine_tile_denoise_cap": 0.40,
 
     "checkpoints_dir": "",
     "loras_dir": "",

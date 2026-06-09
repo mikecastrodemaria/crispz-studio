@@ -723,6 +723,7 @@ Measured benefit (RTX 5090, 2K): first call ~66s (cold, model load), next call ~
 | Setting | Advice |
 |---|---|
 | **Denoise (strength)** | 0.05-0.25 = subtle, stays very close to the input. 0.25-0.40 = creative, more detail injected. Beyond ~0.40, Z-Image starts to reinvent. At high denoise, a **detailed caption prompt** greatly improves coherence. |
+| **Denoise + tiled refine (4K+)** | When the refine is **tiled** (4K, or auto-tiled above `auto_refine_tile_above`), each tile is re-diffused with the **global prompt** -> at high denoise every tile redraws the prompt subject (you get the teacup / butterfly repeated in several tiles). The per-tile denoise is therefore **capped** at `refine_tile_denoise_cap` (default **0.40**) so the existing pixels guide each tile (Ultimate-SD-Upscale style). Whole-image refine keeps your denoise (no duplication possible). Lower the cap to 0.30 if you still see the subject repeat. |
 | **Steps** | Effective steps ~= `steps * strength`. At strength 0.30, 12-16 steps give enough denoising steps. |
 | **Guidance** | Fixed at 0.0 (Z-Image Turbo). |
 | **Prompt** | Optional. Empty works very well if denoise <= 0.30. |

@@ -81,6 +81,14 @@ attention_slice_above   Cote (px) au-dela duquel on active l'attention slicing (
 auto_refine_tile_above  Cote (px) au-dela duquel un refine "whole image" (refine_tile=0) est
                         auto-tuile (tuile 1024). Defaut = attention_slice_above (1664): au-dela
                         un whole-image serait slice (lent ~120s en 2K) et risque le spill 4K.
+refine_tile_denoise_cap Plafond de denoise pour le refine TUILE (4K+). En tuiles, chaque tuile
+                        est rediffusee avec le prompt global -> a fort denoise (Creative) la
+                        diffusion RECREE le sujet (ex: la tasse) DANS chaque tuile = duplications.
+                        On plafonne donc le denoise par tuile (defaut 0.40) pour que le contenu
+                        existant guide la diffusion (facon Ultimate SD Upscale). 0 = pas de
+                        plafond. Le refine "whole image" (image entiere) garde le denoise demande
+                        (une seule passe -> aucune duplication possible). Baisse a 0.30 si tu vois
+                        encore le sujet se repeter dans les tuiles.
 default_cpu_offload     "none" | "model" (~half VRAM) | "sequential" (~9GB, slower).
 
 checkpoints_dir         Folder of single-file Z-Image models (.safetensors). Scanned
