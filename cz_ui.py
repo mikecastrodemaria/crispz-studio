@@ -358,6 +358,12 @@ def _report_vram():
           file=sys.stderr)
 
 
+# Dernier fichier sauve par run() (img2img/upscale). run() garde son retour 3-tuple
+# (utilise par le CLId) -> on expose le chemin ici pour que l'UI propose le vrai nom au
+# telechargement (sinon Gradio nomme l'apercu PIL "image").
+_LAST_RUN_DST = None
+
+
 def run(image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed,
         tile, overlap, save_mode=DEFAULT_SAVE_MODE, output_dir=DEFAULT_OUTPUT_DIR,
         output_format=DEFAULT_OUTPUT_FORMAT, time_log_path=None, print_output=False,
@@ -372,6 +378,8 @@ def run(image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed
     - do_esrgan=False: img2img pur (pas d'ESRGAN, juste le refine Z-Image).
     - refine_first=True: refine PUIS ESRGAN (diffusion a la resolution native = rapide).
     """
+    global _LAST_RUN_DST
+    _LAST_RUN_DST = None
     if do_esrgan and not esrgan_model:
         raise gr.Error(f"No ESRGAN model found in {cz_esrgan.ESRGAN_DIR}.")
 
@@ -403,6 +411,7 @@ def run(image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed
                                "denoise": denoise, "esrgan": esrgan_model if do_esrgan else None}))
                     if print_output:
                         print(os.path.abspath(dst))
+                _LAST_RUN_DST = dst
                 _append_time_log(time_log_path, p, dst, t, save_mode, output_format)
                 lines.append(f"- `{os.path.basename(p)}` {result.size[0]}x{result.size[1]} "
                              f"esrgan {t['esrgan']:.1f}s + refine {t['refine']:.1f}s"
@@ -446,6 +455,7 @@ def run(image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed
                    "esrgan": esrgan_model if do_esrgan else None}))
         if print_output:
             print(os.path.abspath(dst))
+    _LAST_RUN_DST = dst
     _append_time_log(time_log_path, source_path, dst, t, save_mode, output_format)
     report = _format_timings(t, src_path=source_path, dst_path=dst) + save_warning
     return result, src_img.convert("RGB"), report
@@ -1149,7 +1159,8 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                             "spill -> timeout Windows TDR). Ferme les autres apps GPU, **redemarre "
                             "crispz-studio** (le contexte CUDA est mort), baisse refine_tile / factor.")
                 return _done([], msg)
-            return _done([last_result], report)
+            # _LAST_RUN_DST = fichier reellement sauve par run() -> vrai nom au download.
+            return _done([last_result], report, [_LAST_RUN_DST])
         # txt2img (batch image_number)
         n = max(1, int(image_number))
         images, img_paths, total_t = [], [], 0.0
