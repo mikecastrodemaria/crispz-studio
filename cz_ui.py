@@ -1195,6 +1195,28 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
         cz_pipeline._PROGRESS = None
 
 
+def _pick_download(evt: gr.SelectData):
+    """Clic sur une image du resultat -> bouton Download pointant sur le VRAI fichier
+    (avec son nom de disque), au lieu du 'image' generique de la galerie Gradio."""
+    try:
+        v = evt.value
+        path = None
+        if isinstance(v, dict):
+            img = v.get("image")
+            if isinstance(img, dict):
+                path = img.get("path") or img.get("name")
+            path = path or v.get("path") or v.get("name")
+        elif isinstance(v, (list, tuple)) and v:
+            path = v[0]
+        elif isinstance(v, str):
+            path = v
+        if path and os.path.isfile(str(path)):
+            return gr.DownloadButton(value=str(path), visible=True)
+    except Exception:
+        pass
+    return gr.DownloadButton(visible=False)
+
+
 # JS injecte au chargement: force le theme sombre, preview de style au survol,
 # et lightbox plein ecran au clic sur le rendu. __MAP__ = {nom_style: url_vignette}.
 def build_ui():
@@ -1227,6 +1249,9 @@ def build_ui():
                 out = gr.Gallery(label="Result", elem_id="cz_result", columns=2,
                                  object_fit="contain", preview=True, allow_preview=True,
                                  show_fullscreen_button=True, show_download_button=True)
+                # Le download natif de la galerie nomme le fichier "image" (limite Gradio).
+                # Ce bouton telecharge le VRAI fichier (vrai nom) de l'image cliquee.
+                result_dl = gr.DownloadButton("⬇ Download (real filename)", size="sm", visible=False)
                 report = gr.Markdown(value="*Ready. Type a prompt and press Generate.*")
 
                 history = gr.State([])
@@ -1654,6 +1679,8 @@ def build_ui():
                        history]
         _gen_outputs = [out, report, history, history_gallery]
         btn.click(_ui_generate, inputs=_gen_inputs, outputs=_gen_outputs)
+        # Clic sur une image du resultat -> bouton Download avec le vrai nom de fichier.
+        out.select(_pick_download, None, [result_dl])
         # Vision Mix & Generate: fusionne les refs en un prompt, puis genere (txt2img).
         vmix_gen_btn.click(
             _ui_compose, [cref1, cref2, cref3, cref4, ollama_model, ollama_url],
