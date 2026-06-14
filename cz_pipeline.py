@@ -52,6 +52,10 @@ else:
 # Dossiers de modeles Z-Image: checkpoints single-file a switcher + LoRA a appliquer.
 CHECKPOINTS_DIR = (os.environ.get("CHECKPOINTS_DIR") or _prefs.get("checkpoints_dir")
                    or CONFIG.get("checkpoints_dir") or os.path.join(HERE, "checkpoints"))
+# Dossier checkpoints supplementaire (optionnel) -> fusionne avec CHECKPOINTS_DIR dans
+# la meme liste de checkpoints. Vide par defaut; configurable via UI / prefs / config / env.
+CHECKPOINTS_EXTRA_DIR = (os.environ.get("CHECKPOINTS_EXTRA_DIR") or _prefs.get("checkpoints_extra_dir")
+                         or CONFIG.get("checkpoints_extra_dir") or "").strip()
 LORAS_DIR = (os.environ.get("LORAS_DIR") or _prefs.get("loras_dir")
              or CONFIG.get("loras_dir") or os.path.join(HERE, "loras"))
 # LoRA actives: liste de (chemin, poids). Plusieurs LoRA combinables (multi-slots).
@@ -264,20 +268,49 @@ def _safetensors_is_fp8(path):
     return False
 
 
+def _checkpoint_dirs():
+    """Dossiers a scanner pour les checkpoints single-file: principal + extra (si defini),
+    sans doublon de chemin."""
+    dirs = [CHECKPOINTS_DIR]
+    if CHECKPOINTS_EXTRA_DIR and CHECKPOINTS_EXTRA_DIR not in dirs:
+        dirs.append(CHECKPOINTS_EXTRA_DIR)
+    return dirs
+
+
 def list_checkpoints():
-    """Modeles Z-Image single-file (.safetensors) du dossier checkpoints. Exclut les
-    checkpoints FP8 (non charges par diffusers; prendre la version BF16/FP16)."""
-    if not os.path.isdir(CHECKPOINTS_DIR):
-        return []
+    """Modeles Z-Image single-file (.safetensors) des dossiers checkpoints (principal +
+    extra, fusionnes dans une seule liste). Exclut les checkpoints FP8 (non charges par
+    diffusers; prendre la version BF16/FP16). En cas de meme nom de fichier, le dossier
+    principal a la priorite."""
     out = []
-    for f in sorted(os.listdir(CHECKPOINTS_DIR)):
-        if not f.lower().endswith((".safetensors", ".ckpt", ".pt", ".sft")):
+    seen = set()
+    for d in _checkpoint_dirs():
+        if not os.path.isdir(d):
             continue
-        if f.lower().endswith(".safetensors") and _safetensors_is_fp8(os.path.join(CHECKPOINTS_DIR, f)):
-            _log(f"checkpoint skipped (FP8, not supported by diffusers): {f}")
-            continue
-        out.append(f)
-    return out
+        for f in os.listdir(d):
+            if f in seen:
+                continue
+            if not f.lower().endswith((".safetensors", ".ckpt", ".pt", ".sft")):
+                continue
+            if f.lower().endswith(".safetensors") and _safetensors_is_fp8(os.path.join(d, f)):
+                _log(f"checkpoint skipped (FP8, not supported by diffusers): {f}")
+                continue
+            seen.add(f)
+            out.append(f)
+    return sorted(out)
+
+
+def resolve_checkpoint(name):
+    """Chemin absolu d'un checkpoint single-file depuis son nom de fichier, cherche dans
+    les dossiers checkpoints (principal puis extra). Renvoie name tel quel s'il est deja
+    absolu; fallback sur le dossier principal si introuvable."""
+    if not name or os.path.isabs(name):
+        return name
+    for d in _checkpoint_dirs():
+        p = os.path.join(d, name)
+        if os.path.isfile(p):
+            return p
+    return os.path.join(CHECKPOINTS_DIR, name)
 
 
 def list_loras():
@@ -292,6 +325,12 @@ def set_checkpoints_dir(path):
     global CHECKPOINTS_DIR
     if path:
         CHECKPOINTS_DIR = path
+
+
+def set_checkpoints_extra_dir(path):
+    """Definit (ou efface avec '' / None) le dossier checkpoints supplementaire."""
+    global CHECKPOINTS_EXTRA_DIR
+    CHECKPOINTS_EXTRA_DIR = (path or "").strip()
 
 
 def set_loras_dir(path):

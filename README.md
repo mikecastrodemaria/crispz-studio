@@ -11,9 +11,11 @@ SwarmUI. On top of crispz's upscaler it adds:
 - **Inpaint** (paint a mask → regenerate the area) and **Reframe / Outpaint** (expand
   to a new aspect ratio).
 - **Remove Background** (rembg) and **Face Swap** with optional **GFPGAN restore**.
-- **Models**: single-file `.safetensors` (Civitai) checkpoints + a **Transformer
-  override** (diffusers repo/folder, e.g. Juggernaut-Z), **multi-LoRA** (3 slots +
-  trigger words). FP8 checkpoints are skipped (diffusers can't load them).
+- **Models**: one **Z-Image checkpoint** dropdown merging the official base repos
+  (Turbo / Z-Image) with single-file `.safetensors` from a main **and** an optional
+  extra folder, a **Transformer override** (diffusers repo/folder, e.g. Juggernaut-Z),
+  and **multi-LoRA** (3 slots + trigger words). Picking a model also auto-syncs the
+  Performance preset. FP8 checkpoints are skipped (diffusers can't load them).
 - **Ollama**: **Describe** (image→prompt), **Improve prompt**, and **Vision Mix**
   (blend several reference images into one prompt). Models unload from VRAM after use.
 - **Fooocus-style UI**: big contained preview + batch gallery (arrows + fullscreen),
@@ -208,30 +210,31 @@ For a **Z-Image Base** checkpoint (e.g. Civitai), the typical recipe is CFG ~4-5
 
 ## Switching models in the UI (Advanced → Models)
 
-crispz-studio keeps **two separate model fields** — this is the key thing to
-understand:
+The **Z-Image checkpoint** dropdown is the single place to switch model. It merges,
+in one list:
 
-| Field | What it provides |
-|---|---|
-| **Z-Image base** (textbox, default `Tongyi-MAI/Z-Image-Turbo`) | the **VAE + Qwen3 text encoder** (shared by all Z-Image variants) |
-| **Checkpoints** (folder + dropdown) | the **transformer** = the actual generation model |
+- the official base repos **`Tongyi-MAI/Z-Image-Turbo`** and **`Tongyi-MAI/Z-Image`**
+  (pulled from Hugging Face on first use), then
+- every single-file `.safetensors` found in your **Checkpoints folder** **and** the
+  optional **Extra checkpoints folder** (both merged into the same list).
 
-**To switch model, pick a checkpoint in the dropdown — you do NOT change the
-`Tongyi-MAI/Z-Image-Turbo` field.** That base field only supplies the VAE +
-encoder; the selected `.safetensors` becomes the transformer. The model reloads
-on the next **Generate**.
+What each choice does:
+
+| You pick… | Effect | Performance preset (auto) |
+|---|---|---|
+| **Tongyi-MAI/Z-Image-Turbo** | full base repo (distilled) | **Turbo (8 steps)** |
+| **Tongyi-MAI/Z-Image** | full base repo (needs real CFG) | **Base CFG (28 steps)** |
+| a local `.safetensors` | used as the **transformer** (VAE + Qwen3 encoder kept from the current base repo) | from the model profile |
+
+Switching the dropdown automatically syncs **steps, guidance and the Performance
+radio**. The model reloads on the next **Generate**.
 
 Steps:
 
-1. **Models → Checkpoints**: set the folder (e.g.
-   `D:\…\Stable-diffusion\Z-Image`) → **Refresh**.
-2. Pick a `.safetensors` in the dropdown (status shows
-   *"Z-Image transformer: <file> (reload on next run)"*).
-3. **Generate** → it loads with your checkpoint.
-4. To go back to the original Turbo, pick **"(base repo)"** in the dropdown.
-
-Only edit the **Z-Image base** field if you have a full **diffusers folder**
-(then use **Apply Z-Image**).
+1. **Models → Checkpoints folder** (and, if you keep models elsewhere, **Extra
+   checkpoints folder**) → **Refresh**. Both folders feed the single dropdown.
+2. Pick an entry in **Z-Image checkpoint** — a base repo or a local file.
+3. **Generate** → it loads with your selection.
 
 ### Community full-repo models (e.g. Juggernaut-Z-Image)
 
@@ -241,8 +244,8 @@ just their **transformer** instead and keep the base components from Turbo:
 
 1. **Models → "Transformer override (HF repo / diffusers folder)"** = e.g.
    `RunDiffusion/Juggernaut-Z-Image` → **Apply**.
-2. Leave **Z-Image base** = `Tongyi-MAI/Z-Image-Turbo` (provides VAE + Qwen3
-   encoder + tokenizer).
+2. Keep the **Z-Image checkpoint** dropdown on `Tongyi-MAI/Z-Image-Turbo` (provides
+   VAE + Qwen3 encoder + tokenizer).
 3. **Generate** (downloads the transformer once, ~12 GB).
 
 CLI equivalent: `--zimage-transformer RunDiffusion/Juggernaut-Z-Image`.
@@ -263,6 +266,7 @@ Juggernaut-Z is a **Z-Image Base** fine-tune → set **Performance = "Base CFG"*
 
 ```json
 "checkpoints_dir": "D:\\Github\\sdlibs\\models\\Stable-diffusion\\Z-Image",
+"checkpoints_extra_dir": "",
 "loras_dir": "D:\\Github\\sdlibs\\models\\Lora"
 ```
 
@@ -388,9 +392,10 @@ each launch:
 
 Three ways to change them:
 
-- **Gradio UI**: "Paths / models" accordion at the top. Buttons "Refresh ESRGAN
-  list", "Apply Z-Image" (invalidates the pipe so it reloads), and "Save to
-  preferences.json".
+- **Gradio UI**: **Advanced → Models** tab. Pick the model in the **Z-Image
+  checkpoint** dropdown (it reloads on next Generate), set the **Checkpoints /
+  Extra checkpoints / ESRGAN** folders, then **Refresh ESRGAN** or **Save paths**
+  (writes `preferences.json`).
 - **CLI**: `--esrgan-dir <path>`, `--zimage-model <repo_or_path>`, `--save-paths`
   to persist (with or without `-i`).
 - **Interactive CLI** (`cli.sh` / `cli.bat`): first prompt = ESRGAN folder +

@@ -218,7 +218,8 @@ if isinstance(CONFIG.get("performance_presets"), dict) and CONFIG["performance_p
 import cz_pipeline
 from cz_pipeline import (  # noqa: E402,F401
     set_guidance, request_stop, set_zimage_model, set_zimage_transformer,
-    list_checkpoints, list_loras, set_checkpoints_dir, set_loras_dir, lora_keywords,
+    list_checkpoints, list_loras, set_checkpoints_dir, set_checkpoints_extra_dir,
+    resolve_checkpoint, set_loras_dir, lora_keywords,
     set_omni_model, check_omni_available, set_offload_mode, free_vram, set_loras,
     set_sampler, SAMPLER_CHOICES, set_schedule, SCHEDULE_CHOICES,
     generate, generate_omni, inpaint_run, outpaint, txt2img_run, process_one,
@@ -486,48 +487,87 @@ def _refresh_models(new_dir):
     return gr.update(choices=models, value=value), f"{len(models)} model(s) found in {cz_esrgan.ESRGAN_DIR}"
 
 
-def _apply_zimage(repo):
-    set_zimage_model(repo)
-    return f"Z-Image: {cz_pipeline.BASE_REPO} (will be (re)loaded on next run)"
+# Repos de base officiels Z-Image, proposes directement dans le dropdown
+# "Z-Image checkpoint" (selectionner = swap complet du BASE_REPO).
+ZIMAGE_BASE_REPOS = ["Tongyi-MAI/Z-Image-Turbo", "Tongyi-MAI/Z-Image"]
+# Preset Performance par defaut pour chaque repo de base officiel: Turbo (distille,
+# guidance 0) vs Base (a besoin d'une vraie CFG + plus de steps). Le nom du repo de base
+# ("...Z-Image") ne contient pas "base", donc on mappe explicitement plutot que par
+# substring. steps/guidance sont ensuite tires du preset lui-meme (source unique).
+ZIMAGE_BASE_PERFORMANCE = {
+    "Tongyi-MAI/Z-Image-Turbo": "Turbo (8 steps)",
+    "Tongyi-MAI/Z-Image": "Base CFG (28 steps)",
+}
 
 
-def _refresh_checkpoints(new_dir):
-    """Change le dossier checkpoints + liste les modeles + persiste."""
+def _refresh_checkpoints(new_dir, extra_dir=""):
+    """Change le(s) dossier(s) checkpoints (principal + extra) + liste les modeles fusionnes
+    + persiste."""
     set_checkpoints_dir(new_dir)
+    set_checkpoints_extra_dir(extra_dir)
     try:
-        _save_prefs_keys({"checkpoints_dir": cz_pipeline.CHECKPOINTS_DIR})
+        _save_prefs_keys({"checkpoints_dir": cz_pipeline.CHECKPOINTS_DIR,
+                          "checkpoints_extra_dir": cz_pipeline.CHECKPOINTS_EXTRA_DIR})
     except Exception:
         pass
     cks = list_checkpoints()
-    return gr.update(choices=["(base repo)"] + cks), f"{len(cks)} checkpoint(s) in {cz_pipeline.CHECKPOINTS_DIR} (saved)."
+    locs = " + ".join(d for d in (cz_pipeline.CHECKPOINTS_DIR, cz_pipeline.CHECKPOINTS_EXTRA_DIR) if d)
+    return gr.update(choices=ZIMAGE_BASE_REPOS + cks), f"{len(cks)} checkpoint(s) in {locs} (saved)."
+
+
+def _performance_label_for(steps, guidance):
+    """Nom du preset Performance correspondant a (steps, guidance), sinon None.
+    Data-driven: respecte les presets surcharges via config.txt (performance_presets)."""
+    for name, (s, gg) in PERFORMANCE.items():
+        if int(s) == int(steps) and abs(float(gg) - float(guidance)) < 1e-3:
+            return name
+    return None
+
+
+def _perf_update(steps, guidance):
+    """gr.update pour le radio Performance correspondant a (steps, guidance), sinon no-op
+    (laisse le choix courant si aucun preset ne matche exactement)."""
+    label = _performance_label_for(steps, guidance)
+    return gr.update(value=label) if label else gr.update()
 
 
 def _apply_checkpoint(name):
-    """Selectionne un checkpoint single-file comme transformer (ou revient au base repo).
-    Ajuste aussi steps/guidance selon le profil du modele (contextuel)."""
-    if not name or name == "(base repo)":
+    """Selectionne soit un repo de base officiel Z-Image (swap complet du BASE_REPO),
+    soit un checkpoint single-file local (transformer override, VAE/encoder du base repo).
+    Ajuste aussi steps/guidance ET le preset Performance selon le profil du modele."""
+    if not name:
+        return (gr.update(), gr.update(), gr.update(), gr.update())
+    if name in ZIMAGE_BASE_REPOS:
+        # Repo de base complet -> on enleve tout transformer single-file puis on swap le base.
         set_zimage_transformer("")
-        st, g = profile_for_model(cz_pipeline.BASE_REPO)
-        return ("Z-Image: base repo transformer (single-file cleared).",
-                gr.update(value=st), gr.update(value=g))
-    path = name if os.path.isabs(name) else os.path.join(cz_pipeline.CHECKPOINTS_DIR, name)
+        set_zimage_model(name)
+        perf = ZIMAGE_BASE_PERFORMANCE.get(name)
+        if perf and perf in PERFORMANCE:
+            st, g = PERFORMANCE[perf]
+            perf_upd = gr.update(value=perf)
+        else:
+            st, g = profile_for_model(name)
+            perf_upd = _perf_update(st, g)
+        return (f"Z-Image base: {name} -> {perf or 'auto'} (steps={st}, CFG={g}, reload on next run).",
+                gr.update(value=st), gr.update(value=g), perf_upd)
+    path = resolve_checkpoint(name)
     set_zimage_transformer(path)
     st, g = profile_for_model(os.path.basename(path))
     return (f"Z-Image transformer: {os.path.basename(path)} -> auto steps={st}, CFG={g} "
-            f"(reload on next run).", gr.update(value=st), gr.update(value=g))
+            f"(reload on next run).", gr.update(value=st), gr.update(value=g), _perf_update(st, g))
 
 
 def _apply_transformer_repo(repo):
     """Definit le transformer depuis un repo HF / dossier diffusers OU un .safetensors.
-    Ajuste steps/guidance selon le profil du modele."""
+    Ajuste steps/guidance ET le preset Performance selon le profil du modele."""
     repo = (repo or "").strip()
     set_zimage_transformer(repo)
     if not repo:
-        return "Transformer: from base repo.", gr.update(), gr.update()
+        return "Transformer: from base repo.", gr.update(), gr.update(), gr.update()
     st, g = profile_for_model(repo)
     return (f"Transformer override: {repo} -> auto steps={st}, CFG={g} "
             f"(keeps base VAE/encoder; reload on next run).",
-            gr.update(value=st), gr.update(value=g))
+            gr.update(value=st), gr.update(value=g), _perf_update(st, g))
 
 
 def _wild_sanitize(name):
@@ -666,22 +706,26 @@ def _ui_check_omni():
     return check_omni_available()
 
 
-def _save_paths_to_prefs(esrgan_dir, zimage_model, checkpoints_dir=None, loras_dir=None,
-                         wildcards_dir=None):
-    """Persiste les chemins dans preferences.json (local) -> charges au prochain boot."""
+def _save_paths_to_prefs(esrgan_dir, checkpoints_dir=None, checkpoints_extra_dir=None,
+                         loras_dir=None, wildcards_dir=None):
+    """Persiste les chemins dans preferences.json (local) -> charges au prochain boot.
+    Le base repo Z-Image courant (choisi via le dropdown) est persiste tel quel."""
     set_esrgan_dir(esrgan_dir)
-    set_zimage_model(zimage_model)
     if checkpoints_dir:
         set_checkpoints_dir(checkpoints_dir)
+    if checkpoints_extra_dir is not None:
+        set_checkpoints_extra_dir(checkpoints_extra_dir)
     if loras_dir:
         set_loras_dir(loras_dir)
     if wildcards_dir:
         set_wildcards_dir(wildcards_dir)
     _save_prefs_keys({"esrgan_dir": cz_esrgan.ESRGAN_DIR, "zimage_model": cz_pipeline.BASE_REPO,
-                      "checkpoints_dir": cz_pipeline.CHECKPOINTS_DIR, "loras_dir": cz_pipeline.LORAS_DIR,
+                      "checkpoints_dir": cz_pipeline.CHECKPOINTS_DIR,
+                      "checkpoints_extra_dir": cz_pipeline.CHECKPOINTS_EXTRA_DIR,
+                      "loras_dir": cz_pipeline.LORAS_DIR,
                       "wildcards_dir": cz_prompt.WILDCARDS_DIR})
     return (f"Saved to {PREFS_PATH}: esrgan_dir, zimage_model, checkpoints_dir, "
-            f"loras_dir, wildcards_dir={cz_prompt.WILDCARDS_DIR}")
+            f"checkpoints_extra_dir, loras_dir, wildcards_dir={cz_prompt.WILDCARDS_DIR}")
 
 
 # Ordre des composants mis a jour par le dropdown de presets (doit matcher l'UI).
@@ -972,7 +1016,7 @@ def _ui_ab_reindex(output_dir, thumb_size, quality, blur, gen_thumbs):
     url = "/gradio_api/file=" + os.path.abspath(idx).replace("\\", "/")
     link = (f'<a href="{url}" target="_blank" style="display:inline-block;padding:8px 14px;'
             f'background:#3b4356;color:#fff;border-radius:6px;text-decoration:none;">'
-            f'\U0001F5BCï¸ Open Asset Browser ({n} images)</a>')
+            f'\U0001F5BC️ Open Asset Browser ({n} images)</a>')
     return link, f"Rebuilt all thumbnails for {n} image(s)."
 
 
@@ -1274,7 +1318,7 @@ def build_ui():
                     with gr.Row():
                         load_out_btn = gr.Button("Load output folder", size="sm")
                         clear_hist_btn = gr.Button("Clear history", size="sm")
-                        gallery_btn = gr.Button("\U0001F5BCï¸ Asset Browser", size="sm",
+                        gallery_btn = gr.Button("\U0001F5BC️ Asset Browser", size="sm",
                                                 variant="primary")
                 gallery_status = gr.Markdown("")
 
@@ -1357,7 +1401,10 @@ def build_ui():
                                 compose_btn = gr.Button("Vision Mix -> prompt", size="sm")
                                 vmix_gen_btn = gr.Button("Vision Mix & Generate", variant="primary",
                                                          size="sm")
-                            compose_status = gr.Markdown("")
+                            compose_status = gr.Markdown(
+                                "*Select an Ollama vision model in Advanced > Prompt AI (click Detect), "
+                                "then add reference images and run Vision Mix.*",
+                                container=True, min_height=48)
 
                         with gr.Tab("Remove BG"):
                             rembg_img = _crop_input("Image", 280)
@@ -1493,25 +1540,39 @@ def build_ui():
                         log_level_status = gr.Markdown("")
 
                     with gr.Tab("Models"):
-                        zimage_model_tb = gr.Textbox(
-                            value=cz_pipeline.BASE_REPO,
-                            label="Z-Image base (HF repo, diffusers folder, or .safetensors file)",
-                            info="A .safetensors (Civitai) = transformer; VAE+encoder from base repo.")
-                        esrgan_dir_tb = gr.Textbox(value=cz_esrgan.ESRGAN_DIR, label="ESRGAN_DIR (.pth/.safetensors folder)")
                         offload = gr.Dropdown(choices=list(cz_pipeline.OFFLOAD_CHOICES), value="none",
                                               label="CPU offload (VRAM)",
-                                              info="none | model (~half) | sequential (~9GB, slower)")
-                        with gr.Row():
-                            refresh_btn = gr.Button("Refresh ESRGAN", size="sm")
-                            apply_zimage_btn = gr.Button("Apply Z-Image", size="sm", variant="primary")
-                            save_paths_btn = gr.Button("Save paths", size="sm")
-                        paths_status = gr.Markdown("")
+                                              info="How much of the model to move to CPU RAM to save VRAM. Details below.")
+                        with gr.Accordion("ℹ️  What is CPU offload?", open=False):
+                            gr.Markdown(
+                                "**CPU offload** moves part of the model weights from VRAM (GPU) to RAM (CPU) "
+                                "between steps so large models fit on low-VRAM cards. It is **not** quantization "
+                                "— weights stay BF16, they just shuttle between RAM and GPU.\n\n"
+                                "- **none** — everything stays in VRAM. **Fastest.** Use it when you have enough "
+                                "VRAM (e.g. RTX 5090 / 24GB+ → keep `none`).\n"
+                                "- **model** — offload per submodule. ~half the VRAM, small slowdown. Good balance "
+                                "on 12–16GB cards.\n"
+                                "- **sequential** — aggressive, module-by-module. Runs in ~9GB but much slower "
+                                "(5–10×). For small cards (8–12GB).")
 
                         gr.Markdown("### Checkpoints (switch model, like ESRGAN)")
                         ckpt_dir_tb = gr.Textbox(value=cz_pipeline.CHECKPOINTS_DIR, label="Checkpoints folder")
+                        ckpt_extra_dir_tb = gr.Textbox(
+                            value=cz_pipeline.CHECKPOINTS_EXTRA_DIR,
+                            label="Extra checkpoints folder (optional)",
+                            placeholder="e.g. D:\\models\\Z-Image",
+                            info="Merged into the single 'Z-Image checkpoint' list above. Leave empty to disable.")
+                        esrgan_dir_tb = gr.Textbox(value=cz_esrgan.ESRGAN_DIR,
+                                                   label="ESRGAN_DIR (.pth/.safetensors folder)")
                         with gr.Row():
-                            ckpt_dd = gr.Dropdown(choices=["(base repo)"] + list_checkpoints(),
-                                                  value="(base repo)", label="Z-Image checkpoint", scale=3)
+                            refresh_btn = gr.Button("Refresh ESRGAN", size="sm")
+                            save_paths_btn = gr.Button("Save paths", size="sm")
+                        paths_status = gr.Markdown("")
+                        with gr.Row():
+                            _ckpt_choices = ZIMAGE_BASE_REPOS + list_checkpoints()
+                            _ckpt_value = cz_pipeline.BASE_REPO if cz_pipeline.BASE_REPO in _ckpt_choices else ZIMAGE_BASE_REPOS[0]
+                            ckpt_dd = gr.Dropdown(choices=_ckpt_choices,
+                                                  value=_ckpt_value, label="Z-Image checkpoint", scale=3)
                             ckpt_refresh_btn = gr.Button("Refresh", size="sm", scale=1)
                         ckpt_status = gr.Markdown("")
                         with gr.Row():
@@ -1578,7 +1639,14 @@ def build_ui():
                         omni_check_btn = gr.Button("Check Omni availability (Hugging Face)", size="sm")
                         omni_status = gr.Markdown("")
 
-                        gr.Markdown("### \U0001F5BCï¸ Asset Browser")
+                    with gr.Tab("Save"):
+                        save_mode = gr.Radio(choices=["display", "local", "alongside", "custom"],
+                                             value=DEFAULT_SAVE_MODE, label="Save mode")
+                        output_dir = gr.Textbox(value=DEFAULT_OUTPUT_DIR, label="Output folder")
+                        output_format = gr.Dropdown(choices=list(SUPPORTED_FORMATS),
+                                                    value=DEFAULT_OUTPUT_FORMAT, label="Output format")
+
+                        gr.Markdown("### \U0001F5BC️ Asset Browser")
                         gr.Markdown("*Standalone gallery page (thumbnails + metadata + lightbox) "
                                     "built into the output folder, opened in a new tab. Reindex to "
                                     "(re)build it from your saved images.*")
@@ -1597,13 +1665,6 @@ def build_ui():
                         ab_open_link = gr.HTML("")
                         ab_status = gr.Markdown("")
 
-                    with gr.Tab("Save"):
-                        save_mode = gr.Radio(choices=["display", "local", "alongside", "custom"],
-                                             value=DEFAULT_SAVE_MODE, label="Save mode")
-                        output_dir = gr.Textbox(value=DEFAULT_OUTPUT_DIR, label="Output folder")
-                        output_format = gr.Dropdown(choices=list(SUPPORTED_FORMATS),
-                                                    value=DEFAULT_OUTPUT_FORMAT, label="Output format")
-
         # Toggles facon Fooocus
         advanced_cb.change(lambda v: gr.update(visible=bool(v)), advanced_cb, advanced_col)
         use_input.change(lambda v: gr.update(visible=bool(v)), use_input, input_group)
@@ -1613,9 +1674,8 @@ def build_ui():
 
         # Actions
         refresh_btn.click(_refresh_models, [esrgan_dir_tb], [esrgan, paths_status])
-        apply_zimage_btn.click(_apply_zimage, [zimage_model_tb], [paths_status])
         save_paths_btn.click(_save_paths_to_prefs,
-                             [esrgan_dir_tb, zimage_model_tb, ckpt_dir_tb, lora_dir_tb, wild_dir_tb],
+                             [esrgan_dir_tb, ckpt_dir_tb, ckpt_extra_dir_tb, lora_dir_tb, wild_dir_tb],
                              [paths_status])
         wild_refresh_btn.click(_ui_wild_refresh, [wild_dir_tb], [wild_dd, wild_status])
         wild_dd.change(_ui_wild_load, [wild_dd], [wild_editor, wild_status])
@@ -1623,10 +1683,10 @@ def build_ui():
         wild_save_btn.click(_ui_wild_save, [wild_dd, wild_editor], [wild_status])
         wild_create_btn.click(_ui_wild_create, [wild_new_name, wild_editor],
                               [wild_dd, wild_status, wild_new_name])
-        ckpt_refresh_btn.click(_refresh_checkpoints, [ckpt_dir_tb], [ckpt_dd, ckpt_status])
-        ckpt_dd.change(_apply_checkpoint, [ckpt_dd], [ckpt_status, gen_steps, guidance])
+        ckpt_refresh_btn.click(_refresh_checkpoints, [ckpt_dir_tb, ckpt_extra_dir_tb], [ckpt_dd, ckpt_status])
+        ckpt_dd.change(_apply_checkpoint, [ckpt_dd], [ckpt_status, gen_steps, guidance, performance])
         transformer_apply_btn.click(_apply_transformer_repo, [transformer_tb],
-                                    [ckpt_status, gen_steps, guidance])
+                                    [ckpt_status, gen_steps, guidance, performance])
         lora_refresh_btn.click(_refresh_loras, [lora_dir_tb],
                                [lora_dd1, lora_dd2, lora_dd3, lora_status])
         _lora_slots = [lora_dd1, lw1, lora_dd2, lw2, lora_dd3, lw3]
