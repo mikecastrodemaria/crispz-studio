@@ -23,10 +23,16 @@ python app.py --txt2img --prompt "cinematic portrait of a sea captain" \
     --gen-width 960 --gen-height 1440 --gen-steps 24 --guidance 6 \
     --save-mode local --output-dir out
 
-# Generate then upscale (ESRGAN + Z-Image refine)
+# Generate then upscale in ONE command (txt2img chained into ESRGAN + Z-Image refine).
+# This is the CLI equivalent of the UI's "Upscale after generate" checkbox.
 python app.py --txt2img --prompt "portrait of an old fisherman" --upscale \
     --factor 2 --denoise 0.30 -m 4x-ClearRealityV1_Soft.safetensors \
     --save-mode local --output-dir out
+
+# Faster chained variant: refine at native resolution THEN ESRGAN (--refine-first).
+# Skip the refine pass entirely with --denoise 0 (ESRGAN-only upscale).
+python app.py --txt2img --prompt "..." --upscale --refine-first \
+    --factor 2 --denoise 0.30 -m 4x-ClearRealityV1_Soft.safetensors
 ```
 
 ## Choose / switch the Z-Image model
