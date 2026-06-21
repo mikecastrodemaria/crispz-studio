@@ -11,21 +11,32 @@ SwarmUI. On top of crispz's upscaler it adds:
   image through the ESRGAN + refine pipeline — no manual step. CLI equivalent:
   `--txt2img --upscale` (see README_CLI.md).
 - **Image → Upscale** (the crispz pipeline): Real-ESRGAN + Z-Image refine, 4K tiling.
-- **Inpaint** (paint a mask → regenerate the area) and **Reframe / Outpaint** (expand
-  to a new aspect ratio).
+- **Inpaint / Outpaint** (one tab, 3 modes): **Brush** repaints a painted mask ·
+  **Expand sides** outpaints Left/Right/Top/Bottom (+ **Center**) ~30% per side ·
+  **Reframe** to a new aspect ratio (**Contain** = keep the whole image and fill the
+  borders, **Cover** = crop to fill). All bounded to the model's ~1 MP sweet spot (no
+  pixel blow-up), with blurred-edge fill + feathered seams for clean blends, an optional
+  **Auto-describe** (local captioner, no Ollama, automatic when the prompt is empty) to
+  guide coherent fills, and an optional **Harmonize** pass (light img2img refine over the
+  whole result) to unify grain/light and remove the "added zone" look. Steps follow the
+  model.
 - **Remove Background** (rembg) and **Face Swap** with optional **GFPGAN restore**.
 - **Models**: one **Z-Image checkpoint** dropdown merging the official base repos
   (Turbo / Z-Image) with single-file `.safetensors` from a main **and** an optional
   extra folder, a **Transformer override** (diffusers repo/folder, e.g. Juggernaut-Z),
   and **multi-LoRA** (3 slots + trigger words). Picking a model also auto-syncs the
   Performance preset. FP8 checkpoints are skipped (diffusers can't load them).
-- **Ollama**: **Describe** (image→prompt), **Improve prompt**, and **Vision Mix**
-  (blend several reference images into one prompt). Models unload from VRAM after use.
+- **Ollama (optional)**: **Describe** (image→prompt), **Improve prompt**, and **Vision
+  Mix** (blend several reference images into one prompt). Models unload from VRAM after
+  use. Without Ollama, **Describe** uses a local BLIP captioner and **Improve prompt**
+  falls back to a local rule-based pass — both work fully offline.
 - **Fooocus-style UI**: big contained preview + batch gallery (arrows + fullscreen),
   prompt + Generate + **Stop**, dark theme, Settings (aspect/performance/batch **1–30**),
   **277 styles** (search + hover previews), and a **crop editor** on every image input.
-- **Advanced Gallery** (output folder): metadata (prompt/seed/params), sort/filter,
-  copy, delete, NSFW blur — plus a per-session history.
+- **Asset Browser** (output folder gallery): opens **instantly** in a new tab (indexing
+  runs in the background), **defaults to today's date**, shows **placeholder thumbnails**
+  while images load, with metadata (prompt/seed/params), search/day filter, copy, delete,
+  NSFW blur — plus a per-session history.
 - **Metadata saved** with every image: PNG text chunk + EXIF (jpg/webp) + `.json`
   sidecar — prompt, negative, seed, steps, guidance, size, model, LoRAs, **applied
   style names**, and the **sampler/schedule**. **Dated, unique filenames** (date +
@@ -83,9 +94,16 @@ prompts, the Omni / FaceSwap model paths, etc.).
   **thumbnail preview** gallery. Selected styles wrap your prompt and merge their
   negatives. (Sample thumbnails live in `styles/samples/`, local only.)
 - **Describe** (Input Image → Describe): caption an image into a prompt using an
-  Ollama **vision** model (auto-detected, vision-only list), or a local BLIP fallback.
+  Ollama **vision** model (auto-detected, vision-only list), or a **local captioner**
+  (no Ollama needed).
 - **Improve prompt**: rewrites the current prompt via the same Ollama model. URL +
-  model in Advanced → **Prompt AI**. Tune the instructions in `config.txt`.
+  model in Advanced → **Prompt AI**. Tune the instructions in `config.txt`. **Without
+  Ollama** it falls back to a local rule-based pass that appends quality tags
+  (`improve_local_keywords` in `config.txt`) — instant, no model.
+- **Local captioner** (no Ollama): the Describe fallback and the **Auto-describe**
+  toggle in Inpaint / Outpaint use a local BLIP model, set by `caption_model` in
+  `config.txt` (or **Prompt AI → Caption model**): `blip-large` (default, richer) ·
+  `blip-base` (lighter). The model downloads on first use.
 
 ## Using a reference image (multi-reference status)
 
@@ -124,6 +142,34 @@ is in place: once a Z-Image Omni/Edit model ships, set it in `config.txt`
 (`"zimage_omni_model": "<HF repo or local diffusers folder>"`) **and restart** —
 the tab appears and multi-reference works. Use **Models → Check Omni availability**
 to see if it has been released.
+
+## Inpaint / Outpaint (Advanced tab)
+
+One tab with three modes. The image editor, prompt, **Steps** (from the model
+Performance) and **Strength** are shared across modes:
+
+- **Brush (inpaint)** — paint a mask over the area to change, describe the result in the
+  prompt, run. Brush size is set from the editor toolbar (click the brush icon).
+- **Expand sides (outpaint)** — check **Left / Right / Top / Bottom** (or **Center** for
+  all four) to grow the canvas ~30% per side; Z-Image fills the new borders.
+- **Reframe (ratio)** — pick a target aspect ratio + **Contain** (keep the whole image
+  and fill the borders) or **Cover** (crop to fill).
+
+All modes are bounded to the model's **~1 MP sweet spot** (no pixel blow-up). Border
+fills use a **blurred-edge init + feathered seams** so new content matches the original's
+colors, and the unmasked area keeps its full resolution.
+
+Tips for clean outpaint/reframe:
+
+- **Describe the result** in the prompt (the full outfit/scene). **Auto-describe** runs
+  automatically when the prompt is empty (local BLIP captioner, no Ollama) to keep the
+  fill coherent with the center — or check it to also prepend a description to your prompt.
+- **Strength** ~0.65–0.8 blends best (keeps the edge colors); ~1.0 adds more new detail
+  but a more visible transition.
+- **Harmonize** (checkbox) runs a light final img2img refine over the whole result to
+  unify grain/light and remove any remaining "added zone" look.
+- The local caption model is set in **Prompt AI → Caption model** (`blip-large` /
+  `blip-base`).
 
 ## Face Swap — post-process  *(Phase 3, optional)*
 

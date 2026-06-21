@@ -94,6 +94,25 @@ def _ollama_improve(prompt_text, model, base=None):
     return (out.get("response") or "").strip()
 
 
+_IMPROVE_LOCAL_KEYWORDS = CONFIG.get(
+    "improve_local_keywords",
+    "highly detailed, sharp focus, professional photography, intricate details, "
+    "natural lighting, high quality, 8k")
+
+
+def _local_improve(prompt_text):
+    """Amelioration LOCALE du prompt, SANS Ollama et sans modele (rule-based): ajoute les
+    mots-cles de qualite (config 'improve_local_keywords') encore absents du prompt.
+    Instantane, 100% offline. Fallback quand aucun modele Ollama n'est selectionne."""
+    pt = (prompt_text or "").strip().rstrip(",").strip()
+    low = pt.lower()
+    adds = [k.strip() for k in _IMPROVE_LOCAL_KEYWORDS.split(",") if k.strip()]
+    extra = [k for k in adds if k.lower() not in low]
+    if not extra:
+        return pt
+    return (pt + (", " if pt else "") + ", ".join(extra)).strip()
+
+
 def _ollama_compose(captions, model, base=None):
     """'Faux Omni': fusionne plusieurs descriptions d'images en UN seul prompt."""
     listing = "\n".join(f"Image {i + 1}: {c}" for i, c in enumerate(captions) if c)

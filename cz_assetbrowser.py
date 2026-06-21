@@ -122,6 +122,23 @@ def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=Tr
     return len(entries), os.path.join(d, "index.html"), len(jobs)
 
 
+def ab_open_fast(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=True):
+    """Ouverture INSTANTANEE: ecrit seulement index.html (immediat) et lance la
+    (re)construction complete du manifest + miniatures en tache de fond. Renvoie le
+    chemin de index.html sans attendre l'indexation. La SPA charge le manifest existant
+    tout de suite (s'il y en a un) et re-essaie/rafraichit pendant que l'index se
+    reconstruit -> pas de latence au clic (comme Fooocus)."""
+    d = _ab_resolve_dir(output_dir)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "index.html"), "w", encoding="utf-8") as f:
+        f.write(ASSET_BROWSER_HTML)
+    threading.Thread(
+        target=lambda: ab_reindex(output_dir, thumb_size, quality, blur, gen_thumbs,
+                                  background_thumbs=True),
+        daemon=True).start()
+    return os.path.join(d, "index.html")
+
+
 def delete_asset(rel, output_dir=None):
     """Supprime une image du dossier de sortie (+ sidecar + thumbnail). 'rel' est le
     chemin relatif fourni par l'Asset Browser. Verifie que ca reste DANS le dossier."""

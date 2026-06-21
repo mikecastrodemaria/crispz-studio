@@ -6,6 +6,10 @@
     "ollama_vision_blocklist": [],
     "ollama_keep_alive": 0,
     "ollama_cpu": false,
+    "caption_model": "blip-large",
+    "_caption_model_help": "Local auto-describe model (no Ollama): blip-large (default) | blip-base",
+    "improve_local_keywords": "highly detailed, sharp focus, professional photography, intricate details, natural lighting, high quality, 8k",
+    "_improve_local_keywords_help": "Quality tags appended by 'Improve prompt' when no Ollama model is selected (local rule-based fallback, no model).",
 
     "performance_presets": {
         "Turbo (8 steps)": [8, 0.0],

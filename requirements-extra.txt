@@ -2,3 +2,4 @@
 # Install:  .venv/Scripts/python -m pip install -r requirements-extra.txt
 rembg                  # Remove BG tab (downloads the u2net model on first use)
 pillow-avif-plugin     # read .avif input images (else PIL.UnidentifiedImageError)
+# Auto-describe captioner (BLIP) needs only transformers (already installed).

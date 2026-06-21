@@ -773,21 +773,23 @@ def _reframe_canvas(image, ratio_w, ratio_h, overlap=8):
 def inpaint_run(background, mask, prompt, steps, denoise, seed):
     """Inpaint: regenere la zone blanche du masque selon le prompt
     (ZImageInpaintPipeline). background + mask = PIL (L: blanc = a changer)."""
-    bg = background.convert("RGB")
-    w = round_to_multiple(bg.width, 32)
-    h = round_to_multiple(bg.height, 32)
-    if (w, h) != bg.size:
-        bg = bg.resize((w, h), Image.LANCZOS)
-        mask = mask.resize((w, h), Image.NEAREST)
+    orig = background.convert("RGB")
+    full_mask = mask
+    # Diffusion bornee a ~1 MP (zone optimale du modele), puis recomposition pleine res.
+    bg, work_mask, orig_size = _cap_work_res(orig, mask)
+    w, h = bg.size
     pipe = get_pipe("inpaint")
-    _log(f"inpaint: {w}x{h}, {int(steps)} steps, strength {float(denoise):.2f}, "
-         f"guidance {GUIDANCE:.1f} ...")
+    _log(f"inpaint: work {w}x{h} (orig {orig_size[0]}x{orig_size[1]}), {int(steps)} steps, "
+         f"strength {float(denoise):.2f}, guidance {GUIDANCE:.1f} ...")
     _progress(0.1, "Inpainting...")
     _set_slicing(pipe, max(w, h))
     t0 = time.time()
-    out = pipe(prompt=prompt or "", image=bg, mask_image=mask, strength=float(denoise),
+    out = pipe(prompt=prompt or "", image=bg, mask_image=work_mask, strength=float(denoise),
                num_inference_steps=int(steps), guidance_scale=GUIDANCE,
                generator=_make_generator(seed)).images[0]
+    # Recompose: hors-masque garde la pleine resolution; jointure fondue (feather).
+    out = _composite_back(out, orig, full_mask, orig_size,
+                          feather=max(2, int(min(orig_size) * 0.01)))
     _log(f"inpaint done in {time.time() - t0:.1f}s")
     gc.collect()
     if DEVICE == "cuda":
@@ -795,21 +797,170 @@ def inpaint_run(background, mask, prompt, steps, denoise, seed):
     return out
 
 
-def outpaint(image, ratio_w, ratio_h, prompt, steps, seed):
-    """Reframe / outpainting: agrandit l'image au ratio cible et fait remplir les
-    bords par Z-Image (ZImageInpaintPipeline)."""
-    canvas, mask, nw, nh = _reframe_canvas(image, ratio_w, ratio_h)
+# Resolution cible "zone optimale" du modele Z-Image (~1 MP, comme les ratios txt2img).
+# Le reframe vise ce budget pour ne PAS exploser le nombre de pixels (sortie 2-3 MP qui
+# sort de la zone d'entrainement -> lent et qualite degradee).
+MODEL_TARGET_PX = 1024 * 1024
+
+
+def _ratio_canvas(ratio_w, ratio_h, target_px=MODEL_TARGET_PX):
+    """Dimensions (multiples de 32) d'un canevas au ratio donne, a ~target_px pixels."""
+    r = float(ratio_w) / float(ratio_h)
+    nh = (target_px / r) ** 0.5
+    nw = nh * r
+    return round_to_multiple(int(round(nw)), 32), round_to_multiple(int(round(nh)), 32)
+
+
+def _cap_work_res(image, mask, max_px=MODEL_TARGET_PX):
+    """Borne la resolution de travail pour la diffusion: si image > max_px, renvoie une
+    version reduite (multiples de 32) de (image, mask) + la taille d'origine pour
+    recomposer ensuite. Evite de faire tourner le modele tres au-dessus de sa zone
+    optimale (~1 MP) -> plus rapide et meilleure qualite."""
+    w, h = image.size
+    if w * h > max_px:
+        s = (max_px / (w * h)) ** 0.5
+        ww, wh = round_to_multiple(int(w * s), 32), round_to_multiple(int(h * s), 32)
+    else:
+        ww, wh = round_to_multiple(w, 32), round_to_multiple(h, 32)
+    img_w = image.resize((ww, wh), Image.LANCZOS) if (ww, wh) != image.size else image
+    msk_w = mask.resize((ww, wh), Image.NEAREST) if mask.size != (ww, wh) else mask
+    return img_w, msk_w, (w, h)
+
+
+def _composite_back(result, original, mask, orig_size, feather=0):
+    """Recompose a la resolution d'origine: la zone masquee (blanc) vient de `result`
+    (re-agrandi a orig_size), le reste vient de `original` -> le hors-masque garde la
+    pleine resolution de l'image de depart. `feather` (px) floute le masque pour fondre
+    la jointure (transition progressive original <-> genere, plus de ligne dure)."""
+    if result.size != orig_size:
+        result = result.resize(orig_size, Image.LANCZOS)
+    if original.size != orig_size:
+        original = original.resize(orig_size, Image.LANCZOS)
+    m = (mask.resize(orig_size, Image.NEAREST) if mask.size != orig_size else mask).convert("L")
+    if feather and feather > 0:
+        from PIL import ImageFilter
+        m = m.filter(ImageFilter.GaussianBlur(float(feather)))
+    return Image.composite(result, original.convert("RGB"), m)
+
+
+def reframe(image, ratio_w, ratio_h, fit, prompt, steps, seed, strength=1.0):
+    """Recadre l'image au ratio cible en bornant la sortie a la resolution optimale du
+    modele (~1 MP) -> plus d'explosion du nombre de pixels.
+      fit='contain' : l'image entiere rentre dans le canevas (sans l'agrandir), les bords
+                      ajoutes sont remplis par Z-Image (outpaint).
+      fit='cover'   : l'image remplit le canevas au ratio puis est recadree au centre
+                      (pas d'outpaint, simple reframe/crop)."""
+    from PIL import ImageDraw
+    img = image.convert("RGB")
+    w, h = img.size
+    nw, nh = _ratio_canvas(ratio_w, ratio_h)
+    if str(fit).lower() == "cover":
+        scale = max(nw / w, nh / h)
+        rw2, rh2 = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
+        resized = img.resize((rw2, rh2), Image.LANCZOS)
+        left, top = (rw2 - nw) // 2, (rh2 - nh) // 2
+        out = resized.crop((left, top, left + nw, top + nh))
+        _log(f"reframe cover: {w}x{h} -> {nw}x{nh} (crop, no fill)")
+        return out
+    # contain -> on adapte l'original sans l'agrandir, puis on outpaint les bords.
+    from PIL import ImageFilter
+    scale = min(nw / w, nh / h, 1.0)
+    rw2, rh2 = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
+    resized = img.resize((rw2, rh2), Image.LANCZOS) if (rw2, rh2) != (w, h) else img
+    ox, oy = (nw - rw2) // 2, (nh - rh2) // 2
+    # Bords = extension floue des couleurs du bord (blurred edge fill, comme l'outpaint)
+    # plutot qu'un gris -> continuite d'exposition; transparait si strength < 1.0.
+    arr = np.pad(np.array(resized), [[oy, nh - rh2 - oy], [ox, nw - rw2 - ox], [0, 0]],
+                 mode="edge")
+    canvas = Image.fromarray(np.ascontiguousarray(arr))
+    overlap = 8
+    mask = Image.new("L", (nw, nh), 255)
+    ImageDraw.Draw(mask).rectangle(
+        [ox + overlap, oy + overlap, ox + rw2 - overlap, oy + rh2 - overlap], fill=0)
+    blur_r = max(8, int(min(nw, nh) * 0.03))
+    canvas = Image.composite(canvas.filter(ImageFilter.GaussianBlur(blur_r)), canvas, mask)
     pipe = get_pipe("inpaint")
-    _log(f"outpaint: {image.size[0]}x{image.size[1]} -> {nw}x{nh}, {int(steps)} steps, "
-         f"guidance {GUIDANCE:.1f} ...")
-    _progress(0.1, f"Outpaint -> {nw}x{nh}...")
+    _log(f"reframe contain (outpaint): {w}x{h} -> {nw}x{nh}, {int(steps)} steps, "
+         f"strength {float(strength):.2f}, guidance {GUIDANCE:.1f} ...")
+    _progress(0.1, f"Reframe -> {nw}x{nh}...")
     _set_slicing(pipe, max(nw, nh))
     t0 = time.time()
-    out = pipe(prompt=prompt or "", image=canvas, mask_image=mask, strength=1.0,
+    out = pipe(prompt=prompt or "", image=canvas, mask_image=mask, strength=float(strength),
                num_inference_steps=int(steps), guidance_scale=GUIDANCE,
                generator=_make_generator(seed)).images[0]
     if out.size != (nw, nh):
         out = out.resize((nw, nh), Image.LANCZOS)
+    _log(f"reframe done in {time.time() - t0:.1f}s")
+    gc.collect()
+    if DEVICE == "cuda":
+        torch.cuda.empty_cache()
+    return out
+
+
+def outpaint(image, ratio_w, ratio_h, prompt, steps, seed):
+    """Compat (CLI --reframe et appels existants): reframe en mode 'contain' (outpaint),
+    borne a la resolution optimale du modele."""
+    return reframe(image, ratio_w, ratio_h, "contain", prompt, steps, seed)
+
+
+def outpaint_directions(image, mask, directions, prompt, steps, seed, strength=1.0, expand=0.3):
+    """Outpaint directionnel (facon Fooocus): agrandit l'image dans les directions
+    choisies parmi left/right/top/bottom, chacune de `expand` (fraction de la dimension
+    d'origine), en repliquant les pixels du bord (mode 'edge'), puis fait remplir les
+    bandes ajoutees par Z-Image (ZImageInpaintPipeline). Un `mask` peint (L, blanc = a
+    changer) est optionnel: il est conserve dans la zone d'origine et combine avec les
+    bandes ajoutees (blanches)."""
+    img = np.array(image.convert("RGB"))
+    H, W = img.shape[:2]
+    m = np.array(mask.convert("L")) if mask is not None else np.zeros((H, W), dtype=np.uint8)
+    dirs = set(d.lower() for d in (directions or []))
+    if "top" in dirs:
+        p = int(H * expand)
+        img = np.pad(img, [[p, 0], [0, 0], [0, 0]], mode="edge")
+        m = np.pad(m, [[p, 0], [0, 0]], mode="constant", constant_values=255)
+    if "bottom" in dirs:
+        p = int(H * expand)
+        img = np.pad(img, [[0, p], [0, 0], [0, 0]], mode="edge")
+        m = np.pad(m, [[0, p], [0, 0]], mode="constant", constant_values=255)
+    if "left" in dirs:
+        p = int(W * expand)
+        img = np.pad(img, [[0, 0], [p, 0], [0, 0]], mode="edge")
+        m = np.pad(m, [[0, 0], [p, 0]], mode="constant", constant_values=255)
+    if "right" in dirs:
+        p = int(W * expand)
+        img = np.pad(img, [[0, 0], [0, p], [0, 0]], mode="edge")
+        m = np.pad(m, [[0, 0], [0, p]], mode="constant", constant_values=255)
+    canvas = Image.fromarray(np.ascontiguousarray(img))
+    mask_img = Image.fromarray(np.ascontiguousarray(m))
+    full_size = canvas.size
+    # Dilate un peu la zone a generer vers l'interieur -> le modele regenere une fine
+    # bande de transition qui se raccorde a l'original (evite la jointure franche).
+    from PIL import ImageFilter
+    k = max(3, (int(min(full_size) * 0.02) // 2) * 2 + 1)
+    mask_img = mask_img.filter(ImageFilter.MaxFilter(min(k, 15)))
+    # "Blurred edge fill": on remplit la zone a generer avec une version FLOUE de
+    # l'extension du bord (memes couleurs/tonalite que l'original) au lieu d'un bord
+    # replique net. Avec strength < 1.0 ce flou transparait -> continuite d'exposition
+    # (plus de bande plus claire) et le modele ajoute le detail par-dessus.
+    blur_r = max(8, int(min(full_size) * 0.03))
+    canvas = Image.composite(canvas.filter(ImageFilter.GaussianBlur(blur_r)), canvas, mask_img)
+    # Diffusion bornee a ~1 MP (zone optimale), puis recomposition: le centre (image
+    # d'origine) garde sa pleine resolution, seuls les bords ajoutes sont generes.
+    work_img, work_mask, _ = _cap_work_res(canvas, mask_img)
+    w2, h2 = work_img.size
+    pipe = get_pipe("inpaint")
+    _log(f"outpaint {sorted(dirs)}: {image.size[0]}x{image.size[1]} -> "
+         f"{full_size[0]}x{full_size[1]} (work {w2}x{h2}), {int(steps)} steps, "
+         f"guidance {GUIDANCE:.1f} ...")
+    _progress(0.1, f"Outpaint -> {full_size[0]}x{full_size[1]}...")
+    _set_slicing(pipe, max(w2, h2))
+    t0 = time.time()
+    out = pipe(prompt=prompt or "", image=work_img, mask_image=work_mask,
+               strength=float(strength),
+               num_inference_steps=int(steps), guidance_scale=GUIDANCE,
+               generator=_make_generator(seed)).images[0]
+    out = _composite_back(out, canvas, mask_img, full_size,
+                          feather=max(4, int(min(full_size) * 0.015)))
     _log(f"outpaint done in {time.time() - t0:.1f}s")
     gc.collect()
     if DEVICE == "cuda":

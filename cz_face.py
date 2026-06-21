@@ -15,28 +15,73 @@ import os
 import numpy as np
 from PIL import Image
 
-from cz_core import CONFIG, HERE, DEVICE, _log
+from cz_core import CONFIG, HERE, DEVICE, _log, _prefs
 
 # FaceSwap: restauration GFPGAN post-swap (nettete du visage). Reglable via l'UI.
 FACESWAP_RESTORE = bool(CONFIG.get("faceswap_restore", False))
 FACESWAP_RESTORE_BLEND = float(CONFIG.get("faceswap_restore_blend", 0.8))
 
 
-_BLIP = None
+_CAPTIONER = None  # (kind, processor, model), charge paresseusement
+
+# Captioner local (auto-describe, SANS Ollama). Configurable via config.txt:
+#   "caption_model": "blip-large" (defaut) | "blip-base"
+# - blip-large : meme API que blip-base, captions plus riches (~1.9 GB).
+# (Florence-2 a ete retire: son code distant est incompatible avec transformers >= ~4.5x
+#  exige par Z-Image -> chargeait mais plantait a la generation.)
+_CAPTION_REPOS = {
+    "blip-base":  "Salesforce/blip-image-captioning-base",
+    "blip-large": "Salesforce/blip-image-captioning-large",
+}
+
+
+_CAPTION_MODEL = None  # override UI (None = lire config.txt)
+
+
+def _current_caption_kind():
+    """Type de captioner courant: override UI (session) sinon preferences.json (persiste)
+    sinon config.txt, sinon blip-large. Toute valeur inconnue (ex. 'florence2' retire)
+    retombe sur blip-large."""
+    if _CAPTION_MODEL in _CAPTION_REPOS:
+        return _CAPTION_MODEL
+    kind = str(_prefs.get("caption_model") or CONFIG.get("caption_model", "blip-large")).lower().strip()
+    return kind if kind in _CAPTION_REPOS else "blip-large"
+
+
+def set_caption_model(kind):
+    """Change le captioner local (UI). Invalide le cache -> recharge au prochain usage."""
+    global _CAPTION_MODEL, _CAPTIONER
+    k = str(kind or "").lower().strip()
+    if k in _CAPTION_REPOS and k != _current_caption_kind():
+        _CAPTION_MODEL = k
+        _CAPTIONER = None
+        _log(f"caption model -> {k} (will load on next use)")
+    elif k in _CAPTION_REPOS:
+        _CAPTION_MODEL = k
+    return _current_caption_kind()
+
+
+def _load_captioner():
+    """Charge (une fois) le captioner courant (UI/config). Renvoie (kind, proc, mdl)."""
+    global _CAPTIONER
+    if _CAPTIONER is not None:
+        return _CAPTIONER
+    kind = _current_caption_kind()
+    repo = _CAPTION_REPOS.get(kind, _CAPTION_REPOS["blip-large"])
+    from transformers import BlipProcessor, BlipForConditionalGeneration
+    _log(f"loading local captioner BLIP ({repo}); first time downloads ~1-2GB...")
+    proc = BlipProcessor.from_pretrained(repo)
+    mdl = BlipForConditionalGeneration.from_pretrained(repo).to(DEVICE)
+    _CAPTIONER = ("blip", proc, mdl)
+    return _CAPTIONER
 
 
 def _local_caption(image):
-    """Fallback local (sans Ollama): petit captioneur BLIP via transformers (lazy)."""
-    global _BLIP
-    if _BLIP is None:
-        from transformers import BlipProcessor, BlipForConditionalGeneration
-        _log("loading local captioner BLIP base (first time downloads ~1GB)...")
-        proc = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-        mdl = BlipForConditionalGeneration.from_pretrained(
-            "Salesforce/blip-image-captioning-base").to(DEVICE)
-        _BLIP = (proc, mdl)
-    proc, mdl = _BLIP
-    inputs = proc(image.convert("RGB"), return_tensors="pt").to(DEVICE)
+    """Caption local SANS Ollama (BLIP). Modele configurable (config.txt 'caption_model':
+    blip-large par defaut / blip-base). Charge paresseusement; renvoie une phrase."""
+    _kind, proc, mdl = _load_captioner()
+    img = image.convert("RGB")
+    inputs = proc(img, return_tensors="pt").to(DEVICE)
     out = mdl.generate(**inputs, max_new_tokens=50)
     return proc.decode(out[0], skip_special_tokens=True).strip()
 
@@ -92,14 +137,16 @@ def _faceswap(target_img, source_img, checkpoints_dir=None):
             "inswapper model not found. Put 'inswapper_128.onnx' in the 'faceswap' folder "
             "(next to app.py), or set 'faceswap_model_path' in config.txt, or set "
             "'faceswap_model_url' to download it once.")
+    provs = _onnx_providers()
     if _FACE_APP is None:
-        _log("loading insightface buffalo_l (face detection) ...")
-        app = FaceAnalysis(name="buffalo_l")
+        _log(f"loading insightface buffalo_l (face detection); providers={provs} ...")
+        app = FaceAnalysis(name="buffalo_l", providers=provs) if provs else FaceAnalysis(name="buffalo_l")
         app.prepare(ctx_id=0 if DEVICE == "cuda" else -1, det_size=(640, 640))
         _FACE_APP = app
     if _FACE_SWAPPER is None:
         _log(f"loading inswapper: {model_path}")
-        _FACE_SWAPPER = insightface.model_zoo.get_model(model_path)
+        _FACE_SWAPPER = (insightface.model_zoo.get_model(model_path, providers=provs) if provs
+                         else insightface.model_zoo.get_model(model_path))
     tgt = np.asarray(target_img.convert("RGB"))[:, :, ::-1].copy()  # RGB -> BGR
     src = np.asarray(source_img.convert("RGB"))[:, :, ::-1].copy()
     src_faces = _FACE_APP.get(src)
@@ -157,8 +204,7 @@ def _get_face_restore_session():
              "(set faceswap_restore_url/path or drop gfpgan_1.4.onnx in faceswap/).")
         return None
     import onnxruntime as ort
-    # On evite TensorRT (nvinfer_*.dll souvent absent) -> CUDA puis CPU.
-    provs = [p for p in ort.get_available_providers() if p != "TensorrtExecutionProvider"]
+    provs = _onnx_providers()  # CUDA puis CPU, sans TensorRT
     _log(f"loading GFPGAN restore: {path} (providers={provs})")
     _FACE_RESTORE_SESSION = ort.InferenceSession(path, providers=provs)
     return _FACE_RESTORE_SESSION
@@ -209,11 +255,35 @@ def set_faceswap_restore(enabled, blend):
     return f"Face restore (GFPGAN): {'on' if enabled else 'off'} (blend {blend})"
 
 
+_REMBG_SESSION = None
+
+
+def _onnx_providers():
+    """Providers ONNX disponibles SANS TensorRT (souvent absent -> erreur 'nvinfer_*.dll
+    missing' puis chute sur CPU lent). Garde CUDA (GPU) puis CPU. None si onnxruntime
+    indisponible (les appelants retombent alors sur le defaut)."""
+    try:
+        import onnxruntime as ort
+        return [p for p in ort.get_available_providers() if p != "TensorrtExecutionProvider"]
+    except Exception:
+        return None
+
+
 def _remove_bg(image):
     """Detoure le sujet (fond transparent). Local via rembg (telecharge u2net au
-    1er usage). Renvoie une image RGBA."""
+    1er usage). Renvoie une image RGBA. La session ONNX est forcee sur CUDA+CPU
+    (TensorRT exclu): evite l'erreur 'nvinfer_10.dll missing' + le fallback CPU lent."""
+    global _REMBG_SESSION
     try:
-        from rembg import remove
+        from rembg import remove, new_session
     except Exception:
         raise RuntimeError("rembg not installed. pip install rembg (or requirements-faceswap.txt).")
-    return remove(image.convert("RGBA"))
+    if _REMBG_SESSION is None:
+        provs = _onnx_providers()
+        try:
+            _REMBG_SESSION = new_session("u2net", providers=provs) if provs else new_session("u2net")
+            _log(f"rembg session (providers={provs})")
+        except Exception as e:
+            _log(f"rembg custom session failed ({e}); using default session")
+            _REMBG_SESSION = new_session("u2net")
+    return remove(image.convert("RGBA"), session=_REMBG_SESSION)

@@ -149,6 +149,7 @@ def _filter_styles(query, selected):
 from cz_ollama import (  # noqa: E402,F401
     OLLAMA_URL, OLLAMA_KEEP_ALIVE, OLLAMA_CPU, _ollama_gen_opts, _ollama_http,
     _ollama_vision_models, _ollama_describe, _ollama_improve, _ollama_compose,
+    _local_improve,
 )
 
 
@@ -158,6 +159,7 @@ from cz_ollama import (  # noqa: E402,F401
 import cz_face
 from cz_face import (  # noqa: E402,F401
     _local_caption, _remove_bg, set_faceswap_restore,
+    set_caption_model, _current_caption_kind,
 )
 
 
@@ -222,8 +224,8 @@ from cz_pipeline import (  # noqa: E402,F401
     resolve_checkpoint, set_loras_dir, lora_keywords,
     set_omni_model, check_omni_available, set_offload_mode, free_vram, set_loras,
     set_sampler, SAMPLER_CHOICES, set_schedule, SCHEDULE_CHOICES,
-    generate, generate_omni, inpaint_run, outpaint, txt2img_run, process_one,
-    round_to_multiple, _reframe_canvas, _gen_meta,
+    generate, generate_omni, inpaint_run, outpaint, outpaint_directions, reframe,
+    txt2img_run, process_one, round_to_multiple, _reframe_canvas, _gen_meta,
 )
 
 # Etat mutable lu en live depuis cz_pipeline.* / cz_face.* (LORAS, FACESWAP_RESTORE,
@@ -758,7 +760,7 @@ def _ui_detect_ollama(url):
         models = _ollama_vision_models(base=url)
     except Exception:
         return (gr.update(choices=[], value=None),
-                "Ollama not reachable. Describe will use the local BLIP fallback. "
+                "Ollama not reachable. Describe will use the local captioner fallback. "
                 "Improve needs Ollama.")
     if not models:
         return (gr.update(choices=[], value=None),
@@ -777,21 +779,33 @@ def _ui_describe(image, model, url):
         except Exception as e:
             return gr.update(), f"Ollama describe failed: {e}"
     try:
-        return gr.update(value=_local_caption(image)), "Described via local BLIP (no Ollama model)."
+        return gr.update(value=_local_caption(image)), "Described via local captioner (no Ollama model)."
     except Exception as e:
         return gr.update(), f"No Ollama model selected and local captioner failed: {e}"
 
 
 def _ui_improve(prompt_text, model, url):
-    """Ameliore le prompt courant via Ollama (meme modele)."""
+    """Ameliore le prompt courant. Ollama si un modele est choisi, sinon fallback LOCAL
+    (rule-based, sans Ollama): ajoute des mots-cles de qualite."""
     if not (prompt_text or "").strip():
         return gr.update(), "Type a prompt first."
     if not model:
-        return gr.update(), "Select a model in Advanced > Prompt AI (click Detect Ollama)."
+        return gr.update(value=_local_improve(prompt_text)), \
+            "Improved locally (quality tags, no Ollama). Pick a model in Advanced > Prompt AI for a full rewrite."
     try:
         return gr.update(value=_ollama_improve(prompt_text, model, base=url)), f"Improved via {model}."
     except Exception as e:
-        return gr.update(), f"Improve failed: {e}"
+        return gr.update(value=_local_improve(prompt_text)), f"Ollama failed ({e}); improved locally instead."
+
+
+def _ui_set_caption_model(kind):
+    """Change le captioner local + persiste le choix dans preferences.json."""
+    k = set_caption_model(kind)
+    try:
+        _save_prefs_keys({"caption_model": k})
+    except Exception as e:
+        _dbg(f"save caption_model pref failed: {e}")
+    return f"Caption model set to **{k}** (saved; loads on next use)."
 
 
 def _ui_compose(r1, r2, r3, r4, model, url):
@@ -833,79 +847,92 @@ def _ui_remove_bg(image, history, save_mode, output_dir):
     return [res], "Background removed (transparent PNG).", new_hist, new_hist
 
 
-def _ui_reframe(image, ratio, steps, prompt, guidance, offload_mode, seed,
-                save_mode, output_dir, output_format, history,
-                progress=gr.Progress(track_tqdm=True)):
-    """Reframe / outpaint -> resultat dans la galerie + historique."""
-    image = _editor_img(image)
-    if image is None:
-        return [], "Drop an image first.", history, history
-    cz_pipeline._PROGRESS = lambda f, d: progress(f, desc=d)
-    try:
-        set_offload_mode(offload_mode)
-        set_guidance(guidance)
-        try:
-            rw, rh = [int(x) for x in str(ratio).split(":")]
-        except Exception:
-            rw, rh = 16, 9
-        try:
-            res = outpaint(image, rw, rh, prompt, steps, seed)
-        except Exception as e:
-            _log(f"outpaint error: {e}")
-            return [], f"Reframe failed: {e}", history, history
-        dst = None
-        if save_mode != "display":
-            try:
-                dst = build_output_path(None, save_mode, output_dir, output_format,
-                                        tag="reframe", seed=seed, size=res.size)
-                if dst:
-                    save_image(res, dst, output_format, meta=_gen_meta(
-                        "reframe", prompt, seed=seed, steps=steps, guidance=cz_pipeline.GUIDANCE,
-                        size=res.size, extra={"ratio": ratio}))
-            except Exception as e:
-                dst = None
-                _dbg(f"save reframe failed: {e}")
-        item = _dl_path(res, dst)   # telechargement avec le vrai nom de fichier si sauve
-        new_hist = ([item] + list(history or []))[:200]
-        return [item], f"Reframed to {res.size[0]}x{res.size[1]} ({ratio}).", new_hist, new_hist
-    finally:
-        cz_pipeline._PROGRESS = None
-
-
-def _ui_inpaint(editor_value, prompt, negative, styles, guidance, offload_mode, steps, denoise,
-                seed, save_mode, output_dir, output_format, history,
-                progress=gr.Progress(track_tqdm=True)):
-    """Inpaint depuis l'editeur (image + masque peint) -> galerie + historique."""
+def _ui_edit(mode, editor_value, dirs, ratio, fit, auto_describe, harmonize, harmonize_denoise,
+             prompt, negative, styles, guidance, offload_mode, steps, strength, seed, save_mode,
+             output_dir, output_format, history, progress=gr.Progress(track_tqdm=True)):
+    """Onglet unifie Inpaint / Outpaint / Reframe. Le `mode` choisit l'operation; l'image
+    (editeur), le prompt, les `steps` (du modele) et `strength` sont partages.
+      - Brush       : inpaint de la zone peinte (inpaint_run)
+      - Expand sides: outpaint directionnel L/R/T/B (outpaint_directions)
+      - Reframe     : recadrage au ratio, ~1 MP, Contain/Cover (reframe)
+    auto_describe (outpaint/reframe): decrit l'image centrale via BLIP local (sans Ollama)
+    pour guider le remplissage des bords de facon coherente."""
     cz_pipeline._PROGRESS = lambda f, d: progress(f, desc=d)
     try:
         bg, mask = _editor_to_image_mask(editor_value)
         if bg is None:
-            return [], "Load an image in the Inpaint editor.", history, history
-        if mask is None or mask.getbbox() is None:
-            return [], "Paint the area to change (the mask is empty).", history, history
+            return [], "Load an image first.", history, history
         set_offload_mode(offload_mode)
         set_guidance(guidance)
-        full_prompt, _ = _apply_styles(prompt, negative, styles)
+        m = str(mode).lower()
+        eff_prompt = prompt or ""
+        # Auto-describe (captioner local, pas d'Ollama): utile pour outpaint/reframe -> le
+        # modele "voit" le sujet du centre et prolonge la scene au lieu d'inventer.
+        # Implicite si le prompt est VIDE; force aussi si la case est cochee (prefixe).
+        if not m.startswith("brush") and (auto_describe or not eff_prompt.strip()):
+            try:
+                progress(0.05, desc="Describing center (caption model; first use downloads it)...")
+                cap = _local_caption(bg)
+                eff_prompt = (cap + (", " + eff_prompt if eff_prompt.strip() else "")).strip()
+                _log(f"auto-describe: {cap}")
+            except Exception as e:
+                _log(f"auto-describe failed (continuing without): {e}")
+        full_prompt, _ = _apply_styles(eff_prompt, negative, styles)
+        painted = mask is not None and mask.getbbox() is not None
         try:
-            res = inpaint_run(bg, mask, full_prompt, steps, denoise, seed)
+            if m.startswith("reframe"):
+                try:
+                    rw, rh = [int(x) for x in str(ratio).split(":")]
+                except Exception:
+                    rw, rh = 16, 9
+                fit_mode = "cover" if str(fit).lower().startswith("cover") else "contain"
+                res = reframe(bg, rw, rh, fit_mode, full_prompt, steps, seed, strength=strength)
+                tag, info = "reframe", f"Reframe {ratio} ({fit_mode})"
+            elif m.startswith("expand"):
+                d = [x.lower() for x in (dirs or [])]
+                if not d:
+                    return [], "Pick at least one side (or Center).", history, history
+                res = outpaint_directions(bg, mask if painted else None, d,
+                                          full_prompt, steps, seed, strength=strength)
+                tag, info = "outpaint", f"Outpaint {'+'.join(d)}"
+            else:  # Brush -> inpaint
+                if not painted:
+                    return [], "Paint the area to change (brush).", history, history
+                res = inpaint_run(bg, mask, full_prompt, steps, strength, seed)
+                tag, info = "inpaint", "Inpaint"
         except Exception as e:
-            _log(f"inpaint error: {e}")
-            return [], f"Inpaint failed: {e}", history, history
+            _log(f"{mode} error: {e}")
+            return [], f"{mode} failed: {e}", history, history
+        # Harmonize: passe img2img legere (refine Z-Image, sans ESRGAN) sur TOUTE l'image
+        # finale -> unifie grain/lumiere/raccord et efface l'effet "zone ajoutee". Low
+        # denoise (~0.2) pour ne pas reinventer le sujet.
+        if harmonize and float(harmonize_denoise) > 0.001:
+            try:
+                progress(0.9, desc="Harmonizing (img2img refine)...")
+                hd = float(harmonize_denoise)
+                # img2img: steps effectifs = base x denoise -> on releve la base pour
+                # garder ~8 steps reels meme a bas denoise (sinon 1-2 steps = inutile).
+                h_steps = min(40, max(int(steps), int(round(8.0 / max(hd, 0.05)))))
+                res, _ = process_one(res, None, 1.0, hd, h_steps, full_prompt, seed, 512, 64,
+                                     refine_tile=0, refine_overlap=64, do_esrgan=False)
+                info += " + harmonize"
+            except Exception as e:
+                _log(f"harmonize failed (keeping edit): {e}")
         dst = None
         if save_mode != "display":
             try:
                 dst = build_output_path(None, save_mode, output_dir, output_format,
-                                        tag="inpaint", seed=seed, size=res.size)
+                                        tag=tag, seed=seed, size=res.size)
                 if dst:
                     save_image(res, dst, output_format, meta=_gen_meta(
-                        "inpaint", full_prompt, seed=seed, steps=steps, guidance=cz_pipeline.GUIDANCE,
-                        size=res.size, styles=styles, extra={"strength": denoise}))
+                        tag, full_prompt, seed=seed, steps=steps, guidance=cz_pipeline.GUIDANCE,
+                        size=res.size, styles=styles))
             except Exception as e:
                 dst = None
-                _dbg(f"save inpaint failed: {e}")
+                _dbg(f"save {tag} failed: {e}")
         item = _dl_path(res, dst)   # telechargement avec le vrai nom de fichier si sauve
         new_hist = ([item] + list(history or []))[:200]
-        return [item], f"Inpaint -> {res.size[0]}x{res.size[1]}", new_hist, new_hist
+        return [item], f"{info} -> {res.size[0]}x{res.size[1]}", new_hist, new_hist
     finally:
         cz_pipeline._PROGRESS = None
 
@@ -999,7 +1026,7 @@ def _gallery_delete(path, output_dir, sort="Newest", filt=""):
 # Memes options (enabled, generate_thumbnails, thumbnail_size/quality, blur).
 # ----------------------------------------------------------------------------
 # Asset Browser (SPA + reindex + thumbnails + delete) -> cz_assetbrowser.py.
-from cz_assetbrowser import _ab_get, _ab_resolve_dir, ab_reindex, delete_asset  # noqa: E402,F401
+from cz_assetbrowser import _ab_get, _ab_resolve_dir, ab_reindex, ab_open_fast, delete_asset  # noqa: E402,F401
 
 
 # Assets statiques (SPA Asset Browser, JS d'interface, CSS) -> cz_assets.py
@@ -1021,16 +1048,16 @@ def _ui_ab_reindex(output_dir, thumb_size, quality, blur, gen_thumbs):
 
 
 def _ui_gallery_open(output_dir):
-    """Ouverture RAPIDE: manifest immediat, miniatures generees en tache de fond."""
+    """Ouverture INSTANTANEE: ecrit index.html et ouvre l'onglet tout de suite, puis
+    (re)indexe (manifest + miniatures) en tache de fond. La SPA charge le manifest
+    existant immediatement et se rafraichit quand le nouvel index est pret."""
     try:
-        n, idx, pending = ab_reindex(output_dir, _ab_get("thumbnail_size"),
-                                     _ab_get("thumbnail_quality"), bool(_ab_get("blur_thumbnails")),
-                                     bool(_ab_get("generate_thumbnails")), background_thumbs=True)
+        idx = ab_open_fast(output_dir, _ab_get("thumbnail_size"), _ab_get("thumbnail_quality"),
+                           bool(_ab_get("blur_thumbnails")), bool(_ab_get("generate_thumbnails")))
     except Exception as e:
-        return f"Gallery build failed: {e}", ""
+        return f"Gallery open failed: {e}", ""
     url = "/gradio_api/file=" + os.path.abspath(idx).replace("\\", "/")
-    extra = f" Generating {pending} thumbnail(s) in background (full images shown meanwhile)." if pending else ""
-    return f"Opening {n} image(s) in a new tab...{extra}", url
+    return "Opening Asset Browser in a new tab (indexing in background)...", url
 
 
 # delete_asset -> cz_assetbrowser.py (importe en tete; expose via api_name dans build_ui).
@@ -1336,26 +1363,26 @@ def build_ui():
                                                 variant="primary")
                 gallery_status = gr.Markdown("")
 
-                with gr.Row():
+                with gr.Row(equal_height=True):
                     prompt = gr.Textbox(show_label=False, value=CONFIG.get("default_prompt", ""),
                                         placeholder="Type your prompt here...",
                                         elem_id="cz_prompt", lines=2, scale=4, container=False)
-                    with gr.Column(scale=1, min_width=150):
-                        btn = gr.Button("Generate", elem_id="cz_generate", min_width=150)
-                        stop_btn = gr.Button("Stop", variant="stop", size="sm", min_width=150)
-                        auto_upscale_cb = gr.Checkbox(
-                            value=bool(CONFIG.get("default_auto_upscale", False)),
-                            label="Upscale after generate", min_width=150,
-                            info="Chain each txt2img image through the Upscale tab "
-                                 "pipeline (ESRGAN + refine), no manual step.")
+                    btn = gr.Button("Generate", elem_id="cz_generate", scale=1, min_width=150)
 
-                negative = gr.Textbox(show_label=False, value=CONFIG.get("default_negative_prompt", ""),
-                                      elem_id="cz_neg", lines=1, container=False,
-                                      placeholder="Negative prompt - what you do NOT want (needs guidance > 0)")
+                with gr.Row(equal_height=True):
+                    negative = gr.Textbox(show_label=False, value=CONFIG.get("default_negative_prompt", ""),
+                                          elem_id="cz_neg", lines=1, container=False, scale=4,
+                                          placeholder="Negative prompt - what you do NOT want (needs guidance > 0)")
+                    stop_btn = gr.Button("Stop", variant="stop", scale=1, min_width=150)
 
                 with gr.Row():
-                    improve_btn = gr.Button("Improve prompt (Ollama)", size="sm", scale=0, min_width=200)
-                    improve_status = gr.Markdown("")
+                    # Chainage txt2img -> upscale (gauche) + Improve prompt (droite), alignes.
+                    auto_upscale_cb = gr.Checkbox(
+                        value=bool(CONFIG.get("default_auto_upscale", False)), scale=4,
+                        label="Upscale after generate — chain each txt2img image through the "
+                              "Upscale pipeline (ESRGAN + refine), no manual step")
+                    improve_btn = gr.Button("Improve prompt", scale=1, min_width=150)
+                improve_status = gr.Markdown("")
 
                 with gr.Row():
                     use_input = gr.Checkbox(value=False, label="Input Image", min_width=160)
@@ -1402,7 +1429,7 @@ def build_ui():
                             describe_btn = gr.Button("Describe -> prompt", variant="primary", size="sm")
                             describe_status = gr.Markdown(
                                 "*Uses the Ollama vision model selected in Advanced > Prompt AI "
-                                "(or the local BLIP fallback if Ollama is off).*")
+                                "(or the local captioner if Ollama is off).*")
 
                         with gr.Tab("Vision Mix"):
                             gr.Markdown("*Vision Mix: a vision model looks at your reference images "
@@ -1431,30 +1458,52 @@ def build_ui():
                             rembg_status = gr.Markdown("*Local (rembg). Output = transparent PNG. "
                                                        "First use downloads the u2net model.*")
 
-                        with gr.Tab("Reframe (outpaint)"):
-                            gr.Markdown("*Expand the image to a new aspect ratio; Z-Image fills "
-                                        "the new borders (inpaint). The prompt guides the fill.*")
-                            reframe_img = _crop_input("Image", 260)
-                            with gr.Row():
-                                reframe_ratio = gr.Dropdown(
-                                    ["16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "1:1", "21:9"],
-                                    value="16:9", label="Target ratio")
-                                reframe_steps = gr.Slider(4, 30, value=12, step=1, label="Fill steps")
-                            reframe_btn = gr.Button("Reframe / Outpaint", variant="primary", size="sm")
-                            reframe_status = gr.Markdown("")
-
-                        with gr.Tab("Inpaint"):
-                            gr.Markdown("*Paint the area to change (white brush), describe what "
-                                        "should appear in the prompt, then Inpaint.*")
+                        with gr.Tab("Inpaint / Outpaint"):
+                            gr.Markdown("*One editor for everything: **Brush** = inpaint the painted "
+                                        "area · **Expand sides** = outpaint Left/Right/Top/Bottom · "
+                                        "**Reframe** = new aspect ratio. Steps follow the model "
+                                        "(Performance). Describe the result in the prompt.*")
+                            edit_mode = gr.Radio(
+                                ["Brush (inpaint)", "Expand sides (outpaint)", "Reframe (ratio)"],
+                                value="Brush (inpaint)", label="Mode")
                             inpaint_editor = gr.ImageEditor(
-                                type="pil", label="Image + mask (paint the area)",
-                                brush=gr.Brush(colors=["#ffffff"], color_mode="fixed"),
-                                layers=False, transforms=[], height=380)
+                                type="pil", label="Image + mask (paint for Brush mode; click the "
+                                                  "brush icon to change its size)",
+                                brush=gr.Brush(default_size=25,
+                                               colors=["#ffffff", "#ff3b3b", "#3b82f6"],
+                                               default_color="#ffffff"),
+                                layers=False, transforms=[], height=420)
+                            with gr.Group(visible=False) as expand_group:
+                                inpaint_outpaint = gr.CheckboxGroup(
+                                    choices=["Left", "Right", "Top", "Bottom"], value=[],
+                                    label="Sides to expand (~30% each; blurred-edge fill + blend)")
+                                center_btn = gr.Button("Center (all sides)", size="sm")
+                            with gr.Group(visible=False) as reframe_group:
+                                with gr.Row():
+                                    reframe_ratio = gr.Dropdown(
+                                        ["16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "1:1", "21:9"],
+                                        value="16:9", label="Target ratio")
+                                    reframe_fit = gr.Radio(
+                                        ["Contain (outpaint)", "Cover (crop)"],
+                                        value="Contain (outpaint)", label="Fit")
+                            edit_autodescribe = gr.Checkbox(
+                                value=False, label="Auto-describe center (local model, no Ollama)",
+                                info="Outpaint/Reframe: runs automatically when the prompt is EMPTY. "
+                                     "Check it to also prepend a description when you DO have a "
+                                     "prompt. Local model (BLIP), set in Prompt AI > Caption model.")
+                            edit_strength = gr.Slider(
+                                0.3, 1.0, value=0.85, step=0.05, label="Strength",
+                                info="Inpaint/outpaint denoise. Outpaint & reframe: ~0.8 keeps the "
+                                     "edge colors (best blend), ~1.0 = more new detail.")
                             with gr.Row():
-                                inpaint_steps = gr.Slider(4, 40, value=20, step=1, label="Steps")
-                                inpaint_denoise = gr.Slider(0.3, 1.0, value=0.85, step=0.05,
-                                                            label="Inpaint strength")
-                            inpaint_btn = gr.Button("Inpaint", variant="primary", size="sm")
+                                edit_harmonize = gr.Checkbox(
+                                    value=False, label="Harmonize (final img2img pass)",
+                                    info="Light img2img refine over the whole result -> unifies "
+                                         "grain/light and removes the 'added zone' look.")
+                                edit_harmonize_denoise = gr.Slider(
+                                    0.05, 0.5, value=0.2, step=0.05, label="Harmonize denoise")
+                            edit_btn = gr.Button("Generate", variant="primary",
+                                                 elem_id="cz_edit_generate")
                             inpaint_status = gr.Markdown("")
 
                         with gr.Tab("Reference (Omni)", visible=omni_on):
@@ -1543,6 +1592,14 @@ def build_ui():
                                                   label="Styles (combinable)", elem_id="cz_styles")
 
                     with gr.Tab("Prompt AI"):
+                        gr.Markdown("### Local captioner (no Ollama)")
+                        caption_model_dd = gr.Dropdown(
+                            ["blip-large", "blip-base"],
+                            value=_current_caption_kind(), label="Caption model",
+                            info="Used by Auto-describe (Inpaint/Outpaint) and the Describe "
+                                 "fallback. blip-large = richer captions. Loads on next use.")
+                        caption_model_status = gr.Markdown("")
+                        gr.Markdown("### Ollama (optional)")
                         ollama_url = gr.Textbox(value=OLLAMA_URL, label="Ollama URL",
                                                 info="Local LLM server. Used for Describe (vision) "
                                                      "and Improve prompt.")
@@ -1550,7 +1607,7 @@ def build_ui():
                         ollama_model = gr.Dropdown([], label="Vision model (Describe / Improve)",
                                                    interactive=True)
                         ollama_status = gr.Markdown("*Click Detect. If Ollama is off, Describe falls "
-                                                    "back to a local BLIP captioner.*")
+                                                    "back to a local captioner.*")
                         gr.Markdown("---")
                         log_level_dd = gr.Dropdown(["quiet", "info", "debug"],
                                                    value={0: "quiet", 1: "info", 2: "debug"}.get(cz_core.LOG_LEVEL, "info"),
@@ -1729,6 +1786,7 @@ def build_ui():
         ab_open_btn.click(_ui_gallery_open, [output_dir], [ab_status, gallery_url]).then(
             None, [gallery_url], None, js="(u) => { if (u) window.open(u, '_blank'); }")
         log_level_dd.change(set_log_level, [log_level_dd], [log_level_status])
+        caption_model_dd.change(_ui_set_caption_model, [caption_model_dd], [caption_model_status])
         detect_btn.click(_ui_detect_ollama, [ollama_url], [ollama_model, ollama_status])
         describe_btn.click(_ui_describe, [describe_img, ollama_model, ollama_url], [prompt, describe_status])
         improve_btn.click(_ui_improve, [prompt, ollama_model, ollama_url], [prompt, improve_status])
@@ -1742,15 +1800,18 @@ def build_ui():
         faceswap_restore_blend.change(set_faceswap_restore,
                                       [faceswap_restore_cb, faceswap_restore_blend],
                                       [faceswap_restore_status])
-        reframe_btn.click(_ui_reframe,
-                          [reframe_img, reframe_ratio, reframe_steps, prompt, guidance, offload,
-                           seed, save_mode, output_dir, output_format, history],
-                          [out, report, history, history_gallery])
-        inpaint_btn.click(_ui_inpaint,
-                          [inpaint_editor, prompt, negative, styles, guidance, offload,
-                           inpaint_steps, inpaint_denoise, seed, save_mode, output_dir,
-                           output_format, history],
-                          [out, report, history, history_gallery])
+        # Onglet unifie Inpaint / Outpaint / Reframe: le mode affiche les bons controles.
+        edit_mode.change(
+            lambda mo: (gr.update(visible="expand" in mo.lower()),
+                        gr.update(visible="reframe" in mo.lower())),
+            [edit_mode], [expand_group, reframe_group])
+        center_btn.click(lambda: ["Left", "Right", "Top", "Bottom"], None, [inpaint_outpaint])
+        edit_btn.click(_ui_edit,
+                       [edit_mode, inpaint_editor, inpaint_outpaint, reframe_ratio, reframe_fit,
+                        edit_autodescribe, edit_harmonize, edit_harmonize_denoise,
+                        prompt, negative, styles, guidance, offload, gen_steps,
+                        edit_strength, seed, save_mode, output_dir, output_format, history],
+                       [out, report, history, history_gallery])
         # Stop facon Fooocus: tourne en parallele du Generate (thread separe) et pose
         # le flag d'arret + interrompt la boucle de debruitage en cours.
         stop_btn.click(request_stop, None, [report])
