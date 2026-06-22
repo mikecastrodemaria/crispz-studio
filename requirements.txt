@@ -12,6 +12,10 @@ accelerate
 sentencepiece
 spandrel
 
+# Required by diffusers to load LoRA weights (load_lora_weights / set_adapters).
+# Without it: "PEFT backend is required for this method" -> LoRA silently skipped.
+peft
+
 # Comparateur avant/apres = composant HTML+JS interne (voir _make_compare_html dans app.py).
 # Pas de dep externe -> stack stable.
 # Borne <6: Gradio 6 a un middleware Brotli buggé avec h11 ("Too little data for
