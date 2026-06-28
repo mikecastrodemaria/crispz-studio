@@ -1,4 +1,7 @@
 {
+    "_hf_token_help": "Hugging Face token for GATED models (e.g. FLUX.1-Krea-dev). Create a READ token at https://huggingface.co/settings/tokens and accept the model license first. Leave empty if you ran 'huggingface-cli login'. config.txt is gitignored -> never commit your token.",
+    "hf_token": "",
+
     "ollama_url": "http://localhost:11434",
     "ollama_describe_prompt": "You are an expert text-to-image prompt writer. Look at the image and output ONE detailed prompt as comma-separated visual tags (subject, clothing, setting, lighting, style, quality). No preamble, no explanation, just the prompt.",
     "ollama_improve_prompt": "Rewrite the following text-to-image prompt to be more vivid and detailed while keeping the same subject and intent. Output ONLY the improved prompt (comma-separated), no preamble.\n\nPROMPT: {prompt}",

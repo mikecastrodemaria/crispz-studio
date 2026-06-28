@@ -63,6 +63,18 @@ def _load_config():
 
 CONFIG = _load_config()
 
+
+# Token Hugging Face pour les repos GATED (ex. FLUX.1-Krea-dev). Priorite: env HF_TOKEN
+# deja pose -> config.txt 'hf_token'. On pose HF_TOKEN + HUGGING_FACE_HUB_TOKEN pour que
+# diffusers / huggingface_hub authentifient les telechargements SANS 'huggingface-cli login'.
+# config.txt est gitignore -> le token n'est jamais commit (ne PAS le mettre dans config-sample).
+_hf_token = (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+             or CONFIG.get("hf_token") or "").strip()
+if _hf_token:
+    os.environ["HF_TOKEN"] = _hf_token
+    os.environ["HUGGING_FACE_HUB_TOKEN"] = _hf_token
+
+
 # Defauts pilotes par config.txt (repli sur les constantes ci-dessus).
 DEFAULT_FACTOR = float(CONFIG.get("default_factor", DEFAULT_FACTOR))
 DEFAULT_DENOISE = float(CONFIG.get("default_denoise", DEFAULT_DENOISE))
