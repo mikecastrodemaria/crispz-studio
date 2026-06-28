@@ -16,6 +16,13 @@ la valeur a jour. _log/_dbg lisent la valeur vive ici, donc les importer est san
 """
 
 import os
+
+# Force protobuf's pure-Python backend AVANT tout import de transformers/sentencepiece.
+# Sinon le tokenizer (Qwen3 / T5 / sentencepiece) plante: "Descriptors cannot be created
+# directly" (pb2 genere avec un vieux protoc, incompatible avec protobuf >=3.20 en C++).
+# setdefault: ne surcharge pas un reglage explicite de l'utilisateur.
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+
 import sys
 import json
 import io
