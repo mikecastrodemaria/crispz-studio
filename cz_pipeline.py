@@ -588,8 +588,8 @@ def _ensure_base():
     except Exception:
         pass
     try:
-        pipe.enable_vae_slicing()
-        pipe.enable_vae_tiling()
+        pipe.vae.enable_slicing()
+        pipe.vae.enable_tiling()
     except Exception as e:
         _dbg(f"VAE tiling not available: {e}")
     _apply_sampler(pipe)   # pose le sampler choisi (euler par defaut) sur le pipe de base
