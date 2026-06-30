@@ -314,11 +314,19 @@ def resolve_checkpoint(name):
 
 
 def list_loras():
-    """LoRA (.safetensors) du dossier loras."""
+    """LoRA (.safetensors / .ckpt / .pt) du dossier loras, RECURSIF (sous-dossiers inclus).
+    Renvoie des chemins RELATIFS a LORAS_DIR avec des '/' (ex. 'sous-dossier/ma_lora.safetensors')
+    -> set_loras / resolve les resolvent via os.path.join(LORAS_DIR, name)."""
     if not os.path.isdir(LORAS_DIR):
         return []
-    return sorted(f for f in os.listdir(LORAS_DIR)
-                  if f.lower().endswith((".safetensors", ".ckpt", ".pt")))
+    exts = (".safetensors", ".ckpt", ".pt")
+    out = []
+    for root, _dirs, files in os.walk(LORAS_DIR):
+        for f in files:
+            if f.lower().endswith(exts):
+                rel = os.path.relpath(os.path.join(root, f), LORAS_DIR).replace(os.sep, "/")
+                out.append(rel)
+    return sorted(out)
 
 
 def set_checkpoints_dir(path):
