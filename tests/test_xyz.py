@@ -98,9 +98,40 @@ def test_assemble():
     assert "xyz_test" in paths[0]
 
 
+def test_csv_join_roundtrip():
+    vals = ["plain", "with, comma", 'with "quote"', "4x-Clear.safetensors"]
+    joined = cz_ui._xyz_csv_join(vals)
+    assert cz_ui._xyz_parse_values(joined) == vals
+
+
+def test_suggestions():
+    fill, ph = cz_ui._xyz_suggestions("Steps")            # calibrage numerique
+    assert fill == "4, 8, 12, 20, 28" and "4, 8" in ph
+    fill, ph = cz_ui._xyz_suggestions("Sampler")          # liste fermee
+    assert cz_ui._xyz_parse_values(fill) == ["euler", "unipc"]
+    fill, ph = cz_ui._xyz_suggestions("Performance")
+    assert "Turbo (8 steps)" in cz_ui._xyz_parse_values(fill)
+    fill, ph = cz_ui._xyz_suggestions("Checkpoint")       # repos officiels presents
+    assert "Tongyi-MAI/Z-Image-Turbo" in cz_ui._xyz_parse_values(fill)
+    fill, ph = cz_ui._xyz_suggestions("Prompt S/R")       # pas d'insertion, aide seule
+    assert fill == "" and "search term" in ph
+    fill, ph = cz_ui._xyz_suggestions("(none)")
+    assert fill == "" and "pick an axis" in ph
+
+
+def test_fill_preserves_user_input():
+    upd = cz_ui._ui_xyz_fill("Steps", "5, 9")             # champ non vide -> intouche
+    assert "value" not in upd
+    upd = cz_ui._ui_xyz_fill("Steps", "  ")               # vide -> rempli
+    assert upd["value"] == "4, 8, 12, 20, 28"
+    upd = cz_ui._ui_xyz_fill("Prompt S/R", "")            # rien a inserer
+    assert "value" not in upd
+
+
 if __name__ == "__main__":
     for fn in (test_parse_values, test_match, test_validate, test_build_jobs,
-               test_build_jobs_sr, test_assemble):
+               test_build_jobs_sr, test_assemble, test_csv_join_roundtrip,
+               test_suggestions, test_fill_preserves_user_input):
         fn()
         print(f"OK {fn.__name__}")
     print("All xyz tests passed.")

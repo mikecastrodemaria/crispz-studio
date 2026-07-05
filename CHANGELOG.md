@@ -3,6 +3,22 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## 1.3.0 — 2026-07-05 — Contextual suggestions for X/Y/Z value fields
+
+- Each value field adapts to the axis picked in the neighboring dropdown: the
+  **placeholder** shows contextual examples, and a **`⤵ suggest`** button inserts a
+  ready-to-prune list — app lists for closed choices (Sampler, Schedule, Performance,
+  Checkpoint incl. both folders, ESRGAN models), classic calibration values for numeric
+  axes (Steps `4, 8, 12, 20, 28`, Guidance `0, 2, 3.5, 5`, Denoise `0.2, 0.3, 0.4`…),
+  syntax hint for Prompt S/R.
+- The fill button never overwrites a non-empty field; values containing commas/quotes are
+  CSV-quoted so the inserted text re-parses exactly (round-trip tested).
+- Case-insensitive partial matching at build time (from 1.2.0) completes the loop:
+  suggestions can be shortened by hand (`uni` → `unipc`).
+- Config: sub-key `"suggest": true` of the `xyz_grid` block; `false` = no buttons, no
+  handlers, static placeholders.
+- Files: `cz_ui.py`, `config-sample.txt`, `tests/test_xyz.py`.
+
 ## 1.2.0 — 2026-07-05 — X/Y/Z comparison grid
 
 Compare parameter variations on an annotated contact sheet, powered by the job queue.

@@ -1527,6 +1527,75 @@ _XYZ_AXES = {
 }
 
 
+# Autosuggest des champs de valeurs (sous-cle "suggest" du bloc xyz_grid).
+XYZ_SUGGEST = bool(_XYZ_CFG.get("suggest", True))
+
+# Valeurs de calibrage classiques proposees pour les axes numeriques.
+_XYZ_CALIB = {
+    "Steps": "4, 8, 12, 20, 28",
+    "Guidance": "0, 2, 3.5, 5",
+    "Seed": "-1, 42, 1234",
+    "Factor": "1.5, 2, 3, 4",
+    "Denoise": "0.2, 0.3, 0.4",
+    "Tile": "384, 512, 768",
+    "Refine tile": "0, 768, 1024",
+    "LoRA weight": "0.4, 0.7, 1.0",
+}
+
+
+def _xyz_csv_join(values):
+    """Joint des valeurs en CSV re-parsable par _xyz_parse_values: guillemete celles
+    qui contiennent virgule ou guillemet (double les guillemets internes)."""
+    out = []
+    for v in map(str, values):
+        if "," in v or '"' in v:
+            out.append('"' + v.replace('"', '""') + '"')
+        else:
+            out.append(v)
+    return ", ".join(out)
+
+
+def _xyz_suggestions(axis):
+    """Suggestions contextuelles d'un axe: (texte inserable, placeholder). Listes
+    fermees de l'app pour les choix finis, calibrage pour le numerique, aide pour S/R."""
+    spec = _XYZ_AXES.get(axis)
+    if not spec:
+        return "", "pick an axis first"
+    kind = spec.get("kind")
+    if kind == "sr":
+        return "", 'search term, replacement1, "replacement, with comma", ...'
+    if kind == "checkpoint":
+        names = ZIMAGE_BASE_REPOS + list_checkpoints()
+        return _xyz_csv_join(names), f"e.g. {_xyz_csv_join(names[:2])}"
+    if kind == "performance":
+        names = list(PERFORMANCE)
+        return _xyz_csv_join(names), f"e.g. {_xyz_csv_join(names[:2])}"
+    choices = spec.get("choices")
+    if choices:
+        try:
+            names = list(choices())
+        except Exception:
+            names = []
+        return _xyz_csv_join(names), (f"e.g. {_xyz_csv_join(names[:3])}" if names else "no items found")
+    calib = _XYZ_CALIB.get(axis, "")
+    return calib, (f"e.g. {calib}" if calib else "comma-separated values")
+
+
+def _ui_xyz_axis_changed(axis):
+    """Change d'axe -> placeholder contextualise du champ valeurs."""
+    _fill, ph = _xyz_suggestions(axis)
+    return gr.update(placeholder=ph)
+
+
+def _ui_xyz_fill(axis, current):
+    """Bouton suggest: insere la liste complete (choix fermes / calibrage) si le champ
+    est vide, sinon ne touche pas a la saisie de l'utilisateur."""
+    fill, _ph = _xyz_suggestions(axis)
+    if not fill or (current or "").strip():
+        return gr.update()
+    return gr.update(value=fill)
+
+
 def _xyz_parse_values(s):
     """Parse un champ de valeurs CSV; les guillemets protegent les virgules
     (csv stdlib). Renvoie la liste des valeurs non vides."""
@@ -1863,15 +1932,17 @@ def build_ui():
                                     "shown in the gallery. Prompt S/R: first value = search term, "
                                     "then its replacements.*")
                         _ax = [k for k in _XYZ_AXES]
-                        with gr.Row():
-                            xyz_xa = gr.Dropdown(_ax, value="Steps", label="X axis", scale=1)
-                            xyz_xv = gr.Textbox(label="X values", placeholder="e.g. 4, 8, 12", scale=3)
-                        with gr.Row():
-                            xyz_ya = gr.Dropdown(_ax, value="(none)", label="Y axis", scale=1)
-                            xyz_yv = gr.Textbox(label="Y values", scale=3)
-                        with gr.Row():
-                            xyz_za = gr.Dropdown(_ax, value="(none)", label="Z axis", scale=1)
-                            xyz_zv = gr.Textbox(label="Z values", scale=3)
+                        _xyz_rows = []
+                        for _axis_lbl, _default in (("X", "Steps"), ("Y", "(none)"), ("Z", "(none)")):
+                            with gr.Row():
+                                _dd = gr.Dropdown(_ax, value=_default, label=f"{_axis_lbl} axis",
+                                                  scale=1)
+                                _tb = gr.Textbox(label=f"{_axis_lbl} values", scale=3,
+                                                 placeholder=_xyz_suggestions(_default)[1])
+                                _sg = (gr.Button("⤵ suggest", size="sm", scale=0, min_width=90)
+                                       if XYZ_SUGGEST else None)
+                                _xyz_rows.append((_dd, _tb, _sg))
+                        (xyz_xa, xyz_xv, xyz_xs), (xyz_ya, xyz_yv, xyz_ys), (xyz_za, xyz_zv, xyz_zs) = _xyz_rows
                         xyz_build_btn = gr.Button("Build grid → queue", variant="primary", size="sm")
                         xyz_status = gr.Markdown("")
 
@@ -2364,6 +2435,11 @@ def build_ui():
                                 [*_gen_inputs, xyz_xa, xyz_xv, xyz_ya, xyz_yv, xyz_za, xyz_zv,
                                  queue_state],
                                 [*_q_panel, xyz_status])
+            if XYZ_SUGGEST:
+                for _dd, _tb, _sg in ((xyz_xa, xyz_xv, xyz_xs), (xyz_ya, xyz_yv, xyz_ys),
+                                      (xyz_za, xyz_zv, xyz_zs)):
+                    _dd.change(_ui_xyz_axis_changed, [_dd], [_tb])
+                    _sg.click(_ui_xyz_fill, [_dd, _tb], [_tb])
         # Clic sur une image du resultat -> bouton Download avec le vrai nom de fichier.
         out.select(_pick_download, None, [result_dl])
         # Vision Mix & Generate: fusionne les refs en un prompt, puis genere (txt2img).

@@ -2,7 +2,7 @@
 
 > Z-Image txt2img + upscaler/detailer studio (a Fooocus-style fork of
 > [crispz](https://github.com/mikecastrodemaria/crispz)).
-> Current version: **1.2.0** — see [CHANGELOG.md](CHANGELOG.md).
+> Current version: **1.3.0** — see [CHANGELOG.md](CHANGELOG.md).
 
 A standalone Z-Image **creation + enhancement** tool, **100% local**, no ComfyUI /
 SwarmUI. On top of crispz's upscaler it adds:
@@ -177,7 +177,9 @@ Compare parameter variations side by side on an annotated contact sheet.
 
 1. Open **X/Y/Z grid** (accordion under the Job queue), pick the **X axis** (and
    optionally Y and Z) and type the values, comma-separated — quotes protect commas
-   (`"red, bright", blue`).
+   (`"red, bright", blue`). The field's placeholder adapts to the chosen axis, and the
+   **`⤵ suggest`** button pre-fills it (app lists for closed choices, calibration values
+   for numeric axes) — it never overwrites what you already typed.
 2. **Build grid → queue**: every combo becomes a job in the Job queue (validated first:
    numbers cast, closed lists matched case-insensitively — `uni` resolves to `unipc` —
    combo count capped by `max_jobs`).
