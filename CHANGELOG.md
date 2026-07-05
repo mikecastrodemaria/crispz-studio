@@ -3,6 +3,28 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## 1.5.0 — 2026-07-05 — X/Y/Z grid in the CLI
+
+The comparison grid is no longer UI-only: `--xyz "AXIS=v1,v2,…"` (repeat up to 3 times
+for X, Y, Z) with `--txt2img` runs every combo and ends with the same annotated contact
+sheet(s) in `<output>/xyz_<timestamp>/` (paths printed on stdout).
+
+```bash
+python app.py --cli --txt2img --prompt "a red cat" \
+    --xyz "Steps=4,8,12" --xyz "Guidance=0, 3.5" --save-mode local
+```
+
+- Same axes and validation as the UI grid (shared helpers): case-insensitive axis and
+  closed-list resolution (`step` → `Steps`, `uni` → `unipc`), quotes protect commas,
+  Prompt S/R checked against `--prompt`, duplicate axes rejected, `max_jobs` cap.
+  Upscale-only axes (ESRGAN model, Factor, Denoise, Tile, Refine tile) require
+  `--upscale` (clear error otherwise).
+- Each combo is saved as a normal output (tag `xyz`, metadata includes the combo);
+  **Ctrl+C assembles a partial sheet** with the cells rendered so far.
+- Respects `xyz_grid.enabled` (config) — disabled = clear error, nothing runs.
+- Files: `cz_cli.py` (`--xyz`, runner), `cz_ui.py` (axes table gains abstract `param`
+  names shared with the CLI), `tests/test_xyz.py` (CLI apply + axis resolution).
+
 ## 1.4.0 — 2026-07-05 — Tag autocomplete in prompt fields
 
 Type-ahead suggestions in the **prompt** and **negative prompt** fields.

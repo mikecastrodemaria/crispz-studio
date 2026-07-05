@@ -2,7 +2,7 @@
 
 > Z-Image txt2img + upscaler/detailer studio (a Fooocus-style fork of
 > [crispz](https://github.com/mikecastrodemaria/crispz)).
-> Current version: **1.4.0** — see [CHANGELOG.md](CHANGELOG.md).
+> Current version: **1.5.0** — see [CHANGELOG.md](CHANGELOG.md).
 
 A standalone Z-Image **creation + enhancement** tool, **100% local**, no ComfyUI /
 SwarmUI. On top of crispz's upscaler it adds:
@@ -199,6 +199,9 @@ replacements; the term must exist in the prompt).
 
 Config (`config.txt`): `"xyz_grid": {"enabled": true, "max_jobs": 100, "thumb": 512}` —
 requires `job_queue`; `enabled=false` removes the panel entirely.
+
+Also available from the CLI: `--txt2img --xyz "Steps=4,8,12" --xyz "Guidance=0, 3.5"`
+(see README_CLI.md) — same axes and validation, Ctrl+C assembles a partial sheet.
 
 ## Tag autocomplete (prompt fields)
 

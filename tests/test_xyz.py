@@ -128,10 +128,37 @@ def test_fill_preserves_user_input():
     assert "value" not in upd
 
 
+def test_cli_apply():
+    import cz_cli
+    p = {"prompt": "a red cat", "gen_steps": 8, "guidance": 0.0, "seed": 42,
+         "esrgan": None, "factor": 2.0, "denoise": 0.3, "tile": 512, "refine_tile": 0}
+    cz_cli._xyz_cli_apply("Steps", 12, p, {})              # kind=val -> param abstrait
+    cz_cli._xyz_cli_apply("Guidance", 3.5, p, {})
+    cz_cli._xyz_cli_apply("Denoise", 0.4, p, {})
+    assert p["gen_steps"] == 12 and p["guidance"] == 3.5 and p["denoise"] == 0.4
+    cz_cli._xyz_cli_apply("Performance", "Base CFG (28 steps)", p, {})
+    assert p["gen_steps"] == 28 and p["guidance"] == 4.0
+    cz_ui._XYZ_AXES["Prompt S/R"]["_term"] = "cat"
+    cz_cli._xyz_cli_apply("Prompt S/R", "cat", p, {})      # 1re valeur = inchange
+    assert p["prompt"] == "a red cat"
+    cz_cli._xyz_cli_apply("Prompt S/R", "dog", p, {})
+    assert p["prompt"] == "a red dog"
+
+
+def test_cli_axis_name_resolution():
+    ax = [k for k in cz_ui._XYZ_AXES if k != "(none)"]
+    assert cz_ui._xyz_match("step", ax) == ("Steps", None)          # partiel unique
+    assert cz_ui._xyz_match("GUIDANCE", ax) == ("Guidance", None)   # casse ignoree
+    assert cz_ui._xyz_match("prompt", ax) == ("Prompt S/R", None)
+    assert cz_ui._xyz_match("ile", ax)[0] is None                   # ambigu (Tile/Refine tile)
+    assert cz_ui._xyz_match("tile", ax) == ("Tile", None)           # exact (casse ignoree) gagne
+
+
 if __name__ == "__main__":
     for fn in (test_parse_values, test_match, test_validate, test_build_jobs,
                test_build_jobs_sr, test_assemble, test_csv_join_roundtrip,
-               test_suggestions, test_fill_preserves_user_input):
+               test_suggestions, test_fill_preserves_user_input,
+               test_cli_apply, test_cli_axis_name_resolution):
         fn()
         print(f"OK {fn.__name__}")
     print("All xyz tests passed.")

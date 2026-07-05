@@ -35,6 +35,31 @@ python app.py --txt2img --prompt "..." --upscale --refine-first \
     --factor 2 --denoise 0.30 -m 4x-ClearRealityV1_Soft.safetensors
 ```
 
+## X/Y/Z comparison grid  — `--xyz "AXIS=v1,v2,…"` (repeat ×1–3)
+
+Every combo is generated, saved as a normal output, and the run ends with annotated
+contact sheet(s) in `<output>/xyz_<timestamp>/` (one per Z value; paths printed).
+
+```bash
+# 3×2 grid: Steps × Guidance
+python app.py --txt2img --prompt "a red cat" \
+    --xyz "Steps=4,8,12" --xyz "Guidance=0, 3.5" --save-mode local
+
+# Compare checkpoints (partial names resolve case-insensitively), one sheet per seed
+python app.py --txt2img --prompt "..." \
+    --xyz "Checkpoint=Z-Image-Turbo, intoreal" --xyz "Seed=42, 1234"
+
+# Prompt S/R (first value = search term) + an upscale axis (needs --upscale)
+python app.py --txt2img --prompt "a red cat" --upscale \
+    --xyz "prompt=cat, dog, fox" --xyz "Denoise=0.2, 0.4"
+```
+
+Axes: `Checkpoint`, `Sampler`, `Schedule`, `Steps`, `Guidance`, `Seed`, `ESRGAN model`,
+`Factor`, `Denoise`, `Tile`, `Refine tile`, `LoRA weight`, `Performance`, `Prompt S/R`.
+Axis names and closed-list values resolve case-insensitively (`step` → `Steps`,
+`uni` → `unipc`); quotes protect commas; upscale-only axes require `--upscale`.
+**Ctrl+C assembles a partial sheet** with the cells rendered so far.
+
 ## Choose / switch the Z-Image model
 
 ```bash

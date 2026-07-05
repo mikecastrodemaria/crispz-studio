@@ -162,6 +162,133 @@ def serve_main(host="127.0.0.1", port=7861, idle_timeout=300):
 # ----------------------------------------------------------------------------
 # CLI (mode batch / scripting)
 # ----------------------------------------------------------------------------
+def _xyz_cli_apply(name, value, p, base_ms):
+    """Applique la valeur d'un axe cote CLI: kind=val -> cle abstraite du dict p
+    (spec['param']); modeles/sampler via les setters; Performance/S/R comme dans l'UI."""
+    from cz_ui import _XYZ_AXES, PERFORMANCE, resolve_checkpoint, ZIMAGE_BASE_REPOS
+    spec = _XYZ_AXES[name]
+    kind = spec.get("kind")
+    if kind == "val":
+        p[spec["param"]] = value
+    elif kind == "ms" and spec.get("key") == "sampler":
+        set_sampler(value)
+    elif kind == "ms":
+        set_schedule(value)
+    elif kind == "checkpoint":
+        if value in ZIMAGE_BASE_REPOS:
+            set_zimage_transformer("")
+            set_zimage_model(value)
+        else:
+            set_zimage_transformer(resolve_checkpoint(value))
+    elif kind == "lora_weight":
+        set_loras([(path, float(value)) for path, _w in (base_ms.get("loras") or [])])
+    elif kind == "performance":
+        st, g = PERFORMANCE[value]
+        p["gen_steps"], p["guidance"] = int(st), float(g)
+    elif kind == "sr":
+        term = spec["_term"]
+        if str(value) != term:
+            p["prompt"] = str(p["prompt"]).replace(term, str(value))
+
+
+def _xyz_cli_run(args, parser, model_name):
+    """Grille X/Y/Z en CLI (--txt2img --xyz 'Axe=v1,v2' x1-3): un rendu par combo,
+    sauvegarde habituelle, puis planche(s) annotee(s) via cz_ui._xyz_assemble.
+    Ctrl+C = planche partielle avec les cellules deja rendues."""
+    from cz_ui import (_XYZ_AXES, _xyz_parse_values, _xyz_validate_axis, _xyz_match,
+                       _xyz_assemble, XYZ_FEATURE_ENABLED, XYZ_MAX_JOBS, XYZ_THUMB,
+                       _gen_meta)
+    if not XYZ_FEATURE_ENABLED:
+        parser.error("--xyz: xyz_grid is disabled in config.txt")
+    if len(args.xyz) > 3:
+        parser.error("--xyz can be used at most 3 times (X, Y, Z)")
+    ax_names = [k for k in _XYZ_AXES if k != "(none)"]
+    upscale_only = {"ESRGAN model", "Factor", "Denoise", "Tile", "Refine tile"}
+    fake_vals = [None] * 36
+    fake_vals[0] = args.prompt
+    base_ms = {"loras": list(cz_pipeline.LORAS)}
+    axes = []
+    for spec in args.xyz:
+        if "=" not in spec:
+            parser.error(f"--xyz expects AXIS=v1,v2,... (got: {spec})")
+        name_raw, _, vals_raw = spec.partition("=")
+        name, err = _xyz_match(name_raw.strip(), ax_names)
+        if err:
+            parser.error(f"--xyz axis: {err}")
+        if name in upscale_only and not args.upscale:
+            parser.error(f"--xyz {name} only affects the upscale pass -> add --upscale")
+        values, err = _xyz_validate_axis(name, _xyz_parse_values(vals_raw), fake_vals, base_ms)
+        if err:
+            parser.error(f"--xyz: {err}")
+        if _XYZ_AXES[name].get("kind") == "sr":
+            _XYZ_AXES[name]["_term"] = str(values[0])
+        axes.append((name, values))
+    names = [n for n, _v in axes]
+    if len(set(names)) != len(names):
+        parser.error("--xyz: each axis must vary a different parameter")
+    total = 1
+    for _n, v in axes:
+        total *= len(v)
+    if total > XYZ_MAX_JOBS:
+        parser.error(f"--xyz: {total} combos > max_jobs ({XYZ_MAX_JOBS}); reduce the lists "
+                     f"(or raise xyz_grid.max_jobs in config.txt)")
+    (xn, xv) = axes[0]
+    (yn, yv) = axes[1] if len(axes) > 1 else (None, [None])
+    (zn, zv) = axes[2] if len(axes) > 2 else (None, [None])
+    gid = time.strftime("%Y%m%d_%H%M%S")
+    cells, done, quiet = {}, 0, (args.quiet or args.print_output)
+    try:
+        for iz, z in enumerate(zv):
+            for iy, y in enumerate(yv):
+                for ix, x in enumerate(xv):
+                    p = {"prompt": args.prompt, "gen_steps": args.gen_steps,
+                         "guidance": args.guidance, "seed": args.seed,
+                         "esrgan": model_name, "factor": args.factor,
+                         "denoise": args.denoise, "tile": args.tile,
+                         "refine_tile": args.refine_tile}
+                    combo = [(xn, x)] + ([(yn, y)] if yn else []) + ([(zn, z)] if zn else [])
+                    for aname, aval in combo:
+                        _xyz_cli_apply(aname, aval, p, base_ms)
+                    set_guidance(p["guidance"])
+                    label = " ".join(f"{n}={v}" for n, v in combo)
+                    _log(f"combo {done + 1}/{total}: {label}", mod="xyz")
+                    img, t = txt2img_run(
+                        p["prompt"], args.gen_width, args.gen_height, p["gen_steps"],
+                        p["seed"], args.negative, upscale=args.upscale,
+                        esrgan_model=p["esrgan"], factor=p["factor"], denoise=p["denoise"],
+                        steps=args.steps, tile=p["tile"], overlap=args.overlap,
+                        refine_tile=p["refine_tile"], refine_overlap=args.refine_overlap,
+                        refine_first=args.refine_first)
+                    if args.save_mode != "display":
+                        try:
+                            dst = build_output_path(None, args.save_mode, args.output_dir,
+                                                    args.output_format, tag="xyz",
+                                                    seed=p["seed"], size=img.size,
+                                                    index=done + 1)
+                            if dst:
+                                save_image(img, dst, args.output_format, meta=_gen_meta(
+                                    "xyz", p["prompt"], args.negative, p["seed"],
+                                    p["gen_steps"], p["guidance"], img.size,
+                                    extra={"xyz": label}))
+                        except Exception as e:
+                            _log(f"save failed ({e}); cell kept for the sheet", mod="xyz")
+                    thumb = img.copy()
+                    thumb.thumbnail((XYZ_THUMB, XYZ_THUMB), Image.LANCZOS)
+                    cells[(ix, iy, iz)] = thumb
+                    done += 1
+                    if not quiet:
+                        print(f"[{done}/{total}] {label}  ({t['txt2img']:.1f}s)")
+    except KeyboardInterrupt:
+        _log(f"interrupted after {done}/{total}; assembling partial sheet(s)", mod="xyz")
+    meta = {"gid": gid, "x": (xn, [str(v) for v in xv]),
+            "y": (yn, [str(v) for v in yv]) if yn else None,
+            "z": (zn, [str(v) for v in zv]) if zn else None,
+            "out_dir": args.output_dir}
+    for s in _xyz_assemble(meta, cells, thumb=XYZ_THUMB):
+        print(os.path.abspath(s))
+    return 0
+
+
 def cli_main(argv=None):
     import argparse
 
@@ -235,6 +362,11 @@ def cli_main(argv=None):
     parser.add_argument("--negative", default="", help="Negative prompt (txt2img)")
     parser.add_argument("--upscale", action="store_true",
                         help="In --txt2img: run the ESRGAN + refine upscale on the generated image")
+    parser.add_argument("--xyz", action="append", default=[], metavar="AXIS=V1,V2,...",
+                        help="X/Y/Z grid (with --txt2img): vary a parameter across values; repeat "
+                             "up to 3 times for X, Y, Z axes. Same axes/rules as the UI grid "
+                             "(quotes protect commas; Prompt S/R: first value = search term). Ends "
+                             "with annotated contact sheet(s) in <output>/xyz_<timestamp>/.")
     # Nouvelles features en CLI (mêmes que l'UI)
     parser.add_argument("--lora", action="append", default=[], metavar="NAME[:WEIGHT]",
                         help="Apply a LoRA (file in the loras dir, or a path), optional :weight "
@@ -392,6 +524,8 @@ def cli_main(argv=None):
             if not avail:
                 parser.error(f"--upscale needs an ESRGAN model in {cz_esrgan.ESRGAN_DIR}")
             model_name = args.model if args.model in avail else avail[0]
+        if args.xyz:
+            return _xyz_cli_run(args, parser, model_name)
         if args.report_vram:
             _reset_vram_peak()
         result, t = txt2img_run(

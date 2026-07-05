@@ -1502,25 +1502,28 @@ def _ui_queue_run(items, history, progress=gr.Progress(track_tqdm=True)):
 # Config: bloc "xyz_grid" de config.txt. Necessite job_queue (reutilise snapshots,
 # runner et pause Stop). enabled=false -> aucun composant, zero cout.
 _XYZ_CFG = CONFIG.get("xyz_grid") if isinstance(CONFIG.get("xyz_grid"), dict) else {}
-XYZ_ENABLED = bool(_XYZ_CFG.get("enabled", True)) and JOB_QUEUE_ENABLED
+XYZ_FEATURE_ENABLED = bool(_XYZ_CFG.get("enabled", True))          # feature (UI + CLI)
+XYZ_ENABLED = XYZ_FEATURE_ENABLED and JOB_QUEUE_ENABLED            # panneau UI (via la file)
 XYZ_MAX_JOBS = int(_XYZ_CFG.get("max_jobs", 100))
 XYZ_THUMB = int(_XYZ_CFG.get("thumb", 512))
 
-# Table des axes: kind=val -> _gen_inputs[idx]; kind=ms -> etat modele; kinds speciaux
-# geres dans _xyz_apply. choices=callable -> liste fermee evaluee au build.
+# Table des axes: kind=val -> _gen_inputs[idx] cote UI, param abstrait cote CLI
+# (cz_cli --xyz); kind=ms -> etat modele; kinds speciaux geres dans _xyz_apply.
+# choices=callable -> liste fermee evaluee au build.
 _XYZ_AXES = {
     "(none)":       None,
     "Checkpoint":   {"kind": "checkpoint"},
     "Sampler":      {"kind": "ms", "key": "sampler", "choices": lambda: list(SAMPLER_CHOICES)},
     "Schedule":     {"kind": "ms", "key": "schedule", "choices": lambda: list(SCHEDULE_CHOICES)},
-    "Steps":        {"kind": "val", "idx": 15, "cast": int},
-    "Guidance":     {"kind": "val", "idx": 18, "cast": float},
-    "Seed":         {"kind": "val", "idx": 17, "cast": int},
-    "ESRGAN model": {"kind": "val", "idx": 20, "cast": str, "choices": lambda: list_esrgan_models()},
-    "Factor":       {"kind": "val", "idx": 24, "cast": float},
-    "Denoise":      {"kind": "val", "idx": 25, "cast": float},
-    "Tile":         {"kind": "val", "idx": 27, "cast": int},
-    "Refine tile":  {"kind": "val", "idx": 29, "cast": int},
+    "Steps":        {"kind": "val", "idx": 15, "cast": int, "param": "gen_steps"},
+    "Guidance":     {"kind": "val", "idx": 18, "cast": float, "param": "guidance"},
+    "Seed":         {"kind": "val", "idx": 17, "cast": int, "param": "seed"},
+    "ESRGAN model": {"kind": "val", "idx": 20, "cast": str, "param": "esrgan",
+                     "choices": lambda: list_esrgan_models()},
+    "Factor":       {"kind": "val", "idx": 24, "cast": float, "param": "factor"},
+    "Denoise":      {"kind": "val", "idx": 25, "cast": float, "param": "denoise"},
+    "Tile":         {"kind": "val", "idx": 27, "cast": int, "param": "tile"},
+    "Refine tile":  {"kind": "val", "idx": 29, "cast": int, "param": "refine_tile"},
     "LoRA weight":  {"kind": "lora_weight"},
     "Performance":  {"kind": "performance"},
     "Prompt S/R":   {"kind": "sr"},
