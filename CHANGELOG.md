@@ -3,6 +3,27 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## 1.6.0 — 2026-07-07 — Model-loading progress in the terminal and UI
+
+The first model load downloads from Hugging Face and then reads several GB into VRAM —
+previously a long silent gap (the report was `317.3s` with no sign of progress). The
+blocking `from_pretrained` now runs in a daemon thread while a heartbeat (every ~2 s)
+reports where the load is:
+
+- **Terminal**: a single rewritten line `[crispz][load] Z-Image base... 45s | 3.2 GB in
+  VRAM` (during the first-run download, before anything is allocated, it reads
+  `... 12s (downloading / reading, first run only)`).
+- **UI**: the Gradio progress bar advances — honest %, based on **VRAM allocated /
+  `target_vram_gb`** once loading into memory starts (capped 95 %), a small time-based
+  bar during the download phase.
+- Applied to the three heavy loads: **Z-Image base**, the **single-file transformer**
+  (Civitai checkpoint), and **Z-Image Omni**.
+- **Zero-cost off**: `"load_progress": {"enabled": false}` loads directly with no monitor
+  thread. `target_vram_gb` (default 14) and `heartbeat_s` (default 2) are tunable.
+- The monitor never swallows errors — a failed load re-raises exactly as before.
+- Files: `cz_pipeline.py` (`_load_monitor` + pure `_fmt_load`/`_load_pct`), `cz_core.py`
+  (`APP_VERSION` 1.6.0), `config-sample.txt`, `tests/test_load.py`.
+
 ## 1.5.2 — 2026-07-05 — Fix: empty "Apply override" no longer clears the checkpoint
 
 - Selecting a checkpoint in **Z-Image checkpoint** applies it automatically. Clicking the

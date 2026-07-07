@@ -12,14 +12,17 @@ Ne depend que de cz_core / cz_esrgan / cz_imageio (jamais de app ni de gradio).
 """
 
 import os
+import sys
 import gc
 import time
 import json
+import threading
 
 import numpy as np
 import torch
 from PIL import Image
 
+import cz_core
 from cz_core import (
     CONFIG, HERE, DEVICE, DTYPE, DEFAULT_BASE_REPO,
     DEFAULT_TILE, DEFAULT_OVERLAP, DEFAULT_REFINE_TILE, DEFAULT_REFINE_OVERLAP,
@@ -210,6 +213,69 @@ def _progress(frac, desc=""):
             _PROGRESS(min(1.0, max(0.0, float(frac))), desc)
         except Exception:
             pass
+
+
+# ---- Feedback de chargement des modeles (terminal + UI) ----
+# from_pretrained est bloquant et silencieux (le 1er chargement telecharge depuis HF ->
+# plusieurs minutes). On execute le chargement dans un thread et on rafraichit toutes les
+# ~2s une ligne terminal + la barre Gradio (temps ecoule + VRAM allouee). Config bloc
+# "load_progress"; enabled=false -> chargement direct (aucun thread, zero cout).
+_LOAD_CFG = CONFIG.get("load_progress") if isinstance(CONFIG.get("load_progress"), dict) else {}
+LOAD_PROGRESS_ENABLED = bool(_LOAD_CFG.get("enabled", True))
+_LOAD_TARGET_GB = float(_LOAD_CFG.get("target_vram_gb", 14.0))
+_LOAD_HEARTBEAT = float(_LOAD_CFG.get("heartbeat_s", 2.0))
+
+
+def _fmt_load(label, elapsed, vram_gb):
+    """Texte de progression de chargement (pur, testable). VRAM > 0 -> phase chargement
+    en memoire; sinon phase download/lecture disque."""
+    if vram_gb > 0.05:
+        return f"{label}... {elapsed:.0f}s | {vram_gb:.1f} GB in VRAM"
+    return f"{label}... {elapsed:.0f}s (downloading / reading, first run only)"
+
+
+def _load_pct(elapsed, vram_gb, target_gb=None):
+    """% honnete: base sur la VRAM allouee / cible une fois le chargement en memoire
+    commence (plafonne 0.95); pendant le download (VRAM~0) petite barre temporelle."""
+    target_gb = target_gb or _LOAD_TARGET_GB
+    if vram_gb <= 0.05:
+        return min(0.12, elapsed / 600.0)
+    return min(0.95, vram_gb / max(1.0, float(target_gb)))
+
+
+def _load_monitor(label, fn):
+    """Execute fn() (chargement bloquant) dans un thread et rafraichit terminal + UI
+    (temps + VRAM) toutes les ~2s. Renvoie le resultat de fn (releve son exception)."""
+    if not LOAD_PROGRESS_ENABLED:
+        return fn()
+    box = {}
+
+    def _work():
+        try:
+            box["v"] = fn()
+        except BaseException as e:   # noqa: BLE001 - on re-leve dans le thread principal
+            box["e"] = e
+
+    th = threading.Thread(target=_work, daemon=True)
+    t0 = time.time()
+    th.start()
+    while True:
+        th.join(timeout=_LOAD_HEARTBEAT)
+        el = time.time() - t0
+        vram = (torch.cuda.memory_allocated() / 1024 ** 3) if DEVICE == "cuda" else 0.0
+        line = _fmt_load(label, el, vram)
+        if cz_core.LOG_LEVEL >= 1:
+            sys.stderr.write("\r[crispz][load] " + line + "        ")
+            sys.stderr.flush()
+        _progress(_load_pct(el, vram), "Loading " + line)
+        if not th.is_alive():
+            break
+    if cz_core.LOG_LEVEL >= 1:
+        sys.stderr.write("\n")
+        sys.stderr.flush()
+    if "e" in box:
+        raise box["e"]
+    return box.get("v")
 
 
 def request_stop():
@@ -550,8 +616,10 @@ def _ensure_base():
     if ZIMAGE_TRANSFORMER:
         if _is_single_file(ZIMAGE_TRANSFORMER):
             _log(f"loading Z-Image transformer (single-file): {ZIMAGE_TRANSFORMER} ...")
-            kwargs["transformer"] = ZImageTransformer2DModel.from_single_file(
-                ZIMAGE_TRANSFORMER, torch_dtype=DTYPE)
+            kwargs["transformer"] = _load_monitor(
+                f"transformer {os.path.basename(ZIMAGE_TRANSFORMER)}",
+                lambda: ZImageTransformer2DModel.from_single_file(
+                    ZIMAGE_TRANSFORMER, torch_dtype=DTYPE))
         else:
             # repo HF / dossier diffusers -> charge le sous-dossier 'transformer'
             # (utile pour les modeles comme Juggernaut-Z dont le tokenizer est
@@ -561,7 +629,8 @@ def _ensure_base():
                 ZIMAGE_TRANSFORMER, subfolder="transformer", torch_dtype=DTYPE)
     _log(f"loading Z-Image base: {BASE_REPO} (offload={OFFLOAD_MODE}, dtype=bf16) ... "
          "first time downloads from HF, then cached")
-    pipe = ZImagePipeline.from_pretrained(BASE_REPO, torch_dtype=DTYPE, **kwargs)
+    pipe = _load_monitor(f"Z-Image base {BASE_REPO}",
+                         lambda: ZImagePipeline.from_pretrained(BASE_REPO, torch_dtype=DTYPE, **kwargs))
     # Capture le config natif (flow-matching) du scheduler -> base pour construire les
     # autres samplers (euler/dpm2a/dpmpp2m) sans perdre shift/flow params.
     try:
@@ -683,7 +752,8 @@ def _load_omni():
             "Z-Image-Edit') or a local diffusers folder.")
     _log(f"loading Z-Image Omni: {repo} (offload={OFFLOAD_MODE}) ...")
     t0 = time.time()
-    pipe = ZImageOmniPipeline.from_pretrained(repo, torch_dtype=DTYPE)
+    pipe = _load_monitor(f"Z-Image Omni {repo}",
+                         lambda: ZImageOmniPipeline.from_pretrained(repo, torch_dtype=DTYPE))
     # Attention slicing pose par appel via _set_slicing (cf. _ensure_base).
     if DEVICE == "cuda" and OFFLOAD_MODE == "model":
         pipe.enable_model_cpu_offload()

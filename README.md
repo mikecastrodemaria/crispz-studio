@@ -555,6 +555,14 @@ No file to provide: on first launch, `diffusers` fetches the Z-Image transformer
 the VAE and the Qwen3-4B text encoder from Hugging Face, then everything is cached
 locally. Subsequent runs are offline.
 
+**Loading progress** — because the first load downloads several GB and then reads them
+into VRAM, it can take minutes. The terminal shows a live one-line status
+(`[crispz][load] Z-Image base... 45s | 3.2 GB in VRAM`, or `... (downloading / reading,
+first run only)` before allocation starts) and the UI progress bar advances with it.
+Turn it off or tune it in `config.txt`:
+`"load_progress": {"enabled": true, "target_vram_gb": 14.0, "heartbeat_s": 2.0}`
+(`enabled: false` loads directly with no monitor thread).
+
 ---
 
 ## Running

@@ -15,6 +15,8 @@
     "_tag_autocomplete_help": "Prompt/negative autocomplete. CSVs in sources are downloaded once to tags/ (any .csv dropped there is also used, rich 'name,cat,count,aliases' or one word per line) + local __wildcards__. enabled=false: no download, no JS injected (zero cost).",
     "xyz_grid": {"enabled": true, "max_jobs": 100, "thumb": 512, "suggest": true},
     "_xyz_grid_help": "X/Y/Z comparison grid (needs job_queue). Each combo becomes a queued job; an annotated contact sheet is assembled per Z value. max_jobs caps the combo count; thumb = cell size in px; suggest = contextual value suggestions (placeholder + fill button) per axis.",
+    "load_progress": {"enabled": true, "target_vram_gb": 14.0, "heartbeat_s": 2.0},
+    "_load_progress_help": "Live feedback while a model loads (first run downloads from HF = minutes of silence otherwise). Terminal shows a rewritten '[crispz][load] ... 45s | 3.2 GB in VRAM' line every heartbeat_s; the UI progress bar advances (VRAM allocated / target_vram_gb). enabled=false loads directly with no monitor thread (zero cost).",
     "caption_model": "blip-large",
     "_caption_model_help": "Local auto-describe model (no Ollama): blip-large (default) | blip-base",
     "improve_local_keywords": "highly detailed, sharp focus, professional photography, intricate details, natural lighting, high quality, 8k",
