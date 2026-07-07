@@ -566,11 +566,16 @@ def _apply_checkpoint(name):
 
 def _apply_transformer_repo(repo):
     """Definit le transformer depuis un repo HF / dossier diffusers OU un .safetensors.
-    Ajuste steps/guidance ET le preset Performance selon le profil du modele."""
+    Ajuste steps/guidance ET le preset Performance selon le profil du modele.
+    Champ VIDE = no-op: on ne remet PAS a zero (sinon ce bouton effacerait le checkpoint
+    choisi juste au-dessus). Pour revenir au base repo pur, choisir un repo officiel dans
+    'Z-Image checkpoint'."""
     repo = (repo or "").strip()
-    set_zimage_transformer(repo)
     if not repo:
-        return "Transformer: from base repo.", gr.update(), gr.update(), gr.update()
+        return ("Transformer override is empty — no change. Pick a model in 'Z-Image "
+                "checkpoint' above (that also clears any override).",
+                gr.update(), gr.update(), gr.update())
+    set_zimage_transformer(repo)
     st, g = profile_for_model(repo)
     return (f"Transformer override: {repo} -> auto steps={st}, CFG={g} "
             f"(keeps base VAE/encoder; reload on next run).",
@@ -2280,7 +2285,8 @@ def build_ui():
                                 placeholder="e.g. RunDiffusion/Juggernaut-Z-Image",
                                 info="For community models with an incomplete tokenizer (Juggernaut-Z): "
                                      "loads only the transformer, keeps base VAE/encoder. Set base = Turbo.")
-                            transformer_apply_btn = gr.Button("Apply", size="sm", scale=1, variant="primary")
+                            transformer_apply_btn = gr.Button("Apply override", size="sm", scale=1,
+                                                              variant="secondary")
 
                         gr.Markdown("### LoRA (up to 3, combinable)")
                         lora_dir_tb = gr.Textbox(value=cz_pipeline.LORAS_DIR, label="LoRA folder")

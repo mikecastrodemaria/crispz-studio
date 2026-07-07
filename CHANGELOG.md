@@ -3,6 +3,17 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## 1.5.2 — 2026-07-05 — Fix: empty "Apply override" no longer clears the checkpoint
+
+- Selecting a checkpoint in **Z-Image checkpoint** applies it automatically. Clicking the
+  transformer-override **Apply** button with an **empty** field used to call
+  `set_zimage_transformer("")`, silently wiping that selection (the terminal then showed
+  `transformer -> (repo de base)` and Generate loaded the plain base repo).
+- The button is now a no-op on an empty field (returns a clear hint instead of clearing),
+  and was relabeled **"Apply override"** (secondary) to distinguish it from the main
+  checkpoint dropdown. To go back to the plain base repo, pick an official repo in the
+  dropdown.
+
 ## 1.5.1 — 2026-07-05 — Fix: tensor-size mismatch on non-/32 image dimensions
 
 - Fixes `Upscale/img2img failed: The size of tensor a (150) must match the size of
