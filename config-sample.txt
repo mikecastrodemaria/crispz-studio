@@ -28,6 +28,8 @@
         "Base CFG (28 steps)": [28, 4.0]
     },
     "model_profiles": {
+        "de_turbo": {"steps": 25, "guidance": 2.5},
+        "anime": {"steps": 8, "guidance": 1.0},
         "turbo": {"steps": 8, "guidance": 0.0},
         "juggernaut": {"steps": 28, "guidance": 6.0},
         "base": {"steps": 24, "guidance": 4.0}
