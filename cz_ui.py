@@ -650,21 +650,26 @@ def _ui_wild_create(newname, content):
         return gr.update(), f"Create failed: {e}", newname
 
 
+# Nombre de slots LoRA affiches (configurable via config 'lora_slots', 1..10, defaut 3).
+LORA_SLOTS = max(1, min(10, int(CONFIG.get("lora_slots", 3))))
+
+
 def _refresh_loras(new_dir):
-    """Change le dossier loras + liste les LoRA (met a jour les 3 slots) + persiste."""
+    """Change le dossier loras + rafraichit TOUS les slots (N configurable) + persiste."""
     set_loras_dir(new_dir)
     try:
         _save_prefs_keys({"loras_dir": cz_pipeline.LORAS_DIR})   # persiste -> survit au reboot
     except Exception:
         pass
     lr = ["None"] + list_loras()
-    return (gr.update(choices=lr), gr.update(choices=lr), gr.update(choices=lr),
-            f"{len(lr) - 1} LoRA(s) in {cz_pipeline.LORAS_DIR} (saved).")
+    status = f"{len(lr) - 1} LoRA(s) in {cz_pipeline.LORAS_DIR} (saved)."
+    return tuple(gr.update(choices=lr) for _ in range(LORA_SLOTS)) + (status,)
 
 
-def _apply_loras(n1, w1, n2, w2, n3, w3):
-    """Applique la combinaison des 3 slots LoRA."""
-    set_loras([(n1, w1), (n2, w2), (n3, w3)])
+def _apply_loras(*vals):
+    """Applique la combinaison des slots LoRA. vals = (name1, weight1, name2, weight2, ...)."""
+    pairs = [(vals[i], vals[i + 1]) for i in range(0, len(vals) - 1, 2)]
+    set_loras(pairs)
     if not cz_pipeline.LORAS:
         return "LoRA: none."
     return "LoRA: " + ", ".join(f"{os.path.basename(p)}@{w}" for p, w in cz_pipeline.LORAS) + " (reload on next run)."
@@ -676,29 +681,27 @@ def _path_for_lora(name):
     return name if os.path.isabs(name) else os.path.join(cz_pipeline.LORAS_DIR, name)
 
 
-def _ui_loras_apply(n1, w1, n2, w2, n3, w3):
-    """Applique les slots + agrege les mots-cles des LoRA selectionnees."""
-    status = _apply_loras(n1, w1, n2, w2, n3, w3)
+def _lora_keywords_for(names):
+    """Agrege les mots-cles (trigger words) des LoRA selectionnees."""
     kws = []
-    for n in (n1, n2, n3):
+    for n in names:
         p = _path_for_lora(n)
         if p:
             k = lora_keywords(p)
             if k:
                 kws.append(k)
-    return status, ", ".join(kws)
+    return ", ".join(kws)
 
 
-def _ui_loras_keywords(n1, n2, n3):
+def _ui_loras_apply(*vals):
+    """Applique les slots (N) + agrege les mots-cles des LoRA selectionnees."""
+    status = _apply_loras(*vals)
+    return status, _lora_keywords_for(vals[0::2])
+
+
+def _ui_loras_keywords(*names):
     """Recupere les mots-cles de toutes les LoRA selectionnees (bouton)."""
-    kws = []
-    for n in (n1, n2, n3):
-        p = _path_for_lora(n)
-        if p:
-            k = lora_keywords(p)
-            if k:
-                kws.append(k)
-    merged = ", ".join(kws)
+    merged = _lora_keywords_for(names)
     return merged, (f"{len(merged.split(','))} keyword(s)." if merged
                     else "No keywords in the selected LoRA(s).")
 
@@ -2383,21 +2386,18 @@ def build_ui():
                             transformer_apply_btn = gr.Button("Apply override", size="sm", scale=1,
                                                               variant="secondary")
 
-                        gr.Markdown("### LoRA (up to 3, combinable)")
+                        gr.Markdown(f"### LoRA (up to {LORA_SLOTS}, combinable)")
                         lora_dir_tb = gr.Textbox(value=cz_pipeline.LORAS_DIR, label="LoRA folder")
                         _lchoices = ["None"] + list_loras()
-                        with gr.Row():
-                            lora_dd1 = gr.Dropdown(choices=_lchoices, value="None", label="LoRA 1", scale=3)
-                            lw1 = gr.Slider(0.0, 2.0, value=float(cz_pipeline.LORA_WEIGHT), step=0.05,
-                                            label="Weight 1", scale=2)
-                        with gr.Row():
-                            lora_dd2 = gr.Dropdown(choices=_lchoices, value="None", label="LoRA 2", scale=3)
-                            lw2 = gr.Slider(0.0, 2.0, value=float(cz_pipeline.LORA_WEIGHT), step=0.05,
-                                            label="Weight 2", scale=2)
-                        with gr.Row():
-                            lora_dd3 = gr.Dropdown(choices=_lchoices, value="None", label="LoRA 3", scale=3)
-                            lw3 = gr.Slider(0.0, 2.0, value=float(cz_pipeline.LORA_WEIGHT), step=0.05,
-                                            label="Weight 3", scale=2)
+                        lora_dds, lora_lws = [], []
+                        for _i in range(LORA_SLOTS):
+                            with gr.Row():
+                                _dd = gr.Dropdown(choices=_lchoices, value="None",
+                                                  label=f"LoRA {_i + 1}", scale=3)
+                                _lw = gr.Slider(0.0, 2.0, value=float(cz_pipeline.LORA_WEIGHT),
+                                                step=0.05, label=f"Weight {_i + 1}", scale=2)
+                            lora_dds.append(_dd)
+                            lora_lws.append(_lw)
                         lora_refresh_btn = gr.Button("Refresh LoRA list", size="sm")
                         lora_keywords_tb = gr.Textbox(label="Keywords / trigger words", lines=2,
                                                       placeholder="Auto-filled from the selected LoRA(s).")
@@ -2535,14 +2535,14 @@ def build_ui():
         ckpt_dd.change(_apply_checkpoint, [ckpt_dd], [ckpt_status, gen_steps, guidance, performance])
         transformer_apply_btn.click(_apply_transformer_repo, [transformer_tb],
                                     [ckpt_status, gen_steps, guidance, performance])
-        lora_refresh_btn.click(_refresh_loras, [lora_dir_tb],
-                               [lora_dd1, lora_dd2, lora_dd3, lora_status])
-        _lora_slots = [lora_dd1, lw1, lora_dd2, lw2, lora_dd3, lw3]
-        for _c in (lora_dd1, lora_dd2, lora_dd3):
+        lora_refresh_btn.click(_refresh_loras, [lora_dir_tb], lora_dds + [lora_status])
+        # slots entrelaces: dd1, lw1, dd2, lw2, ... (attendu par _apply_loras/_ui_loras_apply)
+        _lora_slots = [c for _pair in zip(lora_dds, lora_lws) for c in _pair]
+        for _c in lora_dds:
             _c.change(_ui_loras_apply, _lora_slots, [lora_status, lora_keywords_tb])
-        for _c in (lw1, lw2, lw3):
+        for _c in lora_lws:
             _c.change(_apply_loras, _lora_slots, [lora_status])
-        lora_kw_btn.click(_ui_loras_keywords, [lora_dd1, lora_dd2, lora_dd3],
+        lora_kw_btn.click(_ui_loras_keywords, lora_dds,
                           [lora_keywords_tb, lora_status])
         lora_kw_to_prompt_btn.click(_ui_kw_to_prompt, [prompt, lora_keywords_tb], [prompt])
         omni_model_tb.change(lambda r: (set_omni_model(r), f"Omni model set: {r or '(none)'}")[1],

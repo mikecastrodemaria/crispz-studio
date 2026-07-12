@@ -71,6 +71,7 @@
     "loras_dir": "",
     "wildcards_dir": "",
     "default_lora_weight": 1.0,
+    "lora_slots": 3,
     "zimage_omni_model": "",
     "faceswap_model_path": "",
     "faceswap_model_url": "",

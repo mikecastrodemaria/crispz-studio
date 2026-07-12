@@ -110,6 +110,8 @@ wildcards_dir           Folder of wildcard .txt files. In the prompt, __name__ i
                         __color__). Nested wildcards supported, reproducible per
                         seed. Empty -> ./wildcards next to app.py.
 default_lora_weight     Default LoRA strength (0..2).
+lora_slots              Number of LoRA slots shown in Models > LoRA (1..10, default 3).
+                        Each slot = a dropdown + weight; all combine at generation.
 zimage_omni_model       HF repo id OR local diffusers folder of a Z-Image Omni/Edit
                         model (with a SigLIP encoder). REQUIRED for the Reference
                         (Omni) multi-image mode. The Turbo/Base text-to-image models
