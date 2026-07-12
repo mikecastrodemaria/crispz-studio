@@ -651,7 +651,19 @@ def _ui_wild_create(newname, content):
 
 
 # Nombre de slots LoRA affiches (configurable via config 'lora_slots', 1..10, defaut 3).
-LORA_SLOTS = max(1, min(10, int(CONFIG.get("lora_slots", 3))))
+MAX_LORA_SLOTS = 10
+LORA_SLOTS = max(1, min(MAX_LORA_SLOTS, int(_prefs.get("lora_slots", CONFIG.get("lora_slots", 3)))))
+
+
+def _ui_set_lora_slots(n):
+    """Regle le nombre de slots LoRA VISIBLES (Advanced) + persiste (preferences.json).
+    Les slots au-dela restent presents mais caches (valeur 'None' -> ignores)."""
+    n = max(1, min(MAX_LORA_SLOTS, int(n)))
+    try:
+        _save_prefs_keys({"lora_slots": n})
+    except Exception:
+        pass
+    return [gr.update(visible=(i < n)) for i in range(MAX_LORA_SLOTS)]
 
 
 def _refresh_loras(new_dir):
@@ -663,7 +675,7 @@ def _refresh_loras(new_dir):
         pass
     lr = ["None"] + list_loras()
     status = f"{len(lr) - 1} LoRA(s) in {cz_pipeline.LORAS_DIR} (saved)."
-    return tuple(gr.update(choices=lr) for _ in range(LORA_SLOTS)) + (status,)
+    return tuple(gr.update(choices=lr) for _ in range(MAX_LORA_SLOTS)) + (status,)
 
 
 def _apply_loras(*vals):
@@ -2408,18 +2420,21 @@ def build_ui():
                                 transformer_apply_btn = gr.Button("Apply override", size="sm", scale=1,
                                                                   variant="secondary")
 
-                        with gr.Accordion(f"\U0001F9E9 LoRA (up to {LORA_SLOTS}, combinable)", open=False):
+                        with gr.Accordion("\U0001F9E9 LoRA (combinable)", open=False):
                             lora_dir_tb = gr.Textbox(value=cz_pipeline.LORAS_DIR, label="LoRA folder")
+                            gr.Markdown("*Number of slots is set in Advanced > Generation "
+                                        "(LoRA slots), or config `lora_slots`.*")
                             _lchoices = ["None"] + list_loras()
-                            lora_dds, lora_lws = [], []
-                            for _i in range(LORA_SLOTS):
-                                with gr.Row():
+                            lora_dds, lora_lws, lora_rows = [], [], []
+                            for _i in range(MAX_LORA_SLOTS):
+                                with gr.Row(visible=(_i < LORA_SLOTS)) as _row:
                                     _dd = gr.Dropdown(choices=_lchoices, value="None",
                                                       label=f"LoRA {_i + 1}", scale=3)
                                     _lw = gr.Slider(0.0, 2.0, value=float(cz_pipeline.LORA_WEIGHT),
                                                     step=0.05, label=f"Weight {_i + 1}", scale=2)
                                 lora_dds.append(_dd)
                                 lora_lws.append(_lw)
+                                lora_rows.append(_row)
                             lora_refresh_btn = gr.Button("Refresh LoRA list", size="sm")
                             lora_keywords_tb = gr.Textbox(label="Keywords / trigger words", lines=2,
                                                           placeholder="Auto-filled from the selected LoRA(s).")
@@ -2524,6 +2539,10 @@ def build_ui():
                             label="Also save pre-upscale image",
                             info="In txt2img + auto-upscale, also save the original txt2img image "
                                  "(before ESRGAN/refine), tagged 'txt2img'.")
+                        lora_slots_num = gr.Slider(1, MAX_LORA_SLOTS, value=LORA_SLOTS, step=1,
+                                                   label="LoRA slots (Models > LoRA)",
+                                                   info="How many LoRA slots to show. Applied live and "
+                                                        "persisted (preferences.json).")
 
         # Toggles facon Fooocus
         advanced_cb.change(lambda v: gr.update(visible=bool(v)), advanced_cb, advanced_col)
@@ -2549,6 +2568,7 @@ def build_ui():
         meta_scheme_dd.change(set_metadata_scheme, [meta_scheme_dd], [meta_scheme_status])
         wildcards_order_cb.change(set_wildcards_in_order, [wildcards_order_cb], [wild_order_status])
         save_pre_upscale_cb.change(cz_pipeline.set_save_pre_upscale, [save_pre_upscale_cb], None)
+        lora_slots_num.change(_ui_set_lora_slots, [lora_slots_num], lora_rows)
         refresh_btn.click(_refresh_models, [esrgan_dir_tb], [esrgan, paths_status])
         save_paths_btn.click(_save_paths_to_prefs,
                              [esrgan_dir_tb, ckpt_dir_tb, ckpt_extra_dir_tb, lora_dir_tb, wild_dir_tb],
