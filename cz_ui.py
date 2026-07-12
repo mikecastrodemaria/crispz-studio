@@ -2007,6 +2007,92 @@ def _ui_read_meta(path):
     return "\n\n".join(lines), meta
 
 
+# ============================ Presets (facon Fooocus) =========================
+# Un preset = un bundle de reglages (prompt, styles, taille, steps/CFG, sampler,
+# checkpoint, transformer, LoRAs) sauve en JSON dans presets/. Charger / creer / mettre
+# a jour / supprimer depuis l'onglet Settings.
+_PRESETS_DIR = os.path.join(HERE, "presets")
+_PRESET_KEYS = ["prompt", "negative", "styles", "width", "height", "steps", "guidance",
+                "sampler", "schedule", "image_number", "checkpoint", "transformer"]
+
+
+def _preset_sanitize(name):
+    n = "".join(c for c in (name or "") if c.isalnum() or c in " -_").strip()
+    return n or "preset"
+
+
+def list_presets():
+    try:
+        return sorted(f[:-5] for f in os.listdir(_PRESETS_DIR) if f.lower().endswith(".json"))
+    except Exception:
+        return []
+
+
+def _load_preset_file(name):
+    try:
+        with open(os.path.join(_PRESETS_DIR, _preset_sanitize(name) + ".json"), encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def _ui_preset_save(name, *vals):
+    """Sauve l'etat courant sous 'name'. vals = scalaires (_PRESET_KEYS) + lora_dds + lora_lws."""
+    name = _preset_sanitize(name)
+    nk = len(_PRESET_KEYS)
+    scalars, lora_vals = vals[:nk], vals[nk:]
+    half = len(lora_vals) // 2
+    dds, lws = lora_vals[:half], lora_vals[half:]
+    data = {k: v for k, v in zip(_PRESET_KEYS, scalars)}
+    data["loras"] = [[dds[i], float(lws[i])] for i in range(half)
+                     if dds[i] and dds[i] not in ("None", "none", "")]
+    try:
+        os.makedirs(_PRESETS_DIR, exist_ok=True)
+        with open(os.path.join(_PRESETS_DIR, name + ".json"), "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return gr.update(), f"Save failed: {e}"
+    return gr.update(choices=list_presets(), value=name), f"Preset '{name}' saved."
+
+
+def _ui_preset_load(name):
+    """Renvoie les gr.update pour tous les composants (scalaires + 10 LoRA dd + 10 poids)."""
+    data = _load_preset_file(name)
+    scal = [gr.update(value=data[k]) if k in data else gr.update() for k in _PRESET_KEYS]
+    loras = data.get("loras", []) or []
+    dd_up = [gr.update(value=(loras[i][0] if i < len(loras) else "None")) for i in range(MAX_LORA_SLOTS)]
+    w_up = [gr.update(value=(float(loras[i][1]) if i < len(loras) else float(cz_pipeline.LORA_WEIGHT)))
+            for i in range(MAX_LORA_SLOTS)]
+    return scal + dd_up + w_up
+
+
+def _ui_preset_delete(name):
+    try:
+        p = os.path.join(_PRESETS_DIR, _preset_sanitize(name) + ".json")
+        if os.path.isfile(p):
+            os.remove(p)
+    except Exception as e:
+        return gr.update(), f"Delete failed: {e}"
+    return gr.update(choices=list_presets(), value=None), f"Deleted '{_preset_sanitize(name)}'."
+
+
+def _ui_apply_ckpt_silent(name):
+    """Applique le checkpoint SANS toucher steps/guidance (le preset les a deja poses)."""
+    try:
+        return _apply_checkpoint(name)[0]
+    except Exception as e:
+        return f"Checkpoint apply failed: {e}"
+
+
+def _ui_apply_transformer_silent(repo):
+    if not (repo or "").strip():
+        return gr.update()
+    try:
+        return _apply_transformer_repo(repo)[0]
+    except Exception as e:
+        return f"Transformer apply failed: {e}"
+
+
 def build_ui():
     models = list_esrgan_models()
     default_model = DEFAULT_MODEL if DEFAULT_MODEL in models else (models[0] if models else None)
@@ -2287,6 +2373,22 @@ def build_ui():
             with gr.Column(scale=2, visible=False) as advanced_col:
                 with gr.Tabs():
                     with gr.Tab("Settings"):
+                        with gr.Accordion("⭐ Presets", open=False):
+                            gr.Markdown("*A preset bundles prompt, styles, size, steps/CFG, "
+                                        "sampler, checkpoint, transformer + LoRAs. Load applies "
+                                        "them (incl. the model). Create/Update save the current state.*")
+                            with gr.Row():
+                                preset_dd = gr.Dropdown(list_presets(), label="Preset", scale=3)
+                                preset_refresh_btn = gr.Button("↻", size="sm", scale=0, min_width=44)
+                                preset_load_btn = gr.Button("Load", size="sm", variant="primary", scale=1)
+                            with gr.Row():
+                                preset_name_tb = gr.Textbox(show_label=False, scale=2, container=False,
+                                                            placeholder="new preset name")
+                                preset_save_btn = gr.Button("Save as new", size="sm", scale=1)
+                                preset_update_btn = gr.Button("Update selected", size="sm", scale=1)
+                                preset_delete_btn = gr.Button("Delete", size="sm", variant="stop",
+                                                              scale=0, min_width=80)
+                            preset_status = gr.Markdown("")
                         performance = gr.Radio(list(PERFORMANCE),
                                                value=CONFIG.get("default_performance", "Turbo (8 steps)"),
                                                label="Performance",
@@ -2593,6 +2695,20 @@ def build_ui():
         lora_kw_btn.click(_ui_loras_keywords, lora_dds,
                           [lora_keywords_tb, lora_status])
         lora_kw_to_prompt_btn.click(_ui_kw_to_prompt, [prompt, lora_keywords_tb], [prompt])
+        # ----- Presets (Settings) -----
+        _preset_scalars = [prompt, negative, styles, width, height, gen_steps, guidance,
+                           sampler_dd, schedule_dd, image_number, ckpt_dd, transformer_tb]
+        _preset_io = _preset_scalars + lora_dds + lora_lws
+        preset_refresh_btn.click(lambda: gr.update(choices=list_presets()), None, [preset_dd])
+        preset_load_btn.click(_ui_preset_load, [preset_dd], _preset_io) \
+            .then(_ui_apply_ckpt_silent, [ckpt_dd], [ckpt_status]) \
+            .then(_ui_apply_transformer_silent, [transformer_tb], [ckpt_status]) \
+            .then(_apply_loras, _lora_slots, [lora_status]) \
+            .then(set_sampler, [sampler_dd], None) \
+            .then(set_schedule, [schedule_dd], None)
+        preset_save_btn.click(_ui_preset_save, [preset_name_tb] + _preset_io, [preset_dd, preset_status])
+        preset_update_btn.click(_ui_preset_save, [preset_dd] + _preset_io, [preset_dd, preset_status])
+        preset_delete_btn.click(_ui_preset_delete, [preset_dd], [preset_dd, preset_status])
         omni_model_tb.change(lambda r: (set_omni_model(r), f"Omni model set: {r or '(none)'}")[1],
                              [omni_model_tb], [omni_status])
         omni_check_btn.click(_ui_check_omni, None, [omni_status])

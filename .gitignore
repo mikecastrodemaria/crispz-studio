@@ -54,6 +54,10 @@ faceswap/
 wildcards/*.txt
 !wildcards/example.txt
 
+# --- Presets locaux (referencent tes modeles). On versionne juste l'exemple. ---
+presets/*.json
+!presets/example.json
+
 # --- Sorties + logs ---
 out/
 output/

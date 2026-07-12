@@ -1,0 +1,15 @@
+{
+  "prompt": "a serene mountain lake at sunrise, mist, cinematic lighting, highly detailed",
+  "negative": "",
+  "styles": [],
+  "width": 1024,
+  "height": 1024,
+  "steps": 8,
+  "guidance": 0.0,
+  "sampler": "euler",
+  "schedule": "sgm_uniform",
+  "image_number": 1,
+  "checkpoint": "Tongyi-MAI/Z-Image-Turbo",
+  "transformer": "",
+  "loras": []
+}
