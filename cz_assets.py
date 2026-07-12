@@ -18,7 +18,19 @@ padding:10px 14px;display:flex;gap:12px;align-items:center;border-bottom:1px sol
 header h1{font-size:15px;margin:0;font-weight:600}
 input,button,select{background:#141b29;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-size:13px}
 button{cursor:pointer}#count{color:var(--mut);font-size:12px}
-#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;padding:12px}
+#grid{flex:1;min-width:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;padding:12px}
+#wrap{display:flex;align-items:flex-start}
+#folders{width:190px;flex:0 0 190px;padding:8px;border-right:1px solid var(--line);
+position:sticky;top:53px;max-height:calc(100vh - 53px);overflow:auto}
+#folders .f{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:6px 8px;
+border-radius:6px;cursor:pointer;font-size:13px}
+#folders .f:hover{background:#1c2740}#folders .f.active{background:#3b4356}
+#folders .f.hidden-f{opacity:.55}
+#folders .f .cnt{color:var(--mut);font-size:11px;margin-right:4px}
+#folders .f .hb{display:none;background:#5a2230;border:1px solid #7a2e40;color:#fff;border-radius:4px;
+font-size:10px;padding:1px 6px;cursor:pointer}
+#folders .f:hover .hb{display:inline-block}
+#hiddenbtn.on{background:#3b4356;border-color:#5d6884}
 @keyframes cz-shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
 .cell{position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;cursor:zoom-in;border:1px solid var(--line);
 background:#11182a linear-gradient(100deg,#11182a 30%,#1c2740 50%,#11182a 70%);background-size:200% 100%;animation:cz-shim 1.3s linear infinite}
@@ -43,9 +55,9 @@ user-select:none;padding:0 14px;opacity:.7}.nav:hover{opacity:1}#prev{left:0}#ne
 </style></head><body>
 <header><h1>🖼️ crispz-studio</h1>
 <input id="q" placeholder="Search metadata (prompt, style, model, seed, sampler...)" style="flex:1;min-width:160px">
-<select id="dayf" title="Filter by day"></select>
+<button id="hiddenbtn" title="Show hidden folders">Hidden</button>
 <button id="blurbtn">Blur</button><span id="count"></span></header>
-<div id="grid"></div>
+<div id="wrap"><aside id="folders"></aside><div id="grid"></div></div>
 <div id="lb"><span id="close">&times;</span><span class="nav" id="prev">&#10094;</span>
 <span class="nav" id="next">&#10095;</span><div id="lbimg"><img id="big"></div>
 <div id="side"></div></div>
@@ -53,7 +65,7 @@ user-select:none;padding:0 14px;opacity:.7}.nav:hover{opacity:1}#prev{left:0}#ne
 let DATA=[],VIEW=[],cur=0;
 const grid=document.getElementById('grid'),lb=document.getElementById('lb'),big=document.getElementById('big'),
 side=document.getElementById('side'),q=document.getElementById('q'),cnt=document.getElementById('count'),
-dayf=document.getElementById('dayf');
+folders=document.getElementById('folders');
 function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function render(){grid.innerHTML='';VIEW.forEach((e,i)=>{const c=document.createElement('div');c.className='cell';
 const im=document.createElement('img');im.loading='lazy';
@@ -69,8 +81,11 @@ cnt.textContent=VIEW.length+' / '+DATA.length;}
 function hay(e){return (e.file+' '+(e.prompt||'')+' '+(e.negative||'')+' '+(e.mode||'')+' '+
 (e.seed||'')+' '+(e.steps||'')+' '+(e.guidance||'')+' '+(e.size||'')+' '+(e.model||'')+' '+
 ((e.loras||[]).join(' '))+' '+((e.styles||[]).join(' '))+' '+(e.sampler||'')+' '+(e.day||'')).toLowerCase();}
-function filter(){const s=q.value.toLowerCase().trim();const dv=dayf.value;
-VIEW=DATA.filter(e=>(!dv||e.day===dv)&&(!s||hay(e).includes(s)));render();}
+function filter(){const s=q.value.toLowerCase().trim();
+VIEW=DATA.filter(function(e){const d=e.day||'(root)';
+if(!showHidden&&hidden.has(d))return false;
+if(curFolder&&d!==curFolder)return false;
+if(s&&!hay(e).includes(s))return false;return true;});render();}
 function open(i){cur=i;const e=VIEW[i];big.src=encodeURI(e.file);
 let h='<h3>Prompt</h3><div class="v">'+esc(e.prompt||'(none)')+'</div>';
 if(e.negative)h+='<h3>Negative</h3><div class="v">'+esc(e.negative)+'</div>';
@@ -99,16 +114,31 @@ lb.onclick=ev=>{if(ev.target===lb||ev.target===big.parentNode)close();};
 document.addEventListener('keydown',ev=>{if(!lb.classList.contains('open'))return;
 if(ev.key==='Escape')close();if(ev.key==='ArrowLeft')document.getElementById('prev').click();
 if(ev.key==='ArrowRight')document.getElementById('next').click();});
-q.oninput=filter;dayf.onchange=function(){_dayUserSet=true;filter();};
+q.oninput=filter;
 document.getElementById('blurbtn').onclick=()=>document.body.classList.toggle('blur');
 function _today(){const d=new Date(),m=String(d.getMonth()+1).padStart(2,'0'),da=String(d.getDate()).padStart(2,'0');return d.getFullYear()+'-'+m+'-'+da;}
-var _dayUserSet=false;
-function fillDays(){const prev=dayf.value;const days=[...new Set(DATA.map(e=>e.day).filter(Boolean))].sort().reverse();
-dayf.innerHTML='<option value="">All days ('+days.length+')</option>'+days.map(d=>'<option value="'+esc(d)+'">'+esc(d)+'</option>').join('');
-if(!_dayUserSet){dayf.value=days.includes(_today())?_today():'';}
-else dayf.value=days.includes(prev)?prev:'';}
+// --- Sous-dossiers (sidebar) + hide, persistant en localStorage ---
+let curFolder='',showHidden=false,_folderUserSet=false,hidden=new Set();
+try{hidden=new Set(JSON.parse(localStorage.getItem('cz_ab_hidden')||'[]'));}catch(e){}
+function saveHidden(){try{localStorage.setItem('cz_ab_hidden',JSON.stringify([...hidden]));}catch(e){}}
+function renderFolders(){const c={};DATA.forEach(function(e){const d=e.day||'(root)';c[d]=(c[d]||0)+1;});
+const names=Object.keys(c).sort().reverse();
+if(!_folderUserSet&&!curFolder&&names.indexOf(_today())>=0)curFolder=_today();
+let h='<div class="f'+(curFolder===''?' active':'')+'" data-f=""><span>All</span><span class="cnt">'+DATA.length+'</span></div>';
+names.forEach(function(d){const isH=hidden.has(d);if(isH&&!showHidden)return;
+h+='<div class="f'+(curFolder===d?' active':'')+(isH?' hidden-f':'')+'" data-f="'+esc(d)+'">'+
+'<span>'+esc(d)+'</span><span><span class="cnt">'+c[d]+'</span>'+
+'<button class="hb" data-h="'+esc(d)+'">'+(isH?'show':'hide')+'</button></span></div>';});
+folders.innerHTML=h;}
+folders.onclick=function(ev){const hb=ev.target.closest('.hb');
+if(hb){const d=hb.getAttribute('data-h');if(hidden.has(d))hidden.delete(d);else hidden.add(d);saveHidden();
+if(curFolder===d&&hidden.has(d)&&!showHidden)curFolder='';renderFolders();filter();return;}
+const f=ev.target.closest('.f');if(!f)return;curFolder=f.getAttribute('data-f')||'';_folderUserSet=true;
+renderFolders();filter();};
+document.getElementById('hiddenbtn').onclick=function(){showHidden=!showHidden;
+this.classList.toggle('on',showHidden);renderFolders();filter();};
 var _gen='';
-function _apply(m){DATA=m.images||[];if(m.blur)document.body.classList.add('blur');_gen=m.generated||'';fillDays();filter();}
+function _apply(m){DATA=m.images||[];if(m.blur)document.body.classList.add('blur');_gen=m.generated||'';renderFolders();filter();}
 function _poll(n){if(n<=0)return;setTimeout(function(){
 fetch('_index/manifest.json?t='+Date.now()).then(r=>r.ok?r.json():null).then(m=>{
 if(m&&m.generated&&m.generated!==_gen)_apply(m);_poll(n-1);}).catch(()=>_poll(n-1));},2000);}
