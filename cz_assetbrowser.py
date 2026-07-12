@@ -141,6 +141,85 @@ def ab_open_fast(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=
     return os.path.join(d, "index.html")
 
 
+def _find_preview(safepath):
+    """Cherche une image de preview a cote d'un .safetensors (conventions Civitai)."""
+    base = os.path.splitext(safepath)[0]
+    for ext in (".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp",
+                ".png", ".jpg", ".jpeg", ".webp"):
+        if os.path.isfile(base + ext):
+            return base + ext
+    return None
+
+
+def _scan_catalog(model_dir, out_dir, kind):
+    """Scanne un dossier de modeles (.safetensors): nom, taille, preview eventuelle,
+    trigger words (LoRA). Genere les miniatures des previews en tache de fond.
+    Renvoie la liste d'entrees pour <kind>.json."""
+    if not model_dir or not os.path.isdir(model_dir):
+        return []
+    try:
+        from cz_pipeline import lora_keywords
+    except Exception:
+        def lora_keywords(_p):
+            return ""
+    entries, jobs = [], []
+    for root, dirs, files in os.walk(model_dir):
+        dirs[:] = [x for x in dirs if x not in ("_index", ".cache", "recipes")]
+        for f in files:
+            if not f.lower().endswith(".safetensors"):
+                continue
+            fp = os.path.join(root, f)
+            rel = os.path.relpath(fp, model_dir).replace("\\", "/")
+            sub = os.path.dirname(rel)
+            try:
+                size_mb = os.path.getsize(fp) / 1e6
+            except Exception:
+                size_mb = 0
+            prev = _find_preview(fp)
+            thumb, img = "", ""
+            if prev:
+                trel = "_index/thumbs/" + kind + "/" + os.path.splitext(rel)[0] + ".jpg"
+                jobs.append((prev, os.path.join(out_dir, trel)))
+                thumb = trel
+                img = "/gradio_api/file=" + os.path.abspath(prev).replace("\\", "/")
+            trig = ""
+            if kind == "loras":
+                try:
+                    trig = lora_keywords(fp) or ""
+                except Exception:
+                    trig = ""
+            entries.append({
+                "file": rel, "name": os.path.splitext(os.path.basename(f))[0],
+                "thumb": thumb, "img": img, "day": sub or "(root)",
+                "mode": kind[:-1], "size": f"{size_mb:.0f} MB", "prompt": trig,
+            })
+    entries.sort(key=lambda e: e["file"].lower())
+    if jobs:
+        threading.Thread(target=_ab_gen_thumbs, args=(jobs, 256, 85), daemon=True).start()
+    return entries
+
+
+def ab_build_catalog(output_dir, loras_dir, checkpoints_dir):
+    """Ecrit _index/loras.json et _index/models.json dans le dossier de sortie (pour les
+    onglets LoRAs / Models de l'Asset Browser)."""
+    d = _ab_resolve_dir(output_dir)
+    idx = os.path.join(d, "_index")
+    os.makedirs(idx, exist_ok=True)
+    for kind, mdir in (("loras", loras_dir), ("models", checkpoints_dir)):
+        try:
+            items = _scan_catalog(mdir, d, kind)
+        except Exception as e:
+            _dbg(f"catalog {kind} failed: {e}")
+            items = []
+        manifest = {"count": len(items), "kind": kind,
+                    "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "images": items}
+        with open(os.path.join(idx, kind + ".json"), "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False)
+        _log(f"asset-browser catalog: {kind} = {len(items)} item(s)")
+    return True
+
+
 def delete_asset(rel, output_dir=None):
     """Supprime une image du dossier de sortie (+ sidecar + thumbnail). 'rel' est le
     chemin relatif fourni par l'Asset Browser. Verifie que ca reste DANS le dossier."""

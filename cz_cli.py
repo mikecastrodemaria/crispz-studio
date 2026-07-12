@@ -584,9 +584,14 @@ def cli_main(argv=None):
     # Pas de --cli et pas d'entree -> UI
     if not args.cli and not args.input and not args.input_folder:
         _disable_brotli()  # evite le bug h11 'Content-Length' a l'envoi des resultats
+        # + dossiers modeles (LoRA/checkpoints) pour servir leurs previews dans l'Asset Browser
+        _model_dirs = [p for p in (getattr(cz_pipeline, "LORAS_DIR", ""),
+                                   getattr(cz_pipeline, "CHECKPOINTS_DIR", ""),
+                                   getattr(cz_pipeline, "CHECKPOINTS_EXTRA_DIR", ""))
+                       if p and os.path.isdir(p)]
         build_ui().launch(allowed_paths=[os.path.join(HERE, "styles", "samples"),
                                          os.path.join(HERE, "tags"),
-                                         _ab_resolve_dir(DEFAULT_OUTPUT_DIR)])
+                                         _ab_resolve_dir(DEFAULT_OUTPUT_DIR)] + _model_dirs)
         return 0
 
     if not models and not args.no_esrgan:

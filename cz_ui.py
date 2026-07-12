@@ -1057,7 +1057,8 @@ def _gallery_delete(path, output_dir, sort="Newest", filt=""):
 # Memes options (enabled, generate_thumbnails, thumbnail_size/quality, blur).
 # ----------------------------------------------------------------------------
 # Asset Browser (SPA + reindex + thumbnails + delete) -> cz_assetbrowser.py.
-from cz_assetbrowser import _ab_get, _ab_resolve_dir, ab_reindex, ab_open_fast, delete_asset  # noqa: E402,F401
+from cz_assetbrowser import (_ab_get, _ab_resolve_dir, ab_reindex, ab_open_fast,  # noqa: E402,F401
+                             ab_build_catalog, delete_asset)
 
 
 # Assets statiques (SPA Asset Browser, JS d'interface, CSS) -> cz_assets.py
@@ -1087,6 +1088,13 @@ def _ui_gallery_open(output_dir):
                            bool(_ab_get("blur_thumbnails")), bool(_ab_get("generate_thumbnails")))
     except Exception as e:
         return f"Gallery open failed: {e}", ""
+    # Catalogue LoRAs / Models (onglets de l'Asset Browser) construit en tache de fond.
+    try:
+        threading.Thread(target=ab_build_catalog,
+                         args=(output_dir, cz_pipeline.LORAS_DIR, cz_pipeline.CHECKPOINTS_DIR),
+                         daemon=True).start()
+    except Exception as e:
+        _dbg(f"catalog build spawn failed: {e}")
     url = "/gradio_api/file=" + os.path.abspath(idx).replace("\\", "/")
     return "Opening Asset Browser in a new tab (indexing in background)...", url
 

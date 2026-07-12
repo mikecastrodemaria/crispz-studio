@@ -31,6 +31,11 @@ border-radius:6px;cursor:pointer;font-size:13px}
 font-size:10px;padding:1px 6px;cursor:pointer}
 #folders .f:hover .hb{display:inline-block}
 #hiddenbtn.on{background:#3b4356;border-color:#5d6884}
+.src.active{background:#7a5cff2b;border-color:#7a5cff;color:#fff}
+.cell.ph{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+padding:8px;background:#141b29;animation:none}
+.cell.ph .ic{font-size:30px;opacity:.5;margin-bottom:6px}
+.cell.ph .n{font-size:11px;color:#cfd8e6;word-break:break-word;line-height:1.25}
 @keyframes cz-shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
 .cell{position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;cursor:zoom-in;border:1px solid var(--line);
 background:#11182a linear-gradient(100deg,#11182a 30%,#1c2740 50%,#11182a 70%);background-size:200% 100%;animation:cz-shim 1.3s linear infinite}
@@ -55,6 +60,9 @@ user-select:none;padding:0 14px;opacity:.7}.nav:hover{opacity:1}#prev{left:0}#ne
 </style></head><body>
 <header><h1>🖼️ crispz-studio</h1>
 <input id="q" placeholder="Search metadata (prompt, style, model, seed, sampler...)" style="flex:1;min-width:160px">
+<button class="src active" data-s="outputs">Outputs</button>
+<button class="src" data-s="loras">LoRAs</button>
+<button class="src" data-s="models">Models</button>
 <button id="hiddenbtn" title="Show hidden folders">Hidden</button>
 <button id="blurbtn">Blur</button><span id="count"></span></header>
 <div id="wrap"><aside id="folders"></aside><div id="grid"></div></div>
@@ -67,15 +75,20 @@ const grid=document.getElementById('grid'),lb=document.getElementById('lb'),big=
 side=document.getElementById('side'),q=document.getElementById('q'),cnt=document.getElementById('count'),
 folders=document.getElementById('folders');
 function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
-function render(){grid.innerHTML='';VIEW.forEach((e,i)=>{const c=document.createElement('div');c.className='cell';
+function render(){grid.innerHTML='';VIEW.forEach((e,i)=>{const c=document.createElement('div');
+const label=e.name||e.file;const hasImg=!!(e.thumb||e.img)||curSource==='outputs';
+if(!hasImg){c.className='cell ph loaded';
+c.innerHTML='<div class="ic">'+(e.mode==='lora'?'🧩':'📦')+'</div><div class="n">'+esc(label)+'</div>';
+c.onclick=()=>open(i);grid.appendChild(c);return;}
+c.className='cell';
 const im=document.createElement('img');im.loading='lazy';
-const thumb=encodeURI(e.thumb),full=encodeURI(e.file);let tries=12;
+const thumb=encodeURI(e.thumb||e.img||e.file),full=encodeURI(e.img||e.file);let tries=12;
 im.onload=function(){im.classList.add('loaded');c.classList.add('loaded');};
 im.onerror=function(){if(thumb!==full&&tries>0){tries--;
 setTimeout(function(){im.src=thumb+(thumb.indexOf('?')<0?'?r=':'&r=')+Date.now();},2500);}
 else{im.onerror=null;im.src=full;}};
 im.src=thumb;
-const cap=document.createElement('div');cap.className='cap';cap.textContent=e.file;
+const cap=document.createElement('div');cap.className='cap';cap.textContent=label;
 c.appendChild(im);c.appendChild(cap);c.onclick=()=>open(i);grid.appendChild(c);});
 cnt.textContent=VIEW.length+' / '+DATA.length;}
 function hay(e){return (e.file+' '+(e.prompt||'')+' '+(e.negative||'')+' '+(e.mode||'')+' '+
@@ -86,18 +99,22 @@ VIEW=DATA.filter(function(e){const d=e.day||'(root)';
 if(!showHidden&&hidden.has(d))return false;
 if(curFolder&&d!==curFolder)return false;
 if(s&&!hay(e).includes(s))return false;return true;});render();}
-function open(i){cur=i;const e=VIEW[i];big.src=encodeURI(e.file);
-let h='<h3>Prompt</h3><div class="v">'+esc(e.prompt||'(none)')+'</div>';
+function open(i){cur=i;const e=VIEW[i];const isOut=curSource==='outputs';
+const imgUrl=e.img||(isOut?e.file:'');
+if(imgUrl){big.style.display='';big.src=encodeURI(imgUrl);}else{big.style.display='none';}
+let h='';
+if(e.name&&e.name!==e.file)h+='<h3>Name</h3><div class="v">'+esc(e.name)+'</div>';
+h+='<h3>'+(isOut?'Prompt':'Trigger words')+'</h3><div class="v">'+esc(e.prompt||'(none)')+'</div>';
 if(e.negative)h+='<h3>Negative</h3><div class="v">'+esc(e.negative)+'</div>';
 h+='<h3>Info</h3><div class="v">';
 ['mode','seed','steps','guidance','size','model','sampler','day','date'].forEach(k=>{if(e[k]!=null&&e[k]!=='')h+=k+': '+esc(e[k])+'\n';});
 if(e.styles&&e.styles.length)h+='styles: '+esc(e.styles.join(', '))+'\n';
 if(e.loras&&e.loras.length)h+='loras: '+esc(e.loras.join(', '))+'\n';
 h+='file: '+esc(e.file)+'</div>';
-h+='<button onclick="cp(\''+'prompt'+'\')">Copy prompt</button>';
+h+='<button onclick="cp(\''+'prompt'+'\')">Copy '+(isOut?'prompt':'triggers')+'</button>';
 h+='<button onclick="cp(\''+'all'+'\')">Copy all</button>';
-h+='<a href="'+encodeURI(e.file)+'" download="'+esc(e.file.split('/').pop())+'" style="margin-left:6px;color:#9fb3d6">Download</a>';
-h+='<button onclick="delAsset()" style="margin-left:6px;background:#5a2230;border-color:#7a2e40">Delete</button>';
+if(isOut){h+='<a href="'+encodeURI(e.file)+'" download="'+esc(e.file.split('/').pop())+'" style="margin-left:6px;color:#9fb3d6">Download</a>';
+h+='<button onclick="delAsset()" style="margin-left:6px;background:#5a2230;border-color:#7a2e40">Delete</button>';}
 side.innerHTML=h;lb.classList.add('open');}
 function cp(what){const e=VIEW[cur];let t=e.prompt||'';if(what==='all')t=JSON.stringify(e,null,2);
 navigator.clipboard.writeText(t).catch(()=>{});}
@@ -118,7 +135,7 @@ q.oninput=filter;
 document.getElementById('blurbtn').onclick=()=>document.body.classList.toggle('blur');
 function _today(){const d=new Date(),m=String(d.getMonth()+1).padStart(2,'0'),da=String(d.getDate()).padStart(2,'0');return d.getFullYear()+'-'+m+'-'+da;}
 // --- Sous-dossiers (sidebar) + hide, persistant en localStorage ---
-let curFolder='',showHidden=false,_folderUserSet=false,hidden=new Set();
+let curFolder='',showHidden=false,_folderUserSet=false,curSource='outputs',hidden=new Set();
 try{hidden=new Set(JSON.parse(localStorage.getItem('cz_ab_hidden')||'[]'));}catch(e){}
 function saveHidden(){try{localStorage.setItem('cz_ab_hidden',JSON.stringify([...hidden]));}catch(e){}}
 function renderFolders(){const c={};DATA.forEach(function(e){const d=e.day||'(root)';c[d]=(c[d]||0)+1;});
@@ -137,13 +154,19 @@ const f=ev.target.closest('.f');if(!f)return;curFolder=f.getAttribute('data-f')|
 renderFolders();filter();};
 document.getElementById('hiddenbtn').onclick=function(){showHidden=!showHidden;
 this.classList.toggle('on',showHidden);renderFolders();filter();};
-var _gen='';
-function _apply(m){DATA=m.images||[];if(m.blur)document.body.classList.add('blur');_gen=m.generated||'';renderFolders();filter();}
+var _gen='';var _srcUrls={outputs:'_index/manifest.json',loras:'_index/loras.json',models:'_index/models.json'};
+function _apply(m){DATA=m.images||[];if(m.blur)document.body.classList.add('blur');renderFolders();filter();}
+function loadSource(src){curSource=src;_folderUserSet=false;curFolder='';
+[].slice.call(document.querySelectorAll('.src')).forEach(function(b){b.classList.toggle('active',b.getAttribute('data-s')===src);});
+fetch(_srcUrls[src]+'?t='+Date.now()).then(function(r){return r.ok?r.json():null;}).then(function(m){
+if(m){if(src==='outputs')_gen=m.generated||'';_apply(m);}
+else{DATA=[];renderFolders();grid.innerHTML='<p style="padding:20px;color:#8b98ad">No '+src+' catalog yet (building in background). Reopen the Asset Browser in a few seconds.</p>';cnt.textContent='0 / 0';}});}
+[].slice.call(document.querySelectorAll('.src')).forEach(function(b){b.onclick=function(){loadSource(b.getAttribute('data-s'));};});
 function _poll(n){if(n<=0)return;setTimeout(function(){
 fetch('_index/manifest.json?t='+Date.now()).then(r=>r.ok?r.json():null).then(m=>{
-if(m&&m.generated&&m.generated!==_gen)_apply(m);_poll(n-1);}).catch(()=>_poll(n-1));},2000);}
+if(m&&m.generated&&m.generated!==_gen&&curSource==='outputs'){_gen=m.generated;_apply(m);}_poll(n-1);}).catch(()=>_poll(n-1));},2000);}
 function _load(tries){fetch('_index/manifest.json?t='+Date.now()).then(r=>{if(!r.ok)throw 0;return r.json();})
-.then(m=>{_apply(m);_poll(10);})
+.then(m=>{_gen=m.generated||'';_apply(m);_poll(10);})
 .catch(e=>{if(tries>0){grid.innerHTML='<p style="padding:20px;color:#8b98ad">Indexing…</p>';setTimeout(()=>_load(tries-1),1200);}
 else grid.innerHTML='<p style="padding:20px;color:#8b98ad">No manifest. Click Reindex in crispz-studio.</p>';});}
 _load(25);
