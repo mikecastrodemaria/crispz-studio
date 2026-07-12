@@ -132,6 +132,9 @@ default_output_dir      Folder for "local"/"custom" save modes.
 default_output_format   "png" | "jpg" | "webp".
 date_subfolders         true (default) -> save into out/YYYY-MM-DD/ subfolders
                         (like Fooocus). The galleries/Asset Browser scan recursively.
+save_pre_upscale        false (default). true -> in txt2img + auto-upscale, ALSO save the
+                        original txt2img image (before ESRGAN/refine), tagged 'txt2img',
+                        next to the final upscaled one. Toggle in Advanced > Generation.
 wildcards_in_order      false (default) -> __name__ picks a RANDOM line (reproducible per
                         seed). true -> in a batch, image i takes line (i % nb_lines) of the
                         wildcard file (deterministic sweep). Toggle in Advanced > Generation.

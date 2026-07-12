@@ -1287,17 +1287,31 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                                  upscale=False, steps=refine_steps)
             total_t += t["txt2img"]
             tag, gmode = "txt2img", "txt2img"
+            base_img = img   # image txt2img avant un eventuel upscale
             # Chainage optionnel: upscale (ESRGAN + refine) sur l'image generee, sans
             # action manuelle. Reutilise le meme pipeline que l'onglet Upscale/img2img.
             if auto_upscale:
                 progress((i + 0.5) / n, desc=f"Upscaling {i + 1}/{n}")
                 eff_denoise = float(denoise) if do_refine else 0.0
                 img, ut = process_one(
-                    img, esrgan_model, factor, eff_denoise, refine_steps, fp, s,
+                    base_img, esrgan_model, factor, eff_denoise, refine_steps, fp, s,
                     tile, overlap, refine_tile=refine_tile, refine_overlap=refine_overlap,
                     do_esrgan=bool(do_esrgan), refine_first=bool(refine_first))
                 total_t += ut.get("esrgan", 0.0) + ut.get("refine", 0.0)
                 tag, gmode = "upscaled", "txt2img+upscale"
+                # Option: sauver AUSSI l'image txt2img d'origine (avant l'upscale).
+                if cz_pipeline._SAVE_PRE_UPSCALE and save_mode != "display":
+                    try:
+                        pre_dst = build_output_path(None, save_mode, output_dir, output_format,
+                                                    tag="txt2img", seed=s, size=base_img.size,
+                                                    index=(i + 1 if n > 1 else 0))
+                        if pre_dst:
+                            save_image(base_img, pre_dst, output_format, meta=_gen_meta(
+                                "txt2img", fp, fn, s, gen_steps, cz_pipeline.GUIDANCE,
+                                base_img.size, styles=chosen))
+                            _dbg(f"saved pre-upscale: {pre_dst}")
+                    except Exception as e:
+                        _dbg(f"pre-upscale save failed: {e}")
             images.append(img)
             dst = None
             if save_mode != "display":
@@ -2497,6 +2511,11 @@ def build_ui():
                             info="Batch: each image takes the NEXT line of the wildcard file "
                                  "(deterministic) instead of a random one.")
                         wild_order_status = gr.Markdown("")
+                        save_pre_upscale_cb = gr.Checkbox(
+                            value=bool(CONFIG.get("save_pre_upscale", False)),
+                            label="Also save pre-upscale image",
+                            info="In txt2img + auto-upscale, also save the original txt2img image "
+                                 "(before ESRGAN/refine), tagged 'txt2img'.")
 
         # Toggles facon Fooocus
         advanced_cb.change(lambda v: gr.update(visible=bool(v)), advanced_cb, advanced_col)
@@ -2521,6 +2540,7 @@ def build_ui():
         hf_token_save_btn.click(_save_hf_token, [hf_token_tb], [hf_token_tb, hf_token_status])
         meta_scheme_dd.change(set_metadata_scheme, [meta_scheme_dd], [meta_scheme_status])
         wildcards_order_cb.change(set_wildcards_in_order, [wildcards_order_cb], [wild_order_status])
+        save_pre_upscale_cb.change(cz_pipeline.set_save_pre_upscale, [save_pre_upscale_cb], None)
         refresh_btn.click(_refresh_models, [esrgan_dir_tb], [esrgan, paths_status])
         save_paths_btn.click(_save_paths_to_prefs,
                              [esrgan_dir_tb, ckpt_dir_tb, ckpt_extra_dir_tb, lora_dir_tb, wild_dir_tb],

@@ -125,11 +125,18 @@ _STOP = False
 #  _NO_SEED_INCREMENT = True -> tout un batch utilise le meme seed (pas de +i par image).
 _LAST_SEED = -1
 _NO_SEED_INCREMENT = False
+# True -> en txt2img+upscale, sauve AUSSI l'image txt2img d'origine (avant l'upscale).
+_SAVE_PRE_UPSCALE = bool(CONFIG.get("save_pre_upscale", False))
 
 
 def set_no_seed_increment(v):
     global _NO_SEED_INCREMENT
     _NO_SEED_INCREMENT = bool(v)
+
+
+def set_save_pre_upscale(v):
+    global _SAVE_PRE_UPSCALE
+    _SAVE_PRE_UPSCALE = bool(v)
 
 
 def set_guidance(g):

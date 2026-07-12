@@ -87,6 +87,7 @@
     "date_subfolders": true,
     "metadata_scheme": "crispz",
     "wildcards_in_order": false,
+    "save_pre_upscale": false,
     "asset_browser": {
         "enabled": false,
         "generate_thumbnails": true,
