@@ -128,7 +128,15 @@ faceswap_model_url      Optional URL to auto-download inswapper_128.onnx once (i
                         'faceswap' folder) if the model is not found locally.
 
 default_save_mode       "display" (no save) | "local" | "alongside" | "custom".
-default_output_dir      Folder for "local"/"custom" save modes.
+default_output_dir      Folder for "local"/"custom" save modes. Absolute paths are
+                        allowed (e.g. another drive). WINDOWS PATHS IN JSON: use "/" or
+                        "\\" -- a single "\" is an illegal JSON escape and makes the WHOLE
+                        config.txt fail to load silently (every setting falls back to
+                        config-sample.txt). Right: "E:/images/out" or
+                        "E:\\images\\out". Wrong: "E:\images\out".
+                        Changing the "Output folder" field in the UI at runtime is fine
+                        too: the folder is auto-authorised for the Asset Browser (no more
+                        "File not allowed"), no restart needed.
 default_output_format   "png" | "jpg" | "webp".
 date_subfolders         true (default) -> save into out/YYYY-MM-DD/ subfolders
                         (like Fooocus). The galleries/Asset Browser scan recursively.

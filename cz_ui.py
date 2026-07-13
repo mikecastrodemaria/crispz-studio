@@ -518,8 +518,13 @@ def _refresh_checkpoints(new_dir, extra_dir=""):
     except Exception:
         pass
     cks = list_checkpoints()
+    n_new = _ensure_model_presets(cks)  # preset basique pour tout nouveau modele local
     locs = " + ".join(d for d in (cz_pipeline.CHECKPOINTS_DIR, cz_pipeline.CHECKPOINTS_EXTRA_DIR) if d)
-    return gr.update(choices=ZIMAGE_BASE_REPOS + cks), f"{len(cks)} checkpoint(s) in {locs} (saved)."
+    msg = f"{len(cks)} checkpoint(s) in {locs} (saved)."
+    if n_new:
+        msg += f" +{n_new} preset(s) auto-created."
+    # 3e sortie: rafraichit le menu Presets (nouveaux modeles -> nouveaux presets).
+    return (gr.update(choices=ZIMAGE_BASE_REPOS + cks), msg, gr.update(choices=list_presets()))
 
 
 def _performance_label_for(steps, guidance):
@@ -1077,8 +1082,30 @@ from cz_assetbrowser import (_ab_get, _ab_resolve_dir, ab_reindex, ab_open_fast,
 from cz_assets import ASSET_BROWSER_HTML, CZ_JS, FOOOCUS_CSS  # noqa: E402
 
 
+# Reference vers le Blocks en cours (renseignee par build_ui), pour autoriser a la
+# volee des dossiers de sortie choisis dans l'UI. Gradio fige `allowed_paths` au
+# lancement, mais relit `blocks.allowed_paths` a CHAQUE requete de fichier -> on peut
+# y ajouter le dossier courant au moment d'ouvrir l'Asset Browser (sans redemarrage).
+_DEMO = None
+
+
+def _allow_runtime_path(output_dir):
+    """Ajoute le dossier de sortie resolu aux `allowed_paths` du Blocks en cours,
+    afin que Gradio accepte de servir index.html / miniatures s'il a ete change dans
+    l'UI apres le lancement. Sans effet si le Blocks n'est pas encore lance."""
+    try:
+        d = os.path.abspath(_ab_resolve_dir(output_dir))
+        paths = getattr(_DEMO, "allowed_paths", None)
+        if paths is not None and d not in paths:
+            paths.append(d)
+            _dbg(f"asset-browser: allowed runtime path {d}")
+    except Exception as e:
+        _dbg(f"allow runtime path failed: {e}")
+
+
 def _ui_ab_reindex(output_dir, thumb_size, quality, blur, gen_thumbs):
     """Bouton FORCE: regenere TOUTES les miniatures (synchrone) + lien."""
+    _allow_runtime_path(output_dir)
     try:
         n, idx, _ = ab_reindex(output_dir, thumb_size, quality, blur, gen_thumbs,
                                background_thumbs=False)
@@ -1095,6 +1122,7 @@ def _ui_gallery_open(output_dir):
     """Ouverture INSTANTANEE: ecrit index.html et ouvre l'onglet tout de suite, puis
     (re)indexe (manifest + miniatures) en tache de fond. La SPA charge le manifest
     existant immediatement et se rafraichit quand le nouvel index est pret."""
+    _allow_runtime_path(output_dir)
     try:
         idx = ab_open_fast(output_dir, _ab_get("thumbnail_size"), _ab_get("thumbnail_quality"),
                            bool(_ab_get("blur_thumbnails")), bool(_ab_get("generate_thumbnails")))
@@ -2036,6 +2064,50 @@ def _load_preset_file(name):
         return {}
 
 
+def _ensure_model_presets(checkpoints):
+    """Cree un preset 'basique' presets/<stem>.json pour chaque checkpoint LOCAL
+    chargeable (issu de list_checkpoints) qui n'en a pas encore. steps/CFG deduits par
+    profile_for_model (comme la selection d'un modele), le reste = defauts de config.
+    Ne modifie JAMAIS un preset existant. Renvoie le nombre de presets crees.
+    Appele au demarrage et a chaque refresh/filtrage des checkpoints."""
+    created = 0
+    try:
+        existing = set(list_presets())
+    except Exception:
+        existing = set()
+    for f in checkpoints or []:
+        # Ignore les repos de base HF (Tongyi-MAI/...) : ce ne sont pas des fichiers locaux.
+        if not isinstance(f, str) or f in ZIMAGE_BASE_REPOS or "/" in f or "\\" in f:
+            continue
+        name = _preset_sanitize(os.path.splitext(f)[0])
+        if name in existing:
+            continue
+        steps, g = profile_for_model(f)
+        data = {
+            "prompt": "",
+            "negative": CONFIG.get("default_negative_prompt", "") or "",
+            "styles": list(CONFIG.get("default_styles", []) or []),
+            "width": int(CONFIG.get("default_width", 1024)),
+            "height": int(CONFIG.get("default_height", 1024)),
+            "steps": steps, "guidance": g,
+            "sampler": (CONFIG.get("default_sampler") or "euler").strip().lower(),
+            "schedule": (CONFIG.get("default_schedule") or "sgm_uniform").strip().lower(),
+            "image_number": int(CONFIG.get("default_image_number", 1)),
+            "checkpoint": f, "transformer": "", "loras": [],
+        }
+        try:
+            os.makedirs(_PRESETS_DIR, exist_ok=True)
+            with open(os.path.join(_PRESETS_DIR, name + ".json"), "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2, ensure_ascii=False)
+            existing.add(name)
+            created += 1
+        except Exception as e:
+            _dbg(f"auto-preset failed for {f}: {e}")
+    if created:
+        _log(f"presets: auto-created {created} basic model preset(s)")
+    return created
+
+
 def _ui_preset_save(name, *vals):
     """Sauve l'etat courant sous 'name'. vals = scalaires (_PRESET_KEYS) + lora_dds + lora_lws."""
     name = _preset_sanitize(name)
@@ -2377,6 +2449,9 @@ def build_ui():
                             gr.Markdown("*A preset bundles prompt, styles, size, steps/CFG, "
                                         "sampler, checkpoint, transformer + LoRAs. Load applies "
                                         "them (incl. the model). Create/Update save the current state.*")
+                            # Auto-cree un preset basique par modele local avant de peupler
+                            # le menu (les modeles FP8/INT8-INT4 sont deja exclus par la liste).
+                            _ensure_model_presets(list_checkpoints())
                             with gr.Row():
                                 preset_dd = gr.Dropdown(list_presets(), label="Preset", scale=3)
                                 preset_refresh_btn = gr.Button("↻", size="sm", scale=0, min_width=44)
@@ -2681,7 +2756,8 @@ def build_ui():
         wild_save_btn.click(_ui_wild_save, [wild_dd, wild_editor], [wild_status])
         wild_create_btn.click(_ui_wild_create, [wild_new_name, wild_editor],
                               [wild_dd, wild_status, wild_new_name])
-        ckpt_refresh_btn.click(_refresh_checkpoints, [ckpt_dir_tb, ckpt_extra_dir_tb], [ckpt_dd, ckpt_status])
+        ckpt_refresh_btn.click(_refresh_checkpoints, [ckpt_dir_tb, ckpt_extra_dir_tb],
+                               [ckpt_dd, ckpt_status, preset_dd])
         ckpt_dd.change(_apply_checkpoint, [ckpt_dd], [ckpt_status, gen_steps, guidance, performance])
         transformer_apply_btn.click(_apply_transformer_repo, [transformer_tb],
                                     [ckpt_status, gen_steps, guidance, performance])
@@ -2800,5 +2876,7 @@ def build_ui():
             _ui_compose, [cref1, cref2, cref3, cref4, ollama_model, ollama_url],
             [prompt, compose_status]
         ).then(_ui_generate, inputs=_gen_inputs, outputs=_gen_outputs)
+    global _DEMO
+    _DEMO = demo  # pour autoriser a la volee les dossiers de sortie changes dans l'UI
     return demo
 

@@ -40,10 +40,15 @@ SwarmUI. On top of crispz's upscaler it adds:
   (Turbo / Z-Image) with single-file `.safetensors` from a main **and** an optional
   extra folder, a **Transformer override** (diffusers repo/folder, e.g. Juggernaut-Z),
   and **multi-LoRA** (configurable **1–10 slots** + trigger words). Picking a model also
-  auto-syncs the Performance preset. FP8 checkpoints are skipped (diffusers can't load them).
+  auto-syncs the Performance preset. FP8 and INT8/INT4-quantized checkpoints are skipped
+  (diffusers can't load them) - use the BF16/FP16 build.
 - **Presets (Fooocus-style)** (Settings > ⭐ Presets): **save / load / update / delete**
   presets — a preset bundles prompt, styles, size, steps/CFG, sampler, checkpoint,
   transformer + LoRAs, and **Load** switches the model/LoRAs too. Stored in `presets/*.json`.
+  A **basic preset is auto-created for every loadable model** (on startup and when you
+  Refresh the checkpoint list) if it doesn't already exist yet — named after the model,
+  with steps/CFG from its profile. Existing presets are never overwritten; skipped
+  FP8/INT8-INT4 models get none.
 - **Seed**: **♻️ Reuse last seed** (refills the real seed of the previous render) + **Fix
   seed** (no +1 per image). A random `-1` seed is resolved to a concrete value so it is
   actually saved in the metadata.
@@ -65,7 +70,10 @@ SwarmUI. On top of crispz's upscaler it adds:
   **hide** + a **Hidden** toggle (persisted), **defaults to today**; **metadata keyword
   search**, per-image copy/delete, NSFW blur; and **Outputs / LoRAs / Models** source tabs
   (models show a Civitai preview if one sits next to the `.safetensors`, else a placeholder
-  + trigger words). Plus a per-session history in the app.
+  + trigger words). Plus a per-session history in the app. The **Output folder** can point
+  anywhere (even another drive); a folder typed into the UI at runtime is auto-authorised,
+  so the browser opens without a Gradio *"File not allowed"* error. (In `config.txt`, write
+  Windows paths with `/` or `\\` — a single `\` is an illegal JSON escape.)
 - **Metadata saved** with every image: PNG text chunk + EXIF (jpg/webp) + `.json`
   sidecar — prompt, negative, seed, steps, guidance, size, model, LoRAs, **applied
   style names**, and the **sampler/schedule**. **Dated, unique filenames** (date +
@@ -401,8 +409,9 @@ Juggernaut-Z is a **Z-Image Base** fine-tune → set **Performance = "Base CFG"*
 
 **Gotchas**
 
-- Checkpoints must be **BF16/FP16**. FP8 / GGUF / SVDQ (ComfyUI) variants do **not**
-  load in diffusers.
+- Checkpoints must be **BF16/FP16**. FP8 / INT8-INT4 / GGUF / SVDQ (ComfyUI) variants
+  do **not** load in diffusers and are **auto-hidden** from the checkpoint list (a line
+  is logged: `checkpoint skipped (FP8 | INT8/INT4 quantized, ...)`). Pick the BF16 build.
 - If the checkpoint is a **Z-Image Base** model (not Turbo), set **Performance →
   "Base CFG (28 steps)"** (guidance ~4, more steps), otherwise the result is flat.
 - Verify what loaded with `run.bat --debug`:
