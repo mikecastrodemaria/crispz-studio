@@ -342,21 +342,40 @@ def set_zimage_transformer(path):
         _log(f"Z-Image transformer -> {path or '(repo de base)'} -> will reload")
 
 
-def _safetensors_is_fp8(path):
-    """Vrai si le .safetensors contient des tenseurs FP8 (F8_E4M3/E5M2) -> ne charge
-    pas dans diffusers. Lit juste l'en-tete (rapide)."""
+def _safetensors_unsupported(path):
+    """Renvoie une raison (str) si le .safetensors n'est PAS chargeable par diffusers,
+    sinon None. Lit juste l'en-tete (rapide). Deux cas non supportes:
+      - FP8 (F8_E4M3 / F8_E5M2) -> "FP8"
+      - quantifie INT8/INT4 facon ComfyUI (tenseurs I8/U8 + facteurs 'weight_scale')
+        -> "INT8/INT4 quantized". diffusers ne dequantifie pas ce schema.
+    Prendre le build BF16/FP16 non quantifie."""
     try:
         import struct
         with open(path, "rb") as f:
             n = struct.unpack("<Q", f.read(8))[0]
-            hdr = json.loads(f.read(min(n, 2_000_000)).decode("utf-8", "ignore"))
+            hdr = json.loads(f.read(min(n, 3_000_000)).decode("utf-8", "ignore"))
+        has_fp8 = False
+        has_int = False
+        has_scale = False
         for k, v in hdr.items():
-            if k != "__metadata__" and isinstance(v, dict):
-                if str(v.get("dtype", "")).upper().startswith("F8"):
-                    return True
+            if k == "__metadata__" or not isinstance(v, dict):
+                continue
+            dt = str(v.get("dtype", "")).upper()
+            if dt.startswith("F8"):
+                has_fp8 = True
+            elif dt in ("I8", "I4", "U8", "U4", "UINT8", "INT8"):
+                has_int = True
+            if k.endswith("weight_scale") or k.endswith("scale_weight"):
+                has_scale = True
+        if has_fp8:
+            return "FP8"
+        # Les dtypes entiers bas seuls ne suffisent pas (evite les faux positifs sur un
+        # buffer U8 isole): on exige les facteurs de dequantification 'weight_scale'.
+        if has_int and has_scale:
+            return "INT8/INT4 quantized"
     except Exception:
         pass
-    return False
+    return None
 
 
 def _checkpoint_dirs():
@@ -370,9 +389,9 @@ def _checkpoint_dirs():
 
 def list_checkpoints():
     """Modeles Z-Image single-file (.safetensors) des dossiers checkpoints (principal +
-    extra, fusionnes dans une seule liste). Exclut les checkpoints FP8 (non charges par
-    diffusers; prendre la version BF16/FP16). En cas de meme nom de fichier, le dossier
-    principal a la priorite."""
+    extra, fusionnes dans une seule liste). Exclut les checkpoints non chargeables par
+    diffusers -- FP8 et INT8/INT4 quantifies facon ComfyUI (prendre la version BF16/FP16).
+    En cas de meme nom de fichier, le dossier principal a la priorite."""
     out = []
     seen = set()
     for d in _checkpoint_dirs():
@@ -383,9 +402,12 @@ def list_checkpoints():
                 continue
             if not f.lower().endswith((".safetensors", ".ckpt", ".pt", ".sft")):
                 continue
-            if f.lower().endswith(".safetensors") and _safetensors_is_fp8(os.path.join(d, f)):
-                _log(f"checkpoint skipped (FP8, not supported by diffusers): {f}")
-                continue
+            if f.lower().endswith(".safetensors"):
+                reason = _safetensors_unsupported(os.path.join(d, f))
+                if reason:
+                    _log(f"checkpoint skipped ({reason}, not loadable by diffusers; "
+                         f"use the BF16/FP16 build): {f}")
+                    continue
             seen.add(f)
             out.append(f)
     return sorted(out)
