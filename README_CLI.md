@@ -116,6 +116,36 @@ python app.py --cli -i in.png --factor 4 --denoise 0.30 --steps 12 \
     --refine-tile 1024 --refine-overlap 128 --save-mode local --output-dir out
 ```
 
+## Batch CivitAI enrichment  — `cz_civitai_batch.py` (standalone, runs in parallel)
+
+Fetch the **missing** CivitAI info (preview + trigger words + example prompts) for every
+model in your LoRA / checkpoint folders, and flag models that have a **newer version** on
+CivitAI. This is a separate script (no torch import → starts instantly); the Asset
+Browser's **🔄 Fetch all missing** button runs the exact same core.
+
+```bash
+# All LoRAs + checkpoints, only the ones missing info
+python cz_civitai_batch.py --kind all
+
+# Only LoRAs, re-download everything (overwrite existing previews/sidecars)
+python cz_civitai_batch.py --kind loras --force
+
+# Wrappers (find the venv Python, force UTF-8): pass-through args
+civitai_index.bat --kind models          # Windows
+./civitai_index.sh --kind models         # Unix
+
+# Run in PARALLEL: split into N disjoint shards (one process each)
+python cz_civitai_batch.py --kind all --shard 1/4   # + 2/4, 3/4, 4/4 in other terminals
+civitai_index_parallel.bat 4             # Windows: launches 4 shards at once
+./civitai_index_parallel.sh 4            # Unix
+```
+
+Flags: `--kind {loras,models,all}` · `--force` (overwrite) · `--all` (re-query every file,
+don't overwrite previews) · `--shard i/m` · `--loras-dir` / `--checkpoints-dir` ·
+`--api-key` · `--sleep 0.5` (seconds between requests) · `--no-check-updates`.
+**CivitAI rate-limits** — keep the shard count modest and set a CivitAI API key (in the
+app's Advanced tab, or `--api-key`) for large runs.
+
 ## Remove background  — `--remove-bg` (local, rembg)
 
 ```bash

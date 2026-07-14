@@ -89,6 +89,8 @@
     "wildcards_in_order": false,
     "save_pre_upscale": false,
     "civitai_api_key": "",
+    "civitai_batch": {"enabled": true, "sleep": 0.5, "check_updates": true},
+    "_civitai_batch_help": "Batch CivitAI enrichment. enabled=true shows the '🔄 Fetch all missing' button on the Asset Browser LoRAs/Models tabs and lets cz_civitai_batch.py (civitai_index.bat/.sh) run. sleep = seconds between requests (rate-limit friendly); check_updates = also flag models that have a newer version on CivitAI. enabled=false hides the button (per-model 🔎 fetch still works).",
     "asset_browser": {
         "enabled": false,
         "generate_thumbnails": true,

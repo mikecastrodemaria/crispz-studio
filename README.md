@@ -78,7 +78,10 @@ SwarmUI. On top of crispz's upscaler it adds:
   example **large with its generation prompt** (Copy prompt) and **← / →** to browse. A small
   **🖼️ icon** next to each **LoRA** dropdown and the **Z-Image checkpoint** dropdown
   (Advanced) opens the Asset Browser **straight to that model's card** (its preview /
-  trigger words / examples). Plus a per-session history in the app. The **Output folder** can point
+  trigger words / examples). A **🔄 Fetch all missing** button (LoRAs / Models tabs)
+  enriches the whole folder in one go (same as the standalone `civitai_index.bat` /
+  `.sh` — see below); models with a **newer version on CivitAI** get a **⚠ update** badge.
+  Plus a per-session history in the app. The **Output folder** can point
   anywhere (even another drive); a folder typed into the UI at runtime is auto-authorised,
   so the browser opens without a Gradio *"File not allowed"* error. (In `config.txt`, write
   Windows paths with `/` or `\\` — a single `\` is an illegal JSON escape.)

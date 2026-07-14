@@ -27,6 +27,17 @@ def _ab_get(key):
     return cfg.get(key, _AB_DEFAULTS.get(key))
 
 
+def _batch_enabled():
+    cfg = CONFIG.get("civitai_batch")
+    return bool(cfg.get("enabled", True)) if isinstance(cfg, dict) else True
+
+
+def _render_spa():
+    """SPA avec le drapeau du bouton batch injecte (zero cout si desactive: le bouton
+    'Fetch all missing' n'est meme pas rendu)."""
+    return ASSET_BROWSER_HTML.replace("__CZ_BATCH__", "1" if _batch_enabled() else "")
+
+
 def _ab_resolve_dir(output_dir):
     d = output_dir or DEFAULT_OUTPUT_DIR
     return d if os.path.isabs(d) else os.path.join(HERE, d)
@@ -78,7 +89,7 @@ def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=Tr
     idx_dir = os.path.join(d, "_index")
     os.makedirs(os.path.join(idx_dir, "thumbs"), exist_ok=True)
     with open(os.path.join(d, "index.html"), "w", encoding="utf-8") as f:
-        f.write(ASSET_BROWSER_HTML)
+        f.write(_render_spa())
     entries, jobs = [], []
     for rel, p in _ab_scan(d):
         thumb_rel = rel  # fallback = image complete
@@ -133,7 +144,7 @@ def ab_open_fast(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=
     d = _ab_resolve_dir(output_dir)
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "index.html"), "w", encoding="utf-8") as f:
-        f.write(ASSET_BROWSER_HTML)
+        f.write(_render_spa())
     # Manifest STUB immediat si aucun n'existe -> la SPA charge tout de suite (plus jamais
     # "No manifest") ; le vrai manifest (indexation en tache de fond) arrive via le polling.
     idx_dir = os.path.join(d, "_index")
@@ -214,6 +225,8 @@ def _scan_catalog(model_dir, out_dir, kind):
                               "width": e.get("width"), "height": e.get("height")}
                              for e in (civ.get("examples") or []) if e.get("url")][:8],
                 "civitai": civ.get("url") or "",
+                "update": bool(civ.get("update_available")),
+                "latest": civ.get("latest_versionName") or "",
             })
     entries.sort(key=lambda e: e["file"].lower())
     if jobs:

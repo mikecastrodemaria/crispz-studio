@@ -3,6 +3,47 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## 1.8.0 — 2026-07-14 — Batch CivitAI enrichment (.bat/.sh script + "Fetch all" button + new-version warnings)
+
+Enrich a whole folder at once instead of one model at a time, from the UI **or** from a
+standalone script you can run in parallel.
+
+- **Standalone `cz_civitai_batch.py`** (imports no torch → starts instantly). Scans the
+  LoRA / checkpoint folders and fetches the **missing** CivitAI info for each model
+  (preview + trigger words + **example prompts**), skipping ones already done but still
+  **refreshing the "newer version" flag**.
+  ```
+  python cz_civitai_batch.py --kind {loras,models,all} [--force] [--all]
+         [--shard i/m] [--sleep 0.5] [--api-key KEY]
+  ```
+  `--shard i/m` splits the file list into disjoint subsets so **several processes can run
+  in parallel**. Prints a per-model progress line + a final `enriched/skipped/updated/
+  failed` summary; non-zero exit only if everything failed.
+- **Wrappers**: `civitai_index.bat` / `.sh` (pass-through args, finds the venv Python,
+  forces UTF-8) and `civitai_index_parallel.bat` / `.sh` (`[N]`, default 4) that launch
+  **N parallel shards** — this is the intended "batch in parallel" workflow.
+- **"🔄 Fetch all missing" button** in the Asset Browser (LoRAs / Models tabs): runs the
+  same core in a background thread with a live toast (`Batch 12/48 — name…`), then a
+  summary and catalog reload. New `civitai_fetch_all` Gradio endpoint (polled via the
+  existing `civitai_progress`).
+- **New-version warnings**: `fetch` and the batch now compare the local version to the
+  latest on CivitAI (`get_latest_version`) and store `update_available` +
+  `latest_versionName` in `<name>.civitai.json`. The Asset Browser shows a **⚠ update**
+  badge on the card and a "Newer version on CivitAI: …" line in the lightbox.
+- **Example prompts**: already captured since 1.7.2; the batch path reuses the same fetch,
+  so they are filled in bulk too.
+- **Config** `"civitai_batch": {"enabled": true, "sleep": 0.5, "check_updates": true}` —
+  `enabled:false` hides the "Fetch all" button (the per-model 🔎 still works); `sleep` is
+  rate-limit friendly; `check_updates:false` skips the extra version request.
+- Files: `cz_civitai_batch.py` (new), `cz_civitai.py` (`get_latest_version`,
+  `refresh_update_flag`, `update_available` in the sidecar), `cz_ui.py`
+  (`civitai_fetch_all` endpoint), `cz_assetbrowser.py` (catalog `update`/`latest`, SPA
+  render flag), `cz_assets.py` (button + toast + badge + version line),
+  `civitai_index.bat/.sh`, `civitai_index_parallel.bat/.sh`, `config-sample.txt`,
+  `tests/test_civitai_batch.py`.
+- **Rate limits**: CivitAI throttles; keep parallel shards modest and set a CivitAI API key
+  (Advanced) for heavy runs.
+
 ## 1.7.3 — 2026-07-14 — Jump to a LoRA / checkpoint in the Asset Browser (🖼️ icon)
 
 Fooocus2026-style shortcut: a small **🖼️ icon** sits next to each **LoRA** dropdown

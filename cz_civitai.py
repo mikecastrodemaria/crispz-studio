@@ -110,6 +110,35 @@ def get_version_by_hash(sha, api_key=None):
     }
 
 
+def get_latest_version(model_id, api_key=None):
+    """Derniere version publiee d'un modele CivitAI: {id, name} ou None. GET /models/<id>
+    -> modelVersions[0] est la plus recente (l'API les trie du plus recent au plus ancien)."""
+    if not model_id:
+        return None
+    data = _api_get(f"/models/{model_id}", api_key=api_key)
+    vers = (data or {}).get("modelVersions") or []
+    if not vers or not isinstance(vers[0], dict):
+        return None
+    v = vers[0]
+    return {"id": v.get("id"), "name": str(v.get("name") or "").strip()}
+
+
+def _update_fields(model_id, current_version_id, api_key=None):
+    """Compare la version locale a la derniere sur CivitAI. Renvoie un dict a fusionner
+    dans le sidecar: {update_available, latest_versionId, latest_versionName}. Silencieux
+    en cas d'echec (network/inconnu) -> pas de faux positif."""
+    try:
+        latest = get_latest_version(model_id, api_key)
+    except Exception as e:
+        _dbg(f"latest-version check failed for model {model_id}: {e}")
+        latest = None
+    if not latest or latest.get("id") is None or current_version_id is None:
+        return {"update_available": False, "latest_versionId": None, "latest_versionName": ""}
+    newer = latest["id"] != current_version_id
+    return {"update_available": bool(newer), "latest_versionId": latest["id"],
+            "latest_versionName": latest.get("name") or ""}
+
+
 def get_top_images(version_id, api_key=None, limit=8):
     data = _api_get("/images", {"modelVersionId": version_id, "sort": "Most Reactions",
                                 "limit": int(limit)}, api_key=api_key)
@@ -140,9 +169,11 @@ def load_civitai_sidecar(safepath):
     return {}
 
 
-def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=None):
+def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=None,
+                            check_update=True):
     """Enrichit un .safetensors depuis CivitAI: ecrit '<stem>.preview.png' (si absent) et
-    '<stem>.civitai.json' (trainedWords + examples). Renvoie {success, message, triggers}.
+    '<stem>.civitai.json' (trainedWords + examples + drapeau nouvelle version). Renvoie
+    {success, message, triggers, update_available}.
 
     progress(phase, frac, text) est appele a chaque etape (phase: hash|query|images|
     download). frac est un % reel pour 'hash' seulement (sinon None -> barre indeterminee)."""
@@ -195,6 +226,11 @@ def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=No
         "trainedWords": ver.get("trainedWords") or [], "examples": examples,
         "url": f"https://civitai.com/models/{ver.get('modelId')}" if ver.get("modelId") else "",
     }
+    upd = {"update_available": False, "latest_versionId": None, "latest_versionName": ""}
+    if check_update:
+        _p("update", None, "Checking for a newer version…")
+        upd = _update_fields(ver.get("modelId"), ver.get("versionId"), api_key)
+    sidecar.update(upd)
     try:
         with open(stem + ".civitai.json", "w", encoding="utf-8") as f:
             json.dump(sidecar, f, ensure_ascii=False, indent=2)
@@ -203,5 +239,26 @@ def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=No
     msg = f"CivitAI: {ver.get('modelName')} — {len(examples)} example(s)"
     if saved_preview:
         msg += " + preview"
+    if upd.get("update_available"):
+        msg += f" ⚠ newer version: {upd.get('latest_versionName') or '?'}"
     _log(f"civitai fetch: {os.path.basename(safepath)} -> {msg}")
-    return {"success": True, "message": msg, "triggers": ver.get("trainedWords") or []}
+    return {"success": True, "message": msg, "triggers": ver.get("trainedWords") or [],
+            "update_available": bool(upd.get("update_available"))}
+
+
+def refresh_update_flag(safepath, api_key=None):
+    """Rafraichit UNIQUEMENT le drapeau 'nouvelle version' d'un modele deja enrichi (lit le
+    sidecar existant, compare a CivitAI, reecrit). Pas de re-telechargement de preview.
+    Renvoie {success, update_available}. Utilise par le batch pour les fichiers deja faits."""
+    sc = load_civitai_sidecar(safepath)
+    if not sc or sc.get("modelId") is None or sc.get("versionId") is None:
+        return {"success": False, "update_available": False}
+    upd = _update_fields(sc.get("modelId"), sc.get("versionId"), api_key)
+    sc.update(upd)
+    try:
+        with open(os.path.splitext(safepath)[0] + ".civitai.json", "w", encoding="utf-8") as f:
+            json.dump(sc, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        _dbg(f"civitai.json update-flag write failed: {e}")
+        return {"success": False, "update_available": bool(upd.get("update_available"))}
+    return {"success": True, "update_available": bool(upd.get("update_available"))}

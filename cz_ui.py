@@ -1240,12 +1240,54 @@ def _api_civitai_fetch(rel, kind):
 
 
 def _api_civitai_progress(key):
-    """API (Asset Browser): etat courant d'un job CivitAI (JSON). done=true quand fini."""
+    """API (Asset Browser): etat courant d'un job CivitAI (JSON). done=true quand fini.
+    Sert aussi bien les jobs par-modele que les jobs batch (memes cles de registre)."""
     with _CIVITAI_LOCK:
         st = _CIVITAI_JOBS.get(key)
         st = dict(st) if st else {"phase": "unknown", "frac": None, "text": "",
                                   "done": True, "ok": False, "message": "no such job"}
     return json.dumps(st)
+
+
+def _api_civitai_fetch_all(kind):
+    """API (Asset Browser, bouton 'Fetch all missing'): enrichit EN ARRIERE-PLAN tous les
+    modeles manquants du dossier LoRAs ou checkpoints (meme coeur que le script .bat/.sh
+    cz_civitai_batch). Renvoie une cle de job batch a interroger via civitai_progress."""
+    try:
+        import cz_civitai_batch
+        import cz_civitai
+        kind = (kind or "").strip() or "loras"
+        key = "__batch__:" + kind
+        _civitai_job_set(key, phase="start", i=0, n=0, text="Starting…",
+                         done=False, ok=False, summary=None)
+
+        def _progress(i, n, name, phase, text):
+            _civitai_job_set(key, phase=phase, i=i, n=n, text=text, done=False)
+
+        def _work():
+            try:
+                api_key = getattr(cz_civitai, "API_KEY", None)
+                summary = cz_civitai_batch.run(
+                    kind=kind, api_key=api_key, progress=_progress,
+                    loras_dir=cz_pipeline.LORAS_DIR,           # dossiers LIVE (modifiables dans l'UI)
+                    checkpoints_dir=cz_pipeline.CHECKPOINTS_DIR)
+                try:
+                    ab_build_catalog(DEFAULT_OUTPUT_DIR, cz_pipeline.LORAS_DIR,
+                                     cz_pipeline.CHECKPOINTS_DIR)
+                except Exception as e:
+                    _dbg(f"catalog rebuild after batch failed: {e}")
+                _civitai_job_set(
+                    key, phase="done", done=True, ok=True, summary=summary,
+                    text=(f"enriched {summary['enriched']}, updated {summary['updated']}, "
+                          f"skipped {summary['skipped']}, failed {summary['failed']}"))
+            except Exception as e:
+                _civitai_job_set(key, phase="error", done=True, ok=False,
+                                 text=f"error: {e}", summary=None)
+
+        threading.Thread(target=_work, daemon=True).start()
+        return key
+    except Exception as e:
+        return f"error: {e}"
 
 
 # delete_asset -> cz_assetbrowser.py (importe en tete; expose via api_name dans build_ui).
@@ -2309,6 +2351,11 @@ def build_ui():
         cp_out = gr.Textbox(visible=False)
         cp_btn = gr.Button(visible=False)
         cp_btn.click(_api_civitai_progress, cp_in, cp_out, api_name="civitai_progress")
+        # Endpoint batch (bouton 'Fetch all missing' de l'Asset Browser)
+        cfa_in = gr.Textbox(visible=False)
+        cfa_out = gr.Textbox(visible=False)
+        cfa_btn = gr.Button(visible=False)
+        cfa_btn.click(_api_civitai_fetch_all, cfa_in, cfa_out, api_name="civitai_fetch_all")
 
         with gr.Row():
             # ===== Colonne principale (apercu en haut, prompt + Generate, negative, input) =====

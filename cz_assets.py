@@ -73,6 +73,17 @@ border-radius:4px;transition:width .25s}
 .cvbar.indet>i{width:35%;animation:cvindet 1.1s ease-in-out infinite}
 @keyframes cvindet{0%{margin-left:-35%}100%{margin-left:100%}}
 button:disabled{opacity:.6;cursor:default}
+/* Badge "nouvelle version dispo" sur les cartes modeles + toast batch */
+.cell .upd{position:absolute;top:6px;left:6px;z-index:2;font-size:10px;font-weight:600;
+padding:2px 6px;border-radius:6px;background:#7a4a12ee;color:#ffd27a;border:1px solid #b6803a;
+pointer-events:none}
+.cell.ph .upd{position:absolute}
+#batchstatus{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:30;
+display:none;max-width:80vw;padding:10px 16px;border-radius:10px;
+background:#141b29;border:1px solid var(--line);color:#cfd8e6;font-size:13px;
+box-shadow:0 6px 24px #000a}
+#batchstatus.ok{color:#8fe0a5;border-color:#2f6b45}#batchstatus.err{color:#ff9db0;border-color:#7a2e40}
+#batchstatus .spin{margin-right:8px;vertical-align:-2px}
 /* Visionneuse d'exemples (grand format + prompt), au-dessus de la lightbox */
 #exlb{position:fixed;inset:0;background:#000e;z-index:20;display:none;
 grid-template-columns:1fr 360px}#exlb.open{display:grid}
@@ -91,7 +102,9 @@ grid-template-columns:1fr 360px}#exlb.open{display:grid}
 <button class="src" data-s="loras">LoRAs</button>
 <button class="src" data-s="models">Models</button>
 <button id="hiddenbtn" title="Show hidden folders">Hidden</button>
-<button id="blurbtn">Blur</button><span id="count"></span></header>
+<button id="blurbtn">Blur</button>
+<button id="fetchall" title="Fetch missing CivitAI info for every model in this tab" style="display:none">🔄 Fetch all missing</button>
+<span id="count"></span></header>
 <div id="wrap"><aside id="folders"></aside><div id="grid"></div></div>
 <div id="lb"><span id="close">&times;</span><span class="nav" id="prev">&#10094;</span>
 <span class="nav" id="next">&#10095;</span><div id="lbimg"><img id="big"></div>
@@ -101,6 +114,7 @@ grid-template-columns:1fr 360px}#exlb.open{display:grid}
 <div id="exside"></div></div>
 <script>
 let DATA=[],VIEW=[],cur=0,EX=[],excur=0;
+var CZ_BATCH=("__CZ_BATCH__"==="1");   // bouton "Fetch all missing" (injecte par le serveur)
 const grid=document.getElementById('grid'),lb=document.getElementById('lb'),big=document.getElementById('big'),
 side=document.getElementById('side'),q=document.getElementById('q'),cnt=document.getElementById('count'),
 folders=document.getElementById('folders'),
@@ -110,6 +124,7 @@ function render(){grid.innerHTML='';VIEW.forEach((e,i)=>{const c=document.create
 const label=e.name||e.file;const hasImg=!!(e.thumb||e.img)||curSource==='outputs';
 if(!hasImg){c.className='cell ph loaded';
 c.innerHTML='<div class="ic">'+(e.mode==='lora'?'🧩':'📦')+'</div><div class="n">'+esc(label)+'</div>';
+if(e.update)c.innerHTML+='<div class="upd" title="Newer version on CivitAI'+(e.latest?': '+esc(e.latest):'')+'">⚠ update</div>';
 c.onclick=()=>open(i);grid.appendChild(c);return;}
 c.className='cell';
 const im=document.createElement('img');im.loading='lazy';
@@ -120,7 +135,10 @@ setTimeout(function(){im.src=thumb+(thumb.indexOf('?')<0?'?r=':'&r=')+Date.now()
 else{im.onerror=null;im.src=full;}};
 im.src=thumb;
 const cap=document.createElement('div');cap.className='cap';cap.textContent=label;
-c.appendChild(im);c.appendChild(cap);c.onclick=()=>open(i);grid.appendChild(c);});
+c.appendChild(im);c.appendChild(cap);
+if(e.update){var ub=document.createElement('div');ub.className='upd';ub.textContent='⚠ update';
+ub.title='Newer version on CivitAI'+(e.latest?': '+e.latest:'');c.appendChild(ub);}
+c.onclick=()=>open(i);grid.appendChild(c);});
 cnt.textContent=VIEW.length+' / '+DATA.length;}
 function hay(e){return (e.file+' '+(e.prompt||'')+' '+(e.negative||'')+' '+(e.mode||'')+' '+
 (e.seed||'')+' '+(e.steps||'')+' '+(e.guidance||'')+' '+(e.size||'')+' '+(e.model||'')+' '+
@@ -146,7 +164,8 @@ h+='<button onclick="cp(\''+'prompt'+'\')">Copy '+(isOut?'prompt':'triggers')+'<
 h+='<button onclick="cp(\''+'all'+'\')">Copy all</button>';
 if(isOut){h+='<a href="'+encodeURI(e.file)+'" download="'+esc(e.file.split('/').pop())+'" style="margin-left:6px;color:#9fb3d6">Download</a>';
 h+='<button onclick="delAsset()" style="margin-left:6px;background:#5a2230;border-color:#7a2e40">Delete</button>';}
-else{h+='<button id="cvbtn" onclick="civitaiFetch()" style="margin-left:6px;background:#274b6d;border-color:#3a6ea5">🔎 Fetch from CivitAI</button>';
+else{if(e.update)h+='<div class="v" style="color:#ffd27a;margin-bottom:8px">⚠️ Newer version on CivitAI'+(e.latest?': '+esc(e.latest):'')+'</div>';
+h+='<button id="cvbtn" onclick="civitaiFetch()" style="margin-left:6px;background:#274b6d;border-color:#3a6ea5">🔎 Fetch from CivitAI</button>';
 if(e.civitai)h+='<a href="'+encodeURI(e.civitai)+'" target="_blank" style="margin-left:6px;color:#9fb3d6">CivitAI page</a>';
 EX=(e.examples||[]).map(function(x){return (typeof x==='string')?{url:x,prompt:''}:x;}).filter(function(x){return x&&x.url;});
 if(EX.length){h+='<h3>Examples <span style="color:var(--mut);font-weight:400">(click to enlarge)</span></h3><div class="ex">'+
@@ -189,6 +208,28 @@ cvStatus((ok?'✅ ':'⚠️ ')+msg,null,ok?'ok':'err',false);
 if(ok)setTimeout(function(){close();loadSource(curSource);},1000);
 }catch(err){cvStatus('⚠️ CivitAI fetch failed: '+err,null,'err',false);}
 finally{if(btn)btn.disabled=false;}}
+// --- Batch: recuperer toutes les infos CivitAI manquantes de l'onglet courant ---
+function batchStatus(html,cls){var s=document.getElementById('batchstatus');
+if(!s){s=document.createElement('div');s.id='batchstatus';document.body.appendChild(s);}
+s.className=(cls||'');s.innerHTML=html||'';s.style.display=html?'block':'none';return s;}
+async function fetchAll(){var src=curSource;if(src!=='loras'&&src!=='models')return;
+var btn=document.getElementById('fetchall');if(btn)btn.disabled=true;
+batchStatus('<span class="spin"></span>Starting batch…');
+try{var key=await gcall('civitai_fetch_all',[src]);
+if(!key||(''+key).indexOf('error:')===0)throw new Error(key||'batch not started');
+var st=null;
+for(var k=0;k<200000;k++){var raw=await gcall('civitai_progress',[key]);
+st=(typeof raw==='string')?(function(){try{return JSON.parse(raw);}catch(_){return null;}})():raw;
+if(st){var c=(st.n?(' '+(st.i||0)+'/'+st.n):'');
+batchStatus('<span class="spin"></span>Batch'+c+' — '+esc(st.text||'working…'));
+if(st.done)break;}
+await _sleep(500);}
+var sm=(st&&st.summary)||{};
+batchStatus('✅ Batch done: '+(sm.enriched||0)+' enriched · '+(sm.updated||0)+' with newer version · '+
+(sm.skipped||0)+' skipped · '+(sm.failed||0)+' failed',(st&&st.ok)?'ok':'err');
+loadSource(src);setTimeout(function(){batchStatus('');},7000);
+}catch(err){batchStatus('⚠️ Batch failed: '+esc(''+err),'err');}
+finally{if(btn)btn.disabled=false;}}
 // --- Visionneuse d'exemples (grand format + prompt + navigation) ---
 function exRender(){var x=EX[excur];if(!x)return;exbig.src=encodeURI(x.url);
 var h='<div id="excount">'+(excur+1)+' / '+EX.length+'</div>';
@@ -218,6 +259,7 @@ if(ev.key==='Escape')close();if(ev.key==='ArrowLeft')document.getElementById('pr
 if(ev.key==='ArrowRight')document.getElementById('next').click();});
 q.oninput=filter;
 document.getElementById('blurbtn').onclick=()=>document.body.classList.toggle('blur');
+document.getElementById('fetchall').onclick=fetchAll;
 function _today(){const d=new Date(),m=String(d.getMonth()+1).padStart(2,'0'),da=String(d.getDate()).padStart(2,'0');return d.getFullYear()+'-'+m+'-'+da;}
 // --- Sous-dossiers (sidebar) + hide, persistant en localStorage ---
 let curFolder='',showHidden=false,_folderUserSet=false,curSource='outputs',hidden=new Set();
@@ -248,6 +290,8 @@ if(!DATA.length&&m&&m.building){grid.innerHTML='<p style="padding:20px;color:#8b
 '(first run — can take ~30 s for large folders; it will fill in automatically)</p>';}}
 function loadSource(src){curSource=src;_folderUserSet=false;curFolder='';
 [].slice.call(document.querySelectorAll('.src')).forEach(function(b){b.classList.toggle('active',b.getAttribute('data-s')===src);});
+var _fa=document.getElementById('fetchall');
+if(_fa)_fa.style.display=(CZ_BATCH&&(src==='loras'||src==='models'))?'':'none';
 fetch(_srcUrls[src]+'?t='+Date.now()).then(function(r){return r.ok?r.json():null;}).then(function(m){
 if(m){if(src==='outputs')_gen=m.generated||'';_apply(m);_tryFocus();}
 else{DATA=[];renderFolders();grid.innerHTML='<p style="padding:20px;color:#8b98ad">No '+src+' catalog yet (building in background). Reopen the Asset Browser in a few seconds.</p>';cnt.textContent='0 / 0';}});}
