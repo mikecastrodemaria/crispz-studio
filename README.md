@@ -440,7 +440,8 @@ Juggernaut-Z is a **Z-Image Base** fine-tune → set **Performance = "Base CFG"*
 
 **Models → LoRA**: set the folder → **Refresh** → pick **up to 3 LoRAs**, each with
 its own **weight**. They are combined (`set_adapters`) on the transformer (shared
-by txt2img/img2img) and reload on the next run. Selecting LoRAs auto-fills their
+by txt2img/img2img) and applied on the next run **without reloading the model** —
+changing a weight is instant, swapping LoRA files takes ~1 s. Selecting LoRAs auto-fills their
 merged **keywords / trigger words** (read from the file metadata); **Add to prompt**
 appends them.
 

@@ -73,6 +73,9 @@ OMNI_MODEL = (os.environ.get("ZIMAGE_OMNI_MODEL") or CONFIG.get("zimage_omni_mod
 _BASE_PIPE = None
 _DERIVED = {}
 _LOADED_KEY = None
+# LoRA reellement posees sur _BASE_PIPE (liste de (chemin, poids)). Sert a echanger les
+# LoRA a chaud sans recharger le modele: si ca diverge de LORAS, _apply_loras resynchronise.
+_APPLIED_LORAS = []
 
 # Palier 2 (cohabitation VRAM): offload CPU de la passe diffusion. none = tout en VRAM
 # (defaut). model = decharge par sous-module (bon compromis). sequential = plus agressif,
@@ -508,7 +511,11 @@ def lora_keywords(path):
 
 def set_loras(slots):
     """Definit les LoRA actives. slots = liste de (nom_ou_None, poids). Resout les
-    noms en chemins, ignore les None. Invalide le pipe si la combinaison change."""
+    noms en chemins, ignore les None.
+
+    NE recharge PAS le modele: les LoRA sont echangees A CHAUD sur le transformer deja
+    en VRAM (_apply_loras, appele par _ensure_base au run suivant). Changer une LoRA
+    coutait auparavant un rechargement complet (transformer + VAE + encodeur Qwen3)."""
     global LORAS
     new = []
     for name, weight in slots:
@@ -517,9 +524,8 @@ def set_loras(slots):
             new.append((p, float(weight)))
     if new != LORAS:
         LORAS = new
-        free_vram()
         _log("LoRAs -> " + (", ".join(f"{os.path.basename(p)}@{w}" for p, w in new) or "(none)")
-             + " -> will reload")
+             + " -> applied on next run (hot-swap, no model reload)")
 
 
 def set_omni_model(repo):
@@ -565,10 +571,11 @@ def set_offload_mode(mode):
 def free_vram():
     """Libere le pipeline de base + les pipelines derives et rend la VRAM
     (palier 3: unload sur inactivite ou endpoint /unload). Rechargement paresseux."""
-    global _BASE_PIPE, _DERIVED, _LOADED_KEY
+    global _BASE_PIPE, _DERIVED, _LOADED_KEY, _APPLIED_LORAS
     _BASE_PIPE = None
     _DERIVED = {}
     _LOADED_KEY = None
+    _APPLIED_LORAS = []      # plus de pipe -> plus d'adaptateur pose
     gc.collect()
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
@@ -639,16 +646,78 @@ def _vram_str():
 # Z-Image (diffusers, BF16) : un pipeline "base" txt2img qui detient les composants,
 # img2img / inpaint derives via from_pipe (poids partages, pas de VRAM en double).
 # ----------------------------------------------------------------------------
+def _lora_names(loras):
+    return [f"cz_lora_{i}" for i in range(len(loras))]
+
+
+def _apply_loras(pipe, force=False):
+    """Synchronise les adaptateurs LoRA du pipe avec LORAS, SANS recharger le modele.
+
+    Le transformer reste en VRAM; seuls les adaptateurs PEFT bougent:
+      - memes fichiers, poids differents -> set_adapters (immediat)
+      - jeu de LoRA different            -> unload_lora_weights + reload des LoRA (~1s)
+    Les pipes derives (from_pipe) partagent ce transformer -> ils suivent automatiquement.
+    Renvoie True si applique, False si echec (le caller retombe sur un reload complet)."""
+    global _APPLIED_LORAS
+    if not force and _APPLIED_LORAS == LORAS:
+        return True
+    old_paths = [p for p, _ in _APPLIED_LORAS]
+    new_paths = [p for p, _ in LORAS]
+    try:
+        if not force and old_paths and old_paths == new_paths:
+            # Seuls les poids changent -> re-ponderation instantanee.
+            pipe.set_adapters(_lora_names(LORAS), [float(w) for _, w in LORAS])
+            _APPLIED_LORAS = list(LORAS)
+            _log("LoRA weights updated in place (no reload): "
+                 + ", ".join(f"{os.path.basename(p)}@{w}" for p, w in LORAS))
+            return True
+        if old_paths or force:
+            try:
+                pipe.unload_lora_weights()
+            except Exception as e:
+                _dbg(f"unload_lora_weights: {e}")
+        names, weights = [], []
+        for i, (p, w) in enumerate(LORAS):
+            if os.path.isfile(p):
+                an = f"cz_lora_{i}"
+                _log(f"applying LoRA: {os.path.basename(p)} (weight {w})")
+                # Passer le dossier + weight_name (et non le chemin complet) : sinon
+                # diffusers en mode offline (HF_HUB_OFFLINE) refuse "must specify a
+                # weight_name". Marche aussi online et avec un fichier local direct.
+                pipe.load_lora_weights(os.path.dirname(p) or ".",
+                                       weight_name=os.path.basename(p), adapter_name=an)
+                names.append(an)
+                weights.append(float(w))
+            else:
+                _log(f"LoRA file not found, ignored: {p}")
+        if names:
+            pipe.set_adapters(names, weights)
+        _APPLIED_LORAS = list(LORAS)
+        if not force:
+            _log("LoRAs hot-swapped (no model reload)")
+        return True
+    except Exception as e:
+        _log(f"LoRA hot-swap failed ({e}); falling back to a full reload")
+        _APPLIED_LORAS = []
+        return False
+
+
 def _ensure_base():
     """Charge (si besoin) le pipeline de base txt2img. Gere le transformer
-    single-file (Civitai) et l'offload. Cache par (repo, transformer, offload)."""
-    global _BASE_PIPE, _DERIVED, _LOADED_KEY, _BASE_SCHED_CONFIG
-    key = (BASE_REPO, ZIMAGE_TRANSFORMER, OFFLOAD_MODE, tuple(LORAS))
+    single-file (Civitai) et l'offload. Cache par (repo, transformer, offload).
+
+    Les LoRA ne font PAS partie de la cle: elles sont echangees a chaud sur le pipe
+    en cache (_apply_loras) -> changer de LoRA ne recharge plus le modele."""
+    global _BASE_PIPE, _DERIVED, _LOADED_KEY, _BASE_SCHED_CONFIG, _APPLIED_LORAS
+    key = (BASE_REPO, ZIMAGE_TRANSFORMER, OFFLOAD_MODE)
     _dbg(f"_ensure_base key={key} cached={_LOADED_KEY}")
     if _BASE_PIPE is not None and _LOADED_KEY == key:
-        _dbg("base pipeline: reusing cached (no reload)")
-        return _BASE_PIPE
-    if _BASE_PIPE is not None:
+        if _apply_loras(_BASE_PIPE):
+            _dbg("base pipeline: reusing cached (no reload)")
+            return _BASE_PIPE
+        _dbg("base pipeline: LoRA hot-swap failed -> free + reload")
+        free_vram()
+    elif _BASE_PIPE is not None:
         _dbg("base pipeline: key changed -> free + reload")
         free_vram()
     from diffusers import ZImagePipeline, ZImageTransformer2DModel
@@ -679,24 +748,10 @@ def _ensure_base():
     except Exception:
         _BASE_SCHED_CONFIG = None
     # LoRA Z-Image (sur le transformer du base -> partage par les pipes derives).
+    # force=True: pipe neuf, aucun adaptateur pose -> on (re)pose tout.
+    _APPLIED_LORAS = []
     if LORAS:
-        try:
-            names, weights = [], []
-            for i, (p, w) in enumerate(LORAS):
-                if os.path.isfile(p):
-                    an = f"cz_lora_{i}"
-                    _log(f"applying LoRA: {os.path.basename(p)} (weight {w})")
-                    # Passer le dossier + weight_name (et non le chemin complet) : sinon
-                    # diffusers en mode offline (HF_HUB_OFFLINE) refuse "must specify a
-                    # weight_name". Marche aussi online et avec un fichier local direct.
-                    pipe.load_lora_weights(os.path.dirname(p) or ".",
-                                           weight_name=os.path.basename(p), adapter_name=an)
-                    names.append(an)
-                    weights.append(float(w))
-            if names:
-                pipe.set_adapters(names, weights)
-        except Exception as e:
-            _log(f"LoRA load failed ({e}); continuing without LoRA")
+        _apply_loras(pipe, force=True)
     # Attention slicing: POSE PAR APPEL via _set_slicing (selon la resolution traitee),
     # PAS au chargement. En tuile/1024 -> slicing OFF = attention SDPA native, rapide
     # (comme ComfyUI). Whole-image 2K+ -> slicing ON pour eviter le spill VRAM 32 Go.

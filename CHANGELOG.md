@@ -3,6 +3,27 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## 1.8.1 — 2026-07-15 — Fix: switching a LoRA no longer reloads the whole model
+
+Enabling / changing / removing a LoRA used to **reload the entire Z-Image pipeline**
+(transformer + VAE + **Qwen3-4B text encoder**) — tens of seconds for what should be
+instant, even though the model was already in VRAM.
+
+- Cause: `set_loras()` called `free_vram()` (wiping `_BASE_PIPE`), and the base cache key
+  included `tuple(LORAS)`, so any LoRA change invalidated the loaded pipeline.
+- Fix: LoRAs are now **hot-swapped on the cached pipe** via the PEFT backend
+  (new `_apply_loras`), and the cache key is back to `(repo, transformer, offload)`:
+  - **weight-only change → `set_adapters`**, instant, nothing re-read from disk;
+  - **different LoRA set → `unload_lora_weights` + reload of the LoRA files only** (~1 s);
+  - derived pipes (img2img / inpaint, built with `from_pipe`) share the transformer, so
+    they follow automatically.
+- Safe fallback: if the hot-swap raises (e.g. missing PEFT backend), `_ensure_base` falls
+  back to the previous full-reload path, so behaviour is never worse than before.
+- Model/transformer/offload changes still reload, as they must.
+- Files: `cz_pipeline.py` (`_apply_loras`, `_APPLIED_LORAS`, `set_loras`, `_ensure_base`,
+  `free_vram`), `tests/test_lora_hotswap.py` (8 tests incl. regression guards: `set_loras`
+  must not free the pipe, the cache key must not contain the LoRAs).
+
 ## 1.8.0 — 2026-07-14 — Batch CivitAI enrichment (.bat/.sh script + "Fetch all" button + new-version warnings)
 
 Enrich a whole folder at once instead of one model at a time, from the UI **or** from a

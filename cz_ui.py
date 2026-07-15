@@ -690,7 +690,8 @@ def _apply_loras(*vals):
     set_loras(pairs)
     if not cz_pipeline.LORAS:
         return "LoRA: none."
-    return "LoRA: " + ", ".join(f"{os.path.basename(p)}@{w}" for p, w in cz_pipeline.LORAS) + " (reload on next run)."
+    return ("LoRA: " + ", ".join(f"{os.path.basename(p)}@{w}" for p, w in cz_pipeline.LORAS)
+            + " (applied on next run — no model reload).")
 
 
 def _path_for_lora(name):
