@@ -3,6 +3,22 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## 1.11.1 — 2026-07-15 — Fix: SVDQuant/Nunchaku checkpoints were not filtered out
+
+The README says FP8 / SVDQ (ComfyUI) checkpoints do not load in diffusers, and
+`_safetensors_unsupported` filtered FP8 and `weight_scale`-style INT8/INT4 — but it
+missed **SVDQuant / Nunchaku**, which uses a different convention: no `weight_scale`,
+weights named `*.qweight`. Such a file stayed in the checkpoint dropdown and only failed
+at load time.
+
+- Detection added: any `*.qweight` tensor -> `"SVDQuant/Nunchaku INT4"`, skipped at
+  startup with the reason like FP8. A normal BF16/FP16 checkpoint never has `qweight`,
+  so there is no false positive.
+- Verified on a real file (`…_svdqInt4R32Flux1Dev.safetensors`: 380 `qweight` keys,
+  dtypes I32/BF16/I8, zero `weight_scale` — which is exactly why the old rule missed it)
+  and against 9 other real checkpoints (BF16 -> kept, FP8 -> still caught).
+- Files: `cz_pipeline.py` (`_safetensors_unsupported`).
+
 ## 1.11.0 — 2026-07-15 — "Rebuild ALL thumbnails (force)" button + parallel thumbnail generation
 
 - New **🖼 Rebuild ALL thumbnails (force)** button in the Asset Browser header. It applies

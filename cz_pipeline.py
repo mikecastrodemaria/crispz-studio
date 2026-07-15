@@ -376,17 +376,17 @@ def _safetensors_unsupported(path):
     """Renvoie une raison (str) si le .safetensors n'est PAS chargeable par diffusers,
     sinon None. Lit juste l'en-tete (rapide). Deux cas non supportes:
       - FP8 (F8_E4M3 / F8_E5M2) -> "FP8"
-      - quantifie INT8/INT4 facon ComfyUI (tenseurs I8/U8 + facteurs 'weight_scale')
-        -> "INT8/INT4 quantized". diffusers ne dequantifie pas ce schema.
-    Prendre le build BF16/FP16 non quantifie."""
+      - quantifie INT8/INT4 facon ComfyUI / SVDQuant-Nunchaku (tenseurs I8/U8 + facteurs
+        'weight_scale') -> "INT8/INT4 quantized". diffusers ne dequantifie pas ce schema.
+      - SVDQuant / Nunchaku (tenseurs nommes '*.qweight') -> "SVDQuant/Nunchaku INT4".
+        Ce schema n'utilise PAS 'weight_scale', d'ou une detection dediee.
+    Prendre le build BF16/FP16 non quantifie, ou un .gguf."""
     try:
         import struct
         with open(path, "rb") as f:
             n = struct.unpack("<Q", f.read(8))[0]
             hdr = json.loads(f.read(min(n, 3_000_000)).decode("utf-8", "ignore"))
-        has_fp8 = False
-        has_int = False
-        has_scale = False
+        has_fp8 = has_int = has_scale = has_qweight = False
         for k, v in hdr.items():
             if k == "__metadata__" or not isinstance(v, dict):
                 continue
@@ -397,8 +397,14 @@ def _safetensors_unsupported(path):
                 has_int = True
             if k.endswith("weight_scale") or k.endswith("scale_weight"):
                 has_scale = True
+            if k.endswith(".qweight"):
+                has_qweight = True
         if has_fp8:
             return "FP8"
+        # '*.qweight' = poids pre-quantifies (SVDQuant/Nunchaku, GPTQ-like). Signal net:
+        # un checkpoint BF16/FP16 normal n'a jamais de 'qweight'.
+        if has_qweight:
+            return "SVDQuant/Nunchaku INT4"
         # Les dtypes entiers bas seuls ne suffisent pas (evite les faux positifs sur un
         # buffer U8 isole): on exige les facteurs de dequantification 'weight_scale'.
         if has_int and has_scale:
