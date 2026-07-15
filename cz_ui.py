@@ -2770,8 +2770,12 @@ def build_ui():
 
                         with gr.Accordion("\U0001F9E9 LoRA (combinable)", open=False):
                             lora_dir_tb = gr.Textbox(value=cz_pipeline.LORAS_DIR, label="LoRA folder")
-                            gr.Markdown("*Number of slots is set in Advanced > Generation "
-                                        "(LoRA slots), or config `lora_slots`.*")
+                            gr.Markdown(
+                                "*Number of slots is set in Advanced > Generation "
+                                "(LoRA slots), or config `lora_slots`. Weight range is "
+                                f"`{cz_pipeline.LORA_WEIGHT_MIN:g}..{cz_pipeline.LORA_WEIGHT_MAX:g}` "
+                                "(config `lora_weight_min` / `lora_weight_max`) — a "
+                                "**negative** weight inverts the LoRA's effect.*")
                             _lchoices = ["None"] + list_loras()
                             lora_dds, lora_lws, lora_rows, lora_open_btns = [], [], [], []
                             for _i in range(MAX_LORA_SLOTS):
@@ -2779,7 +2783,9 @@ def build_ui():
                                     _dd = gr.Dropdown(choices=_lchoices, value="None",
                                                       label=f"LoRA {_i + 1}", scale=3)
                                     _ob = gr.Button("\U0001F5BC️", size="sm", scale=0, min_width=44)
-                                    _lw = gr.Slider(0.0, 2.0, value=float(cz_pipeline.LORA_WEIGHT),
+                                    _lw = gr.Slider(cz_pipeline.LORA_WEIGHT_MIN,
+                                                    cz_pipeline.LORA_WEIGHT_MAX,
+                                                    value=float(cz_pipeline.LORA_WEIGHT),
                                                     step=0.05, label=f"Weight {_i + 1}", scale=2)
                                 lora_dds.append(_dd)
                                 lora_lws.append(_lw)

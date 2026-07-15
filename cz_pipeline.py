@@ -64,6 +64,28 @@ LORAS_DIR = (os.environ.get("LORAS_DIR") or _prefs.get("loras_dir")
 # LoRA actives: liste de (chemin, poids). Plusieurs LoRA combinables (multi-slots).
 LORAS = []
 LORA_WEIGHT = float(CONFIG.get("default_lora_weight", 1.0))  # poids par defaut des slots
+
+
+def _lora_weight_range():
+    """Bornes des curseurs de poids LoRA (config 'lora_weight_min'/'lora_weight_max').
+    Defaut -2..2: les poids NEGATIFS sont valides et utiles (ils inversent l'effet de la
+    LoRA -- ex. un slider 'skinny' a -1 pousse vers l'oppose). Defensif: valeurs illisibles
+    ou min >= max -> on retombe sur le defaut."""
+    try:
+        lo = float(CONFIG.get("lora_weight_min", -2.0))
+        hi = float(CONFIG.get("lora_weight_max", 2.0))
+    except (TypeError, ValueError):
+        _log("lora_weight_min/max: not a number, using -2..2")
+        return -2.0, 2.0
+    if lo >= hi:
+        _log(f"lora_weight_min ({lo}) >= lora_weight_max ({hi}), using -2..2")
+        return -2.0, 2.0
+    return lo, hi
+
+
+LORA_WEIGHT_MIN, LORA_WEIGHT_MAX = _lora_weight_range()
+# Le poids par defaut doit rester dans les bornes (sinon le curseur naitrait hors plage).
+LORA_WEIGHT = min(LORA_WEIGHT_MAX, max(LORA_WEIGHT_MIN, LORA_WEIGHT))
 # Modele Omni/Edit (multi-reference). Reglable via config.txt ou l'UI.
 OMNI_MODEL = (os.environ.get("ZIMAGE_OMNI_MODEL") or CONFIG.get("zimage_omni_model") or "").strip()
 

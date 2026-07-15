@@ -109,7 +109,14 @@ wildcards_dir           Folder of wildcard .txt files. In the prompt, __name__ i
                         replaced by a random line from <folder>/name.txt (e.g.
                         __color__). Nested wildcards supported, reproducible per
                         seed. Empty -> ./wildcards next to app.py.
-default_lora_weight     Default LoRA strength (0..2).
+default_lora_weight     Default LoRA strength a slot starts at (default 1.0). Clamped
+                        into lora_weight_min..lora_weight_max.
+lora_weight_min         Min/max of the LoRA "Weight" sliders (default -2.0 / 2.0).
+lora_weight_max         NEGATIVE weights are allowed and useful: the LoRA then pushes
+                        AWAY from what it was trained on (a "skinny slider" at -1 gives
+                        the opposite effect). 0 = no effect. Past about +/-1.5 most LoRAs
+                        burn or deform the image. Set lora_weight_min to 0 to forbid
+                        negatives. Bad values or min >= max -> falls back to -2..2.
 lora_slots              Number of LoRA slots shown in Models > LoRA (1..10, default 3).
                         Each slot = a dropdown + weight; all combine at generation.
 zimage_omni_model       HF repo id OR local diffusers folder of a Z-Image Omni/Edit

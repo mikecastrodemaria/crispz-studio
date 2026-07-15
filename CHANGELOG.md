@@ -3,6 +3,29 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## 1.10.0 — 2026-07-15 — Negative LoRA weights + configurable weight range
+
+The LoRA **Weight** sliders were hard-capped at `0..2`, so **negative weights were
+impossible** — even though they are meaningful: a LoRA at a negative weight pushes *away*
+from what it was trained on (a "skinny slider" at `-1` gives the opposite effect, an "age
+slider" at `-0.5` swings the other way).
+
+- Slider range is now **`-2..2` by default** and **configurable**:
+  `"lora_weight_min": -2.0` / `"lora_weight_max": 2.0` in `config.txt`.
+  Set `lora_weight_min` to `0` to forbid negatives.
+- `default_lora_weight` is **clamped into the range**, so the slider can never start
+  outside its own bounds.
+- Defensive: non-numeric values, or `min >= max`, fall back to `-2..2` **and log why**
+  (no silent surprise).
+- The model layer never clamped weights (`set_loras`, X/Y/Z `LoRA weight` axis and the
+  CLI `--lora NAME:WEIGHT` all pass floats straight through), so negatives work
+  end-to-end — the UI slider was the only thing in the way.
+- The LoRA panel now states the active range and that negatives invert the effect; both
+  keys are documented in `config-sample.txt` and `config_modification_tutorial.txt`.
+- Files: `cz_pipeline.py` (`_lora_weight_range`, `LORA_WEIGHT_MIN/MAX`, clamped
+  `LORA_WEIGHT`), `cz_ui.py` (slider bounds + hint), `config-sample.txt`,
+  `config_modification_tutorial.txt`, `tests/test_lora_weight_range.py`.
+
 ## 1.9.0 — 2026-07-15 — Switching Z-Image checkpoint reloads only the transformer
 
 Same idea as the LoRA hot-swap (1.8.1), applied to the model itself. Switching from one
