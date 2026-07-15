@@ -19,6 +19,7 @@ import json
 import hashlib
 import urllib.request
 import urllib.parse
+import urllib.error
 
 from cz_core import _log, _dbg, CONFIG, _prefs
 
@@ -36,9 +37,13 @@ def set_api_key(k):
 
 
 def _api_get(endpoint, params=None, api_key=None, timeout=20):
+    """GET sur l'API CivitAI. api_key=None -> on retombe sur la cle GLOBALE (UI/prefs/
+    config): sinon les appels internes (versions, images) partaient anonymes et rataient
+    les contenus gates/NSFW."""
     params = dict(params or {})
-    if api_key:
-        params["token"] = api_key
+    key = api_key or API_KEY
+    if key:
+        params["token"] = key
     url = CIVITAI_API + endpoint
     if params:
         url += "?" + urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
@@ -46,6 +51,18 @@ def _api_get(endpoint, params=None, api_key=None, timeout=20):
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # Visible par defaut: 401/403 (cle absente/invalide) et 429 (rate limit) sont
+        # exactement ce qu'on veut voir en batch, pas noyer dans le debug.
+        body = ""
+        try:
+            body = e.read().decode("utf-8", errors="ignore")[:160]
+        except Exception:
+            pass
+        _log(f"civitai GET {endpoint} -> HTTP {e.code} {e.reason}"
+             + (f" | {body}" if body else "")
+             + ("  (no API key set: gated/NSFW content is hidden)" if not key and e.code in (401, 403) else ""))
+        return None
     except Exception as e:
         _dbg(f"civitai GET {endpoint} failed: {e}")
         return None
@@ -107,6 +124,10 @@ def get_version_by_hash(sha, api_key=None):
         "modelName": (data.get("model") or {}).get("name") or data.get("name") or "Unknown",
         "baseModel": data.get("baseModel") or "",
         "trainedWords": triggers,
+        # Images vitrine de la version: contrairement a l'endpoint /images, celles-ci
+        # portent un 'meta' REMPLI (prompt, steps, cfg...) + les drapeaux hasMeta /
+        # hasPositivePrompt. Deja dans cette reponse -> zero requete supplementaire.
+        "images": data.get("images") or [],
     }
 
 
@@ -140,9 +161,30 @@ def _update_fields(model_id, current_version_id, api_key=None):
 
 
 def get_top_images(version_id, api_key=None, limit=8):
+    """Images communautaires d'une version (FALLBACK). Attention: cet endpoint renvoie
+    'meta': null (CivitAI ne publie plus les parametres de generation ici) -> pas de
+    prompt. Les images de get_version_by_hash()['images'] sont a preferer."""
     data = _api_get("/images", {"modelVersionId": version_id, "sort": "Most Reactions",
                                 "limit": int(limit)}, api_key=api_key)
     return (data or {}).get("items") or []
+
+
+def _examples_from(imgs, limit=8):
+    """Normalise des images CivitAI en exemples {url, prompt, width, height, has_prompt}.
+    'meta' peut etre None (parametres non publies) -> prompt vide + has_prompt=False, ce
+    qui permet a l'UI de dire 'non publie' au lieu de laisser croire a un bug."""
+    out = []
+    for it in imgs[:limit]:
+        if not isinstance(it, dict) or not it.get("url"):
+            continue
+        meta = it.get("meta") or {}
+        prompt = str(meta.get("prompt") or "").strip()
+        out.append({
+            "url": it["url"], "prompt": prompt[:2000],
+            "width": it.get("width"), "height": it.get("height"),
+            "has_prompt": bool(prompt),
+        })
+    return out
 
 
 def _download(url, timeout=30):
@@ -201,7 +243,11 @@ def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=No
     if not ver:
         return {"success": False, "message": "not found on CivitAI (unknown hash)"}
     _p("images", None, "Fetching example images…")
-    imgs = get_top_images(ver["versionId"], api_key, limit=8) if ver.get("versionId") else []
+    # Source 1 (gratuite, AVEC les prompts): les images de la reponse by-hash.
+    imgs = ver.get("images") or []
+    if not imgs and ver.get("versionId"):
+        # Source 2 (fallback): endpoint /images -- images communautaires, sans prompt.
+        imgs = get_top_images(ver["versionId"], api_key, limit=8)
     saved_preview = False
     if want_preview:
         url = next((it.get("url") for it in imgs if isinstance(it, dict) and it.get("url")), None)
@@ -214,12 +260,7 @@ def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=No
                 saved_preview = True
             except Exception as e:
                 _dbg(f"civitai preview save failed: {e}")
-    examples = []
-    for it in imgs[:8]:
-        if isinstance(it, dict) and it.get("url"):
-            meta = it.get("meta") or {}
-            examples.append({"url": it["url"], "prompt": str(meta.get("prompt") or "")[:500],
-                             "width": it.get("width"), "height": it.get("height")})
+    examples = _examples_from(imgs)
     sidecar = {
         "modelName": ver.get("modelName"), "modelId": ver.get("modelId"),
         "versionId": ver.get("versionId"), "baseModel": ver.get("baseModel"),
@@ -236,7 +277,10 @@ def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=No
             json.dump(sidecar, f, ensure_ascii=False, indent=2)
     except Exception as e:
         _dbg(f"civitai.json write failed: {e}")
+    n_prompt = sum(1 for e in examples if e.get("has_prompt"))
     msg = f"CivitAI: {ver.get('modelName')} — {len(examples)} example(s)"
+    if examples:
+        msg += f" ({n_prompt} with prompt)"
     if saved_preview:
         msg += " + preview"
     if upd.get("update_available"):

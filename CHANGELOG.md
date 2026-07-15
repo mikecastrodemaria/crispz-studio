@@ -3,6 +3,35 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## 1.10.1 — 2026-07-15 — Fix: example prompts were never fetched + API key ignored on some calls
+
+Every CivitAI example was stored with an empty prompt (measured: **1130 / 1130**), so the
+viewer showed "no prompt" for all of them.
+
+- **Root cause**: examples came from the `/images` endpoint, which now returns
+  **`"meta": null`** — CivitAI no longer publishes generation parameters there. The
+  prompt was never in the response we were reading.
+- **Fix**: the **`/model-versions/by-hash` response — which we already request — carries
+  an `images` array with a *populated* `meta`** (prompt, steps, cfg, sampler…).
+  `get_version_by_hash` now returns it and the fetch uses it, so prompts arrive with
+  **zero extra requests** (`/images` is kept only as a fallback when a version has no
+  showcase image). Verified end-to-end on a real model: **2/2 examples with prompt**.
+- **API key was ignored on some calls**: `_api_get` only used a key when one was passed
+  explicitly, so `get_latest_version` / `refresh_update_flag` (called by the batch with
+  `api_key=None`) went out **anonymous** and missed gated/NSFW content. `_api_get` now
+  falls back to the global key (UI → `preferences.json` → config).
+- **HTTP errors are visible**: 401/403 (missing/invalid key) and 429 (rate limit) are now
+  logged instead of being buried in debug — with a hint when no key is set.
+- Missing prompts are now **honest**: examples carry a `has_prompt` flag and the viewer
+  says *"the uploader did not publish the generation parameters for this image"* instead
+  of implying a bug. The fetch message reports coverage (`3 example(s) (2 with prompt)`).
+- **Backfilling existing sidecars**: previously fetched models have empty prompts. Re-run
+  with `--all` to re-query metadata **without** re-downloading previews:
+  `civitai_index.bat --kind all --all` (or `./civitai_index.sh --kind all --all`).
+- Files: `cz_civitai.py` (`_api_get` key fallback + HTTP logging, `get_version_by_hash`
+  images, new `_examples_from`), `cz_assetbrowser.py` / `cz_assets.py` (`has_prompt`),
+  `tests/test_civitai.py` (+4 tests).
+
 ## 1.10.0 — 2026-07-15 — Negative LoRA weights + configurable weight range
 
 The LoRA **Weight** sliders were hard-capped at `0..2`, so **negative weights were

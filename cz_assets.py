@@ -233,7 +233,8 @@ finally{if(btn)btn.disabled=false;}}
 // --- Visionneuse d'exemples (grand format + prompt + navigation) ---
 function exRender(){var x=EX[excur];if(!x)return;exbig.src=encodeURI(x.url);
 var h='<div id="excount">'+(excur+1)+' / '+EX.length+'</div>';
-h+='<h3>Prompt</h3><div class="v">'+esc(x.prompt||'(no prompt provided by CivitAI)')+'</div>';
+h+='<h3>Prompt</h3><div class="v">'+(x.prompt?esc(x.prompt):
+'<span style="color:var(--mut)">(the uploader did not publish the generation parameters for this image)</span>')+'</div>';
 if(x.width&&x.height)h+='<h3>Size</h3><div class="v">'+esc(x.width)+' × '+esc(x.height)+'</div>';
 h+='<button onclick="exCopy()">Copy prompt</button>';
 h+='<a href="'+encodeURI(x.url)+'" target="_blank" style="margin-left:6px;color:#9fb3d6">Open image</a>';

@@ -127,6 +127,10 @@ Browser's **🔄 Fetch all missing** button runs the exact same core.
 # All LoRAs + checkpoints, only the ones missing info
 python cz_civitai_batch.py --kind all
 
+# Backfill: re-query metadata for models already fetched (fills in example prompts,
+# refreshes trigger words / version flags) WITHOUT re-downloading previews
+python cz_civitai_batch.py --kind all --all
+
 # Only LoRAs, re-download everything (overwrite existing previews/sidecars)
 python cz_civitai_batch.py --kind loras --force
 

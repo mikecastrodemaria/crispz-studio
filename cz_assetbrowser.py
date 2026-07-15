@@ -222,7 +222,8 @@ def _scan_catalog(model_dir, out_dir, kind):
                 "thumb": thumb, "img": img, "day": sub or "(root)",
                 "mode": kind[:-1], "size": f"{size_mb:.0f} MB", "prompt": trig,
                 "examples": [{"url": e.get("url"), "prompt": e.get("prompt") or "",
-                              "width": e.get("width"), "height": e.get("height")}
+                              "width": e.get("width"), "height": e.get("height"),
+                              "has_prompt": bool((e.get("prompt") or "").strip())}
                              for e in (civ.get("examples") or []) if e.get("url")][:8],
                 "civitai": civ.get("url") or "",
                 "update": bool(civ.get("update_available")),
