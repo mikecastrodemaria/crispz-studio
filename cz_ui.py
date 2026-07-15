@@ -567,7 +567,8 @@ def _apply_checkpoint(name):
     set_zimage_transformer(path)
     st, g = profile_for_model(os.path.basename(path))
     return (f"Z-Image transformer: {os.path.basename(path)} -> auto steps={st}, CFG={g} "
-            f"(reload on next run).", gr.update(value=st), gr.update(value=g), _perf_update(st, g))
+            f"(transformer swap on next run — VAE + text encoder stay loaded).",
+            gr.update(value=st), gr.update(value=g), _perf_update(st, g))
 
 
 def _apply_transformer_repo(repo):
@@ -584,7 +585,7 @@ def _apply_transformer_repo(repo):
     set_zimage_transformer(repo)
     st, g = profile_for_model(repo)
     return (f"Transformer override: {repo} -> auto steps={st}, CFG={g} "
-            f"(keeps base VAE/encoder; reload on next run).",
+            f"(keeps base VAE/encoder loaded; transformer swap on next run).",
             gr.update(value=st), gr.update(value=g), _perf_update(st, g))
 
 

@@ -392,7 +392,13 @@ What each choice does:
 | a local `.safetensors` | used as the **transformer** (VAE + Qwen3 encoder kept from the current base repo) | from the model profile |
 
 Switching the dropdown automatically syncs **steps, guidance and the Performance
-radio**. The model reloads on the next **Generate**.
+radio**. The change is applied on the next **Generate**.
+
+**Switching between two `.safetensors` (or clearing an override) reloads only the
+transformer** — the VAE, the Qwen3-4B text encoder and the tokenizer stay in VRAM, so it
+takes seconds instead of a full reload. Only picking a **different base repo** reloads
+everything (its VAE/encoder genuinely differ). Same for LoRAs: they are hot-swapped, and
+changing just a weight is instant.
 
 Steps:
 

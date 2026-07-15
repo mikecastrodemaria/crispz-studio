@@ -3,6 +3,32 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## 1.9.0 — 2026-07-15 — Switching Z-Image checkpoint reloads only the transformer
+
+Same idea as the LoRA hot-swap (1.8.1), applied to the model itself. Switching from one
+Z-Image checkpoint to another (**Z-Image checkpoint** dropdown, or the transformer
+override) used to `free_vram()` and reload the **whole** pipeline — including the
+**Qwen3-4B text encoder** and the VAE, which had not changed.
+
+- When the **base repo and offload mode are unchanged** and only the **transformer**
+  differs, `_ensure_base` now calls the new **`_swap_transformer`**: it loads *only* the
+  new transformer and swaps it into the cached pipeline (`register_modules`), keeping the
+  **VAE + Qwen3 text encoder + tokenizer + scheduler in VRAM**. The old transformer is
+  freed (`empty_cache`).
+- Covers all the "Z-Image → Z-Image" moves: single-file ↔ single-file, single-file →
+  base repo's own transformer (clearing the override), and repo-subfolder overrides.
+- Consistency taken care of: derived img2img/inpaint pipes (`from_pipe`) pointed at the
+  **old** transformer → `_DERIVED` is cleared (rebuilding is free, weights are shared);
+  LoRA adapters lived on the old transformer → they are **re-applied** to the new one.
+  Under CPU offload the accelerate hooks are removed and re-attached around the swap.
+- Safe fallback: any failure logs and falls back to the previous full reload.
+  **Changing the base repo still reloads everything** (VAE/encoder genuinely change).
+- New shared `_load_transformer()` used by both the full load and the swap.
+- Files: `cz_pipeline.py` (`_load_transformer`, `_swap_transformer`, `_ensure_base`,
+  `set_zimage_transformer`, `set_zimage_model`), `cz_ui.py` (status wording),
+  `tests/test_model_swap.py` (7 tests incl. regression guards: a single-file switch must
+  not free the pipe; a base-repo change must still free it).
+
 ## 1.8.1 — 2026-07-15 — Fix: switching a LoRA no longer reloads the whole model
 
 Enabling / changing / removing a LoRA used to **reload the entire Z-Image pipeline**

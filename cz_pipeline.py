@@ -325,24 +325,29 @@ def set_zimage_model(repo_or_path):
     if not repo_or_path:
         return
     if _is_single_file(repo_or_path):
+        # Changement de transformer seul: PAS de free_vram -> _ensure_base echangera
+        # uniquement le transformer (VAE + encodeur Qwen3 gardes en VRAM).
         if repo_or_path != ZIMAGE_TRANSFORMER:
             ZIMAGE_TRANSFORMER = repo_or_path
-            free_vram()
-            _log("Z-Image transformer (single-file) changed -> will reload")
+            _log("Z-Image transformer (single-file) changed -> transformer swap on next run")
     elif repo_or_path != BASE_REPO:
+        # Le repo de base change: VAE/encodeur/tokenizer changent aussi -> reload complet.
         BASE_REPO = repo_or_path
         free_vram()
         _log("Z-Image base repo changed -> will reload")
 
 
 def set_zimage_transformer(path):
-    """Definit (ou enleve avec '' / None) le transformer single-file."""
+    """Definit (ou enleve avec '' / None) le transformer single-file.
+
+    NE libere PAS le pipeline: a repo de base identique, _ensure_base ne rechargera que
+    le transformer (_swap_transformer) et gardera VAE + encodeur Qwen3 en VRAM."""
     global ZIMAGE_TRANSFORMER
     path = path or None
     if path != ZIMAGE_TRANSFORMER:
         ZIMAGE_TRANSFORMER = path
-        free_vram()
-        _log(f"Z-Image transformer -> {path or '(repo de base)'} -> will reload")
+        _log(f"Z-Image transformer -> {path or '(repo de base)'} "
+             "-> transformer swap on next run (base components kept)")
 
 
 def _safetensors_unsupported(path):
@@ -702,12 +707,95 @@ def _apply_loras(pipe, force=False):
         return False
 
 
+def _load_transformer():
+    """Charge UNIQUEMENT le transformer courant (sans le reste du pipeline):
+      - override single-file (.safetensors Civitai) -> from_single_file
+      - override repo HF / dossier diffusers        -> sous-dossier 'transformer'
+      - pas d'override                              -> transformer du repo de base
+    Utilise au chargement complet ET pour l'echange a chaud (_swap_transformer)."""
+    from diffusers import ZImageTransformer2DModel
+    if ZIMAGE_TRANSFORMER:
+        if _is_single_file(ZIMAGE_TRANSFORMER):
+            _log(f"loading Z-Image transformer (single-file): {ZIMAGE_TRANSFORMER} ...")
+            return _load_monitor(
+                f"transformer {os.path.basename(ZIMAGE_TRANSFORMER)}",
+                lambda: ZImageTransformer2DModel.from_single_file(
+                    ZIMAGE_TRANSFORMER, torch_dtype=DTYPE))
+        # repo HF / dossier diffusers -> charge le sous-dossier 'transformer'
+        # (utile pour les modeles comme Juggernaut-Z dont le tokenizer est
+        # incomplet: on garde VAE + encodeur + tokenizer du repo de base).
+        _log(f"loading Z-Image transformer (repo subfolder): {ZIMAGE_TRANSFORMER} ...")
+        return _load_monitor(
+            f"transformer {ZIMAGE_TRANSFORMER}",
+            lambda: ZImageTransformer2DModel.from_pretrained(
+                ZIMAGE_TRANSFORMER, subfolder="transformer", torch_dtype=DTYPE))
+    _log(f"loading Z-Image transformer (base repo): {BASE_REPO} ...")
+    return _load_monitor(
+        f"transformer {BASE_REPO}",
+        lambda: ZImageTransformer2DModel.from_pretrained(
+            BASE_REPO, subfolder="transformer", torch_dtype=DTYPE))
+
+
+def _swap_transformer(pipe):
+    """Remplace SEULEMENT le transformer du pipeline deja en cache: le VAE, l'encodeur
+    de texte Qwen3-4B, le tokenizer et le scheduler restent en VRAM (c'est eux le gros
+    du temps de chargement). Valable uniquement a repo de base + offload identiques.
+
+    Renvoie True si l'echange a reussi, False -> le caller fait un reload complet."""
+    global _APPLIED_LORAS, _DERIVED
+    t0 = time.time()
+    try:
+        _log(f"switching Z-Image transformer -> {ZIMAGE_TRANSFORMER or BASE_REPO} "
+             "(keeping VAE + text encoder in VRAM)")
+        new_t = _load_transformer()
+        old = getattr(pipe, "transformer", None)
+        # Offload: les hooks accelerate sont poses sur les composants. Il faut les retirer
+        # avant l'echange, sinon le nouveau transformer n'en a pas et l'ancien garde les siens.
+        if DEVICE == "cuda" and OFFLOAD_MODE in ("model", "sequential"):
+            try:
+                pipe.remove_all_hooks()
+            except Exception as e:
+                _dbg(f"remove_all_hooks: {e}")
+        try:
+            pipe.register_modules(transformer=new_t)   # API diffusers (met a jour le config)
+        except Exception:
+            pipe.transformer = new_t
+        if DEVICE == "cuda":
+            if OFFLOAD_MODE == "model":
+                pipe.enable_model_cpu_offload()
+            elif OFFLOAD_MODE == "sequential":
+                pipe.enable_sequential_cpu_offload()
+            else:
+                new_t.to(DEVICE)
+        del old
+        gc.collect()
+        if DEVICE == "cuda":
+            torch.cuda.empty_cache()
+        # Les pipes derives (from_pipe) pointaient sur l'ANCIEN transformer -> a reconstruire
+        # (from_pipe est gratuit: il partage les poids, il ne recharge rien).
+        _DERIVED = {}
+        # Les adaptateurs LoRA etaient poses sur l'ancien transformer -> a reposer.
+        _APPLIED_LORAS = []
+        if LORAS:
+            _apply_loras(pipe, force=True)
+        _log(f"transformer switched in {time.time() - t0:.1f}s "
+             "(VAE + text encoder kept, no full reload)")
+        return True
+    except Exception as e:
+        _log(f"transformer hot-swap failed ({e}); falling back to a full reload")
+        _APPLIED_LORAS = []
+        return False
+
+
 def _ensure_base():
     """Charge (si besoin) le pipeline de base txt2img. Gere le transformer
     single-file (Civitai) et l'offload. Cache par (repo, transformer, offload).
 
-    Les LoRA ne font PAS partie de la cle: elles sont echangees a chaud sur le pipe
-    en cache (_apply_loras) -> changer de LoRA ne recharge plus le modele."""
+    Deux echanges a chaud evitent un rechargement complet (transformer + VAE + encodeur
+    Qwen3-4B, des dizaines de secondes):
+      - LoRA differentes            -> _apply_loras (adaptateurs PEFT seuls)
+      - transformer different, meme repo de base + offload -> _swap_transformer
+        (on ne recharge QUE le transformer; VAE/encodeur/tokenizer restent en VRAM)."""
     global _BASE_PIPE, _DERIVED, _LOADED_KEY, _BASE_SCHED_CONFIG, _APPLIED_LORAS
     key = (BASE_REPO, ZIMAGE_TRANSFORMER, OFFLOAD_MODE)
     _dbg(f"_ensure_base key={key} cached={_LOADED_KEY}")
@@ -718,25 +806,19 @@ def _ensure_base():
         _dbg("base pipeline: LoRA hot-swap failed -> free + reload")
         free_vram()
     elif _BASE_PIPE is not None:
+        # Seul le transformer change (meme repo de base + meme offload) ? -> on ne recharge
+        # QUE le transformer et on garde VAE + encodeur Qwen3 + tokenizer en VRAM.
+        if (_LOADED_KEY and _LOADED_KEY[0] == BASE_REPO and _LOADED_KEY[2] == OFFLOAD_MODE
+                and _swap_transformer(_BASE_PIPE)):
+            _LOADED_KEY = key
+            return _BASE_PIPE
         _dbg("base pipeline: key changed -> free + reload")
         free_vram()
-    from diffusers import ZImagePipeline, ZImageTransformer2DModel
+    from diffusers import ZImagePipeline
     t0 = time.time()
     kwargs = {}
     if ZIMAGE_TRANSFORMER:
-        if _is_single_file(ZIMAGE_TRANSFORMER):
-            _log(f"loading Z-Image transformer (single-file): {ZIMAGE_TRANSFORMER} ...")
-            kwargs["transformer"] = _load_monitor(
-                f"transformer {os.path.basename(ZIMAGE_TRANSFORMER)}",
-                lambda: ZImageTransformer2DModel.from_single_file(
-                    ZIMAGE_TRANSFORMER, torch_dtype=DTYPE))
-        else:
-            # repo HF / dossier diffusers -> charge le sous-dossier 'transformer'
-            # (utile pour les modeles comme Juggernaut-Z dont le tokenizer est
-            # incomplet: on garde VAE + encodeur + tokenizer du repo de base).
-            _log(f"loading Z-Image transformer (repo subfolder): {ZIMAGE_TRANSFORMER} ...")
-            kwargs["transformer"] = ZImageTransformer2DModel.from_pretrained(
-                ZIMAGE_TRANSFORMER, subfolder="transformer", torch_dtype=DTYPE)
+        kwargs["transformer"] = _load_transformer()
     _log(f"loading Z-Image base: {BASE_REPO} (offload={OFFLOAD_MODE}, dtype=bf16) ... "
          "first time downloads from HF, then cached")
     pipe = _load_monitor(f"Z-Image base {BASE_REPO}",
