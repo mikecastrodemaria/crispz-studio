@@ -8,6 +8,9 @@ quick **manual** check in the running UI. Run `run.bat`, hard-refresh
 - [ ] **txt2img**: prompt + Generate → image shown, saved in `out/`, sidecar `.json` next to it.
 - [ ] **Batch**: Image number = 4 → 4 images, browse with the gallery arrows ◀▶ + fullscreen button.
 - [ ] **img2img / upscale**: Input Image → upload → Generate → upscaled result.
+- [ ] **Batch img2img**: Input Image + Refine checked, Image number = 3 → 3 variations
+      (seeds n, n+1, n+2, listed in the report). Refine **unchecked** → 1 image only
+      (no diffusion = identical copies).
 
 ## Crop editor (inputs)
 - [ ] Any image input (Describe / Source face / Vision Mix / Upscale / Reframe):

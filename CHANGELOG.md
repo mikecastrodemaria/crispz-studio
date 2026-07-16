@@ -3,6 +3,23 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## 1.11.2 — 2026-07-16 — Fix: "Image number (batch)" was ignored in img2img / Input image
+
+With **Input image** checked, `_ui_generate` called `run()` exactly once and returned a
+single image — the **Image number (batch)** slider was silently dropped, so it only ever
+worked in txt2img.
+
+- The img2img/upscale branch now loops like txt2img: **n images**, seed **+1 per image**
+  (or fixed if *Fix seed (no +1 per image)* is checked), **wildcards and random style
+  re-rolled per image**, **Stop** honoured between images. The report lists each image
+  (`1/4 (seed 1234)`); every image keeps its real saved filename for download.
+- A **seed `-1`** is now resolved to a concrete value up front (as in txt2img), so
+  **♻️ Reuse last seed** and the image metadata finally work in img2img too.
+- **Refine (img2img) unchecked** = denoise 0 = no diffusion pass, so the output is
+  deterministic and a batch would just write n identical files: the batch is clamped
+  to 1 in that case (logged).
+- Files: `cz_ui.py` (`_ui_generate`), `VALIDATION.md`.
+
 ## 1.11.1 — 2026-07-15 — Fix: SVDQuant/Nunchaku checkpoints were not filtered out
 
 The README says FP8 / SVDQ (ComfyUI) checkpoints do not load in diffusers, and

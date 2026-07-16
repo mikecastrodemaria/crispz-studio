@@ -11,6 +11,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import app  # noqa: E402
+import cz_pipeline  # noqa: E402
+import cz_ui  # noqa: E402
 from PIL import Image  # noqa: E402
 
 ok = 0
@@ -85,6 +87,45 @@ check("improve instruction has {prompt}", "{prompt}" in app.IMPROVE_INSTRUCTION)
 # Gallery load (out folder may be empty -> still returns a tuple)
 g, st, msg = app._gallery_load("out", "Newest", "")
 check("gallery_load returns list+status", isinstance(g, list) and "image" in msg)
+
+# Batch img2img: le slider "Image number" doit appeler run() n fois, seed +1 par image
+# (regression 1.11.2: la branche Input image ignorait image_number et rendait 1 image).
+_calls = []
+
+
+def _fake_run(image, source_folder, esrgan_model, factor, denoise, steps, prompt, seed,
+              tile, overlap, **kw):
+    _calls.append({"seed": seed, "denoise": denoise})
+    cz_ui._LAST_RUN_DST = None
+    return Image.new("RGB", (64, 64)), image, f"fake seed={seed}"
+
+
+def _gen_img2img(n, do_refine, seed=1234):
+    _calls.clear()
+    return cz_ui._ui_generate(
+        "a cat", "", [], False, True, Image.new("RGB", (32, 32)), "Input image",
+        None, None, None, None, False, None,
+        1024, 1024, 8, n, seed, 0.0, "balanced",
+        "esrgan.pth", True, do_refine, False, 2.0, 0.35, 15,
+        512, 64, 1024, 64, "display", "out", "png", [],
+        progress=lambda f, desc=None: None)[0]
+
+
+_real_run = cz_ui.run
+cz_ui.run = _fake_run
+try:
+    _imgs = _gen_img2img(3, True)
+    check("img2img batch: n images, seed +1 per image",
+          len(_imgs) == 3 and [c["seed"] for c in _calls] == [1234, 1235, 1236])
+    _imgs = _gen_img2img(4, False)   # refine decoche -> deterministe -> clampe a 1
+    check("img2img batch: no refine -> 1 image",
+          len(_imgs) == 1 and len(_calls) == 1 and _calls[0]["denoise"] == 0.0)
+    _imgs = _gen_img2img(2, True, seed=-1)   # seed -1 resolu en valeur concrete
+    check("img2img batch: seed -1 resolved + memorized",
+          _calls[0]["seed"] >= 0 and _calls[1]["seed"] == _calls[0]["seed"] + 1
+          and cz_pipeline._LAST_SEED == _calls[0]["seed"])
+finally:
+    cz_ui.run = _real_run
 
 # Config
 check("CONFIG loaded", isinstance(app.CONFIG, dict) and len(app.CONFIG) > 5)

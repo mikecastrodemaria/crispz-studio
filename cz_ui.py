@@ -1480,25 +1480,51 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
         if use_input and input_image is not None:
             # Refine (img2img) decoche -> denoise 0 = saute la passe de diffusion (lente).
             eff_denoise = float(denoise) if do_refine else 0.0
+            # Batch "Image number", comme en txt2img: chaque image rejoue le refine avec
+            # seed+i (wildcards + style aleatoire re-tires par image). Sans refine
+            # (denoise 0) la sortie est deterministe -> n images identiques: on clampe a 1.
+            n = max(1, int(image_number))
+            if eff_denoise <= 0.0 and n > 1:
+                _log(f"img2img: no refine (denoise 0) -> deterministic output, batch {n} -> 1")
+                n = 1
+            base_seed = int(seed) if int(seed) >= 0 else random.randint(0, 2**31 - 1)
+            cz_pipeline._LAST_SEED = base_seed
             _dbg(f"img2img: esrgan={esrgan_model} do_esrgan={do_esrgan} do_refine={do_refine} "
-                 f"factor={factor} denoise={eff_denoise} refine_steps={int(refine_steps)} tile={int(tile)} "
+                 f"n={n} seed={base_seed} factor={factor} denoise={eff_denoise} "
+                 f"refine_steps={int(refine_steps)} tile={int(tile)} "
                  f"refine_tile={int(refine_tile)} model={cz_pipeline.BASE_REPO} transformer={cz_pipeline.ZIMAGE_TRANSFORMER}")
-            try:
-                last_result, last_source, report = run(
-                    input_image, None, esrgan_model, factor, eff_denoise, refine_steps, full_prompt, seed,
-                    tile, overlap, save_mode=save_mode, output_dir=output_dir,
-                    output_format=output_format, refine_tile=refine_tile, refine_overlap=refine_overlap,
-                    do_esrgan=bool(do_esrgan), refine_first=bool(refine_first), styles=picked_styles)
-            except Exception as e:
-                _log(f"img2img/upscale error: {e}")
-                msg = f"Upscale/img2img failed: {e}"
-                if "CUDA" in str(e) or "out of memory" in str(e).lower():
-                    msg += ("  \n**VRAM saturee** (autre app GPU comme ComfyUI encore chargee ? "
-                            "spill -> timeout Windows TDR). Ferme les autres apps GPU, **redemarre "
-                            "crispz-studio** (le contexte CUDA est mort), baisse refine_tile / factor.")
-                return _done([], msg)
-            # _LAST_RUN_DST = fichier reellement sauve par run() -> vrai nom au download.
-            return _done([last_result], report, [_LAST_RUN_DST])
+            images, img_paths, reports = [], [], []
+            for i in range(n):
+                if cz_pipeline._STOP:
+                    _log(f"stop requested after {i}/{n} image(s)")
+                    break
+                s = base_seed if cz_pipeline._NO_SEED_INCREMENT else base_seed + i
+                progress(i / n, desc=f"Image {i + 1}/{n}")
+                chosen = _pick_styles(styles, style_random)
+                p_i = _apply_wildcards(prompt, _seed_rng(s), index=i)
+                fp, _fn = _apply_styles(p_i, negative, chosen)
+                if style_random:
+                    _log(f"random style #{i + 1}: {chosen}")
+                try:
+                    last_result, last_source, report = run(
+                        input_image, None, esrgan_model, factor, eff_denoise, refine_steps, fp, s,
+                        tile, overlap, save_mode=save_mode, output_dir=output_dir,
+                        output_format=output_format, refine_tile=refine_tile, refine_overlap=refine_overlap,
+                        do_esrgan=bool(do_esrgan), refine_first=bool(refine_first), styles=chosen)
+                except Exception as e:
+                    _log(f"img2img/upscale error: {e}")
+                    msg = f"Upscale/img2img failed: {e}"
+                    if "CUDA" in str(e) or "out of memory" in str(e).lower():
+                        msg += ("  \n**VRAM saturee** (autre app GPU comme ComfyUI encore chargee ? "
+                                "spill -> timeout Windows TDR). Ferme les autres apps GPU, **redemarre "
+                                "crispz-studio** (le contexte CUDA est mort), baisse refine_tile / factor.")
+                    # Les images deja produites restent affichees/sauvees.
+                    return _done(images, "  \n".join(reports + [msg]), img_paths)
+                images.append(last_result)
+                # _LAST_RUN_DST = fichier reellement sauve par run() -> vrai nom au download.
+                img_paths.append(_LAST_RUN_DST)
+                reports.append((f"**{i + 1}/{n}** (seed {s})  \n" if n > 1 else "") + report)
+            return _done(images, "  \n".join(reports), img_paths)
         # txt2img (batch image_number)
         n = max(1, int(image_number))
         # Resout un seed -1 (random) en une valeur CONCRETE -> reproductible, memorisee
