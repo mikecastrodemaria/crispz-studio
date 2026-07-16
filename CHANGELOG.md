@@ -18,7 +18,7 @@ worked in txt2img.
 - **Refine (img2img) unchecked** = denoise 0 = no diffusion pass, so the output is
   deterministic and a batch would just write n identical files: the batch is clamped
   to 1 in that case (logged).
-- Files: `cz_ui.py` (`_ui_generate`), `VALIDATION.md`.
+- Files: `cz_ui.py` (`_ui_generate`), `tools/smoke_test.py` (3 checks), `VALIDATION.md`.
 
 ## 1.11.1 — 2026-07-15 — Fix: SVDQuant/Nunchaku checkpoints were not filtered out
 
