@@ -1671,8 +1671,10 @@ def _q_label(vals, ms):
 
 
 def _q_move(items, sel, delta):
-    """Deplace l'element sel de delta (liste pure). Renvoie (items, nouvelle selection)."""
-    items = list(items or [])
+    """Deplace l'element sel de delta. Mutation IN-PLACE de l'objet d'etat partage
+    (cf. _ui_queue_run). Renvoie (items, nouvelle selection)."""
+    if not isinstance(items, list):
+        items = []
     if sel is None or not (0 <= int(sel) < len(items)):
         return items, None
     i, j = int(sel), int(sel) + int(delta)
@@ -1683,8 +1685,10 @@ def _q_move(items, sel, delta):
 
 
 def _q_remove(items, sel):
-    """Supprime l'element sel (liste pure). Renvoie (items, selection ajustee)."""
-    items = list(items or [])
+    """Supprime l'element sel. Mutation IN-PLACE de l'objet d'etat partage.
+    Renvoie (items, selection ajustee)."""
+    if not isinstance(items, list):
+        items = []
     if sel is None or not (0 <= int(sel) < len(items)):
         return items, None
     items.pop(int(sel))
@@ -1701,11 +1705,15 @@ def _q_render(items, sel=None):
 
 
 def _ui_queue_add(*args):
-    """'+ Queue': fige les 36 valeurs courantes + l'etat modele global, empile."""
+    """'+ Queue': fige les 36 valeurs courantes + l'etat modele global, empile.
+    Mutation IN-PLACE de la liste d'etat (objet partage): un 'Run queue' deja en
+    cours voit ainsi les jobs ajoutes a la volee et les execute (cf. _ui_queue_run)."""
     *vals, items = args
     job = {"vals": list(vals), "ms": _q_model_state()}
     job["label"] = _q_label(job["vals"], job["ms"])
-    items = list(items or []) + [job]
+    if not isinstance(items, list):
+        items = []
+    items.append(job)
     _log(f"job added ({len(items)} queued): {job['label']}", mod="queue")
     return (items, *_q_render(items, len(items) - 1))
 
@@ -1721,22 +1729,32 @@ def _ui_queue_remove(items, sel):
 
 
 def _ui_queue_clear(items):
+    """Vide la file IN-PLACE: interrompt aussi l'empilement d'un run en cours."""
     _log("queue cleared", mod="queue")
-    return ([], *_q_render([]))
+    if isinstance(items, list):
+        items.clear()
+    else:
+        items = []
+    return (items, *_q_render(items))
 
 
 def _ui_queue_run(items, history, progress=gr.Progress(track_tqdm=True)):
     """Execute la file en serie. Chaque job restaure son etat modele (purge VRAM auto au
     changement) puis rejoue _ui_generate. Stop = interrompt le job courant et met la
-    file en PAUSE: les jobs restants demeurent empiles."""
-    items = list(items or [])
+    file en PAUSE: les jobs restants demeurent empiles.
+
+    On opere IN-PLACE sur l'objet d'etat partage (pas de copie): les jobs ajoutes
+    pendant l'execution (via '+ Queue') sont donc pris en compte et executes a la
+    volee, et le retour n'ecrase jamais la file avec un instantane perime."""
+    if not isinstance(items, list):
+        items = []
     if not items:
-        return ([], *_q_render([]), gr.update(), "*Queue empty.*", history, history)
-    total, done, gallery_all, rep = len(items), 0, [], ""
+        return (items, *_q_render(items), gr.update(), "*Queue empty.*", history, history)
+    done, gallery_all, rep = 0, [], ""
     touched_gids = set()
     while items:
         job = items[0]
-        _log(f"running job {done + 1}/{total}: {job['label']}", mod="queue")
+        _log(f"running job {done + 1} ({len(items) - 1} more queued): {job['label']}", mod="queue")
         try:
             _q_restore_model_state(job["ms"])
             vals = list(job["vals"])
@@ -1779,7 +1797,7 @@ def _ui_queue_run(items, history, progress=gr.Progress(track_tqdm=True)):
         if not any((j.get("xyz") or {}).get("gid") == gid for j in items):
             _XYZ_PENDING.pop(gid, None)
     if items and cz_pipeline._STOP:
-        status = f"Queue paused after {done}/{total} job(s) — {len(items)} remaining (Run queue to resume)."
+        status = f"Queue paused after {done} job(s) — {len(items)} remaining (Run queue to resume)."
     else:
         status = f"Queue done: {done} job(s)."
     return (items, *_q_render(items), gallery_all, f"{status}  \n{rep}", history, history)
@@ -2088,9 +2106,12 @@ def _xyz_assemble(meta, cells, thumb=512):
 
 
 def _ui_xyz_build(*args):
-    """'Build grid -> queue': valide les axes, produit les combos, empile les jobs."""
+    """'Build grid -> queue': valide les axes, produit les combos, empile les jobs.
+    Empile IN-PLACE sur l'objet d'etat partage (comme '+ Queue') pour rester coherent
+    avec un 'Run queue' eventuellement en cours."""
     *gen_vals, xa, xv, ya, yv, za, zv, items = args
-    items = list(items or [])
+    if not isinstance(items, list):
+        items = []
     axes_in = [(a, v) for a, v in ((xa, xv), (ya, yv), (za, zv)) if a and a != "(none)"]
     if not axes_in:
         return (items, *_q_render(items), "Pick at least the X axis.")
