@@ -20,7 +20,7 @@ peft
 # Pas de dep externe -> stack stable.
 # Borne <6: Gradio 6 a un middleware Brotli buggé avec h11 ("Too little data for
 # declared Content-Length") qui spamme la console quand une reponse est interrompue.
-gradio>=4.44,<6
+gradio>=6.15.1,<7
 
 pillow
 numpy
