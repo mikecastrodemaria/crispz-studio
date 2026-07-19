@@ -31,7 +31,7 @@
 diffusers @ git+https://github.com/huggingface/diffusers@2c7efb95349296cf6bcce981ea036275a82a94df
 
 # socle torch (volontairement hors requirements.txt, indispensable ici)
-torch==2.8.0+cu128
+torch==2.13.0
 torchvision==0.23.0+cu128
 torchaudio==2.8.0+cu128
 
