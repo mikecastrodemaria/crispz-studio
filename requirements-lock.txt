@@ -1,0 +1,71 @@
+# crispz-studio — environnement verrouille, venv ISOLE.
+#
+# POURQUOI CE FICHIER
+# requirements.txt donne les bornes ("ce qui doit marcher"). Ce fichier donne
+# les versions exactes d'un environnement reellement valide sur RTX 5090 /
+# CUDA 12.8, pour reinstaller a l'identique.
+#
+# UTILISATION (venv ISOLE, sans --system-site-packages)
+#   py -3.10 -m venv .venv
+#   .venv\Scripts\python -m pip install --upgrade pip setuptools wheel
+#   .venv\Scripts\python -m pip install -r requirements-lock.txt
+#
+# ATTENTION: install.bat / install.sh creent le venv avec --system-site-packages
+# (heritage du torch global). Ce mode fait aussi hériter diffusers, accelerate,
+# numpy et pillow du global, donc des versions non choisies et partagees avec
+# les autres forks. Pour un venv reproductible, creer le venv a la main comme
+# ci-dessus plutot que via install.bat.
+#
+# NE PAS regenerer ce fichier depuis `pip freeze` d'un venv --system-site-packages:
+# on y capture tout le site-packages global (comfy-cli, yt-dlp...), un ensemble
+# non resoluble par pip (comfy-cli exige click<=8.1.8 face a click 8.4.1).
+# Regenerer plutot en relevant les versions des deps DIRECTES ci-dessous.
+#
+# Le commit diffusers epingle ici (2c7efb95) est celui de crispz-studio et
+# DIFFERE de celui des forks krea / qwen-edit (de6b0495). C'est voulu: chaque
+# repo epingle le commit sur lequel il a ete valide.
+
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# diffusers: absent de PyPI en 0.39.0.dev0 -> epingle sur le commit valide
+diffusers @ git+https://github.com/huggingface/diffusers@2c7efb95349296cf6bcce981ea036275a82a94df
+
+# socle torch (volontairement hors requirements.txt, indispensable ici)
+torch==2.8.0+cu128
+torchvision==0.23.0+cu128
+torchaudio==2.8.0+cu128
+
+# pile diffusion
+transformers==4.57.6
+accelerate==1.14.0
+safetensors==0.8.0
+huggingface-hub==0.36.2
+peft==0.19.1
+sentencepiece==0.1.96
+spandrel==0.4.1
+# pas de 'gguf' ici: crispz-studio n'a pas de chemin de chargement GGUF
+# (contrairement aux forks krea / qwen-edit).
+
+# UI / service
+gradio==5.50.0
+fastapi==0.136.3
+uvicorn==0.35.0
+
+# imagerie / utilitaires
+pillow==11.3.0
+pillow-avif-plugin==1.5.5
+numpy==1.26.4
+scipy==1.14.0
+opencv-python==4.11.0.86
+einops==0.8.0
+omegaconf==2.3.0
+protobuf==6.31.0
+requests==2.34.2
+tqdm==4.68.3
+psutil==7.2.2
+
+# onglets optionnels (Remove BG, Face Swap)
+rembg==2.0.57
+insightface==1.0.1
+onnxruntime==1.18.1
+onnxruntime-gpu==1.23.2
