@@ -683,6 +683,28 @@ def _lora_names(loras):
     return [f"cz_lora_{i}" for i in range(len(loras))]
 
 
+def _clear_loras(pipe):
+    """Retire TOUT adaptateur LoRA du pipe pour repartir d'un etat vierge.
+
+    unload_lora_weights() seul laisse, selon les versions diffusers/peft, un peft_config
+    residuel sur le transformer -> le load suivant avertit ('Already found a peft_config')
+    et, comme on reutilise les memes noms d'adaptateurs (cz_lora_i), l'ancien adaptateur
+    peut rester en place (mauvaise LoRA appliquee). On supprime donc explicitement les
+    adaptateurs restants par nom apres l'unload."""
+    try:
+        pipe.unload_lora_weights()
+    except Exception as e:
+        _dbg(f"unload_lora_weights: {e}")
+    try:
+        listed = pipe.get_list_adapters() or {}
+        names = sorted({n for lst in listed.values() for n in (lst or [])})
+        if names:
+            pipe.delete_adapters(names)
+            _dbg(f"cleared leftover LoRA adapters: {names}")
+    except Exception as e:
+        _dbg(f"delete_adapters: {e}")
+
+
 def _apply_loras(pipe, force=False):
     """Synchronise les adaptateurs LoRA du pipe avec LORAS, SANS recharger le modele.
 
@@ -705,10 +727,7 @@ def _apply_loras(pipe, force=False):
                  + ", ".join(f"{os.path.basename(p)}@{w}" for p, w in LORAS))
             return True
         if old_paths or force:
-            try:
-                pipe.unload_lora_weights()
-            except Exception as e:
-                _dbg(f"unload_lora_weights: {e}")
+            _clear_loras(pipe)
         names, weights = [], []
         for i, (p, w) in enumerate(LORAS):
             if os.path.isfile(p):

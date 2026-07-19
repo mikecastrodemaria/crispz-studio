@@ -16,19 +16,35 @@ import cz_pipeline as P  # noqa: E402
 
 
 class FakePipe:
-    """Enregistre les appels LoRA que ferait diffusers."""
+    """Enregistre les appels LoRA que ferait diffusers, en modelisant le cycle de vie
+    des adaptateurs PEFT: unload_lora_weights ne vide PAS le registre (comportement
+    observe qui declenche 'Already found a peft_config'); seul delete_adapters le fait."""
 
-    def __init__(self, fail=False):
+    def __init__(self, fail=False, unload_clears=False):
         self.calls = []
         self.fail = fail
+        self.unload_clears = unload_clears
+        self.adapters = {}          # nom -> weight_name (registre PEFT simule)
 
     def unload_lora_weights(self):
         self.calls.append(("unload",))
+        if self.unload_clears:
+            self.adapters.clear()
+
+    def get_list_adapters(self):
+        return {"transformer": list(self.adapters)} if self.adapters else {}
+
+    def delete_adapters(self, names):
+        names = [names] if isinstance(names, str) else list(names)
+        self.calls.append(("delete", tuple(names)))
+        for n in names:
+            self.adapters.pop(n, None)
 
     def load_lora_weights(self, folder, weight_name=None, adapter_name=None):
         if self.fail:
             raise RuntimeError("PEFT backend is required")
         self.calls.append(("load", weight_name, adapter_name))
+        self.adapters[adapter_name] = weight_name
 
     def set_adapters(self, names, weights):
         self.calls.append(("set_adapters", tuple(names), tuple(weights)))
@@ -95,6 +111,36 @@ def test_missing_file_is_ignored():
     assert not any(c[0] == "load" for c in pipe.calls)
 
 
+def test_swap_leaves_only_the_new_adapter_registered():
+    """Regression 'Already found a peft_config': apres un swap A -> B, le registre PEFT ne
+    doit contenir QUE B. unload_lora_weights ne vidant pas (unload_clears=False),
+    _clear_loras doit supprimer explicitement l'ancien adaptateur avant de recharger."""
+    d = tempfile.mkdtemp()
+    a, b = _lora_file(d, "a.safetensors"), _lora_file(d, "b.safetensors")
+    pipe = FakePipe(unload_clears=False)      # comme diffusers 0.39 (peft_config residuel)
+    # etat 1: A pose
+    _reset([], [(a, 1.0)])
+    assert P._apply_loras(pipe, force=True) is True
+    assert set(pipe.adapters) == {"cz_lora_0"} and pipe.adapters["cz_lora_0"] == "a.safetensors"
+    # etat 2: swap vers B
+    _reset([(a, 1.0)], [(b, 0.8)])
+    assert P._apply_loras(pipe) is True
+    assert ("delete", ("cz_lora_0",)) in pipe.calls        # l'ancien a bien ete supprime
+    assert set(pipe.adapters) == {"cz_lora_0"} and pipe.adapters["cz_lora_0"] == "b.safetensors"
+    # pas d'accumulation: un seul adaptateur, pointant sur B
+    assert len(pipe.adapters) == 1
+
+
+def test_removing_all_clears_the_registry():
+    d = tempfile.mkdtemp()
+    a = _lora_file(d, "a.safetensors")
+    pipe = FakePipe(unload_clears=False)
+    _reset([], [(a, 1.0)]); P._apply_loras(pipe, force=True)
+    _reset([(a, 1.0)], [])                     # on enleve toutes les LoRA
+    assert P._apply_loras(pipe) is True
+    assert pipe.adapters == {}                 # registre vide, rien ne traine
+
+
 def test_failure_returns_false_for_full_reload_fallback():
     d = tempfile.mkdtemp()
     a = _lora_file(d, "a.safetensors")
@@ -129,7 +175,9 @@ def test_base_cache_key_excludes_loras():
 if __name__ == "__main__":
     for fn in (test_no_change_is_a_noop, test_weight_only_change_uses_set_adapters,
                test_different_loras_unload_then_reload, test_removing_all_loras_unloads,
-               test_missing_file_is_ignored, test_failure_returns_false_for_full_reload_fallback,
+               test_missing_file_is_ignored, test_swap_leaves_only_the_new_adapter_registered,
+               test_removing_all_clears_the_registry,
+               test_failure_returns_false_for_full_reload_fallback,
                test_set_loras_does_not_free_the_pipe, test_base_cache_key_excludes_loras):
         fn()
         print(f"OK {fn.__name__}")

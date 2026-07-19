@@ -3,6 +3,23 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## 1.11.3 — 2026-07-16 — Fix: LoRA hot-swap left stale adapters ("Already found a peft_config")
+
+Switching LoRA in the UI logged a PEFT warning — *"Already found a `peft_config` attribute
+in the model. This will lead to having multiple adapters."* — because
+`unload_lora_weights()` does not reliably clear the transformer's `peft_config` in this
+diffusers version. Since the hot-swap reuses the same adapter names (`cz_lora_i`), a stale
+adapter could remain and the wrong LoRA be applied.
+
+- `_apply_loras` now clears via a new `_clear_loras(pipe)`: `unload_lora_weights()` **then**
+  an explicit `delete_adapters(get_list_adapters())` to remove any leftover adapter by name
+  — so a swap A→B leaves only B registered, no accumulation.
+- Safe by construction: the extra calls are wrapped in try/except and fall back to the
+  previous behavior on any error.
+- Files: `cz_pipeline.py` (`_clear_loras`), `tests/test_lora_hotswap.py` (+2 tests
+  modelling the adapter lifecycle: a swap leaves only the new adapter; removing all clears
+  the registry).
+
 ## 1.11.2 — 2026-07-16 — Fix: "Image number (batch)" was ignored in img2img / Input image
 
 With **Input image** checked, `_ui_generate` called `run()` exactly once and returned a
