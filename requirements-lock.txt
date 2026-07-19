@@ -52,7 +52,7 @@ fastapi==0.136.3
 uvicorn==0.35.0
 
 # imagerie / utilitaires
-pillow==11.3.0
+pillow==12.2.0
 pillow-avif-plugin==1.5.5
 numpy==1.26.4
 scipy==1.14.0
