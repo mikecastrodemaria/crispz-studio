@@ -19,7 +19,7 @@ SwarmUI. On top of crispz's upscaler it adds:
   different models/settings). **Stop pauses the queue** — remaining jobs are kept. VRAM
   is purged automatically only when the model changes between jobs.
 - **X/Y/Z grid**: vary 1–3 parameters (checkpoint, sampler, steps, guidance, denoise,
-  ESRGAN model, LoRA weight, Performance preset, Prompt S/R…) — every combo becomes a
+  ESRGAN model, LoRA file, LoRA weight, Performance preset, Prompt S/R…) — every combo becomes a
   queued job and the run ends with an **annotated contact sheet** per Z value (X columns ×
   Y rows) saved in the output folder and shown in the gallery.
 - **Tag autocomplete** in the prompt/negative fields: suggestions as you type from tag
@@ -232,9 +232,23 @@ Compare parameter variations side by side on an annotated contact sheet.
    collected cells, so the final sheet is complete.
 
 Axes: `Checkpoint`, `Sampler`, `Schedule`, `Steps`, `Guidance`, `Seed`, `ESRGAN model`,
-`Factor`, `Denoise`, `Tile`, `Refine tile`, `LoRA weight` (all active LoRAs),
+`Factor`, `Denoise`, `Tile`, `Refine tile`, `LoRA` (swap the file in LoRA slot 1),
+`LoRA + weight` (swap file *and* weight), `LoRA weight` (all active LoRAs),
 `Performance` (applies the preset), `Prompt S/R` (first value = search term, then its
 replacements; the term must exist in the prompt).
+
+**Comparing LoRA epochs.** The `LoRA` axis swaps the *file* in slot 1 while keeping the
+weight you set in the Models panel — what you want when the same LoRA was trained over
+several epochs, or re-uploaded as several CivitAI versions. Hit **`⤵ suggest`** to drop
+the full list of available LoRAs into the field, then delete the ones you don't want to
+compare. Names match like every other closed list: any unambiguous fragment works, so
+`e000020` is enough — an ambiguous or unknown one is rejected at **Build** time, not
+mid-series. `None` is a valid value for a LoRA-free control cell, and other active slots
+are left untouched. `LoRA + weight` varies both at once, written `name:weight`
+(`ollie_e10:0.6, ollie_e20:0.9`) — the suggest button pre-fills each entry with the
+current weight, so you only edit the numbers. Cell labels show the base name without
+extension, trimmed from the *left* so the `_e000020` suffix that tells your epochs apart
+stays visible.
 
 Config (`config.txt`): `"xyz_grid": {"enabled": true, "max_jobs": 100, "thumb": 512}` —
 requires `job_queue`; `enabled=false` removes the panel entirely.

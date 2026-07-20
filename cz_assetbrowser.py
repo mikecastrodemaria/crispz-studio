@@ -9,6 +9,7 @@ cz_imageio (_read_image_meta) et cz_assets (ASSET_BROWSER_HTML). Les boutons UI
 
 import os
 import json
+import time
 import datetime
 import threading
 
@@ -43,14 +44,67 @@ def _ab_resolve_dir(output_dir):
     return d if os.path.isabs(d) else os.path.join(HERE, d)
 
 
+def _replace_retry(tmp, dst, attempts=10):
+    """os.replace avec retentatives. Sur Windows il echoue si la destination est
+    ouverte par le thread qui la sert (Python n'ouvre pas en FILE_SHARE_DELETE) ;
+    une requete HTTP dure quelques ms, on retente avec un backoff plafonne
+    (~1 s au total). Si ca echoue quand meme, on laisse remonter : l'appelant
+    compte un echec et la miniature sera regeneree a la prochaine passe, ce qui
+    vaut mieux que de reecrire dst en direct et de reintroduire la course."""
+    for attempt in range(attempts):
+        try:
+            os.replace(tmp, dst)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(min(0.2, 0.02 * (attempt + 1)))
+
+
+def _write_atomic_text(path, text):
+    """Ecrit un fichier texte servi par la SPA sans jamais l'exposer a moitie ecrit
+    (meme raison que _ab_make_thumb : manifest.json et index.html sont relus par le
+    navigateur pendant que l'indexation en tache de fond les reecrit)."""
+    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        _replace_retry(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
 def _ab_make_thumb(src, dst, size, quality):
-    with Image.open(src) as im:
-        im = im.convert("RGB")
-        w, h = im.size
-        side = min(w, h)
-        im = im.crop(((w - side) // 2, (h - side) // 2, (w - side) // 2 + side, (h - side) // 2 + side))
-        im = im.resize((int(size), int(size)), Image.LANCZOS)
-        im.save(dst, "JPEG", quality=int(quality), optimize=True)
+    """Ecriture ATOMIQUE : fichier temporaire puis os.replace().
+
+    La SPA sert ces miniatures pendant que les workers les generent. Un
+    im.save(dst) direct tronque dst a 0 puis le fait grossir : une requete HTTP
+    qui tombe dans cette fenetre lit une taille (Content-Length via os.stat) puis
+    envoie plus d'octets -> h11 "Too much data for declared Content-Length", et
+    le navigateur recoit une vignette cassee. Avec os.replace, un lecteur voit
+    soit l'ancienne version complete, soit la nouvelle, jamais un fichier en
+    cours d'ecriture. Corollaire : plus de miniature tronquee avec un mtime frais
+    que les passes suivantes prendraient pour "a jour"."""
+    tmp = f"{dst}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        with Image.open(src) as im:
+            im = im.convert("RGB")
+            w, h = im.size
+            side = min(w, h)
+            im = im.crop(((w - side) // 2, (h - side) // 2, (w - side) // 2 + side, (h - side) // 2 + side))
+            im = im.resize((int(size), int(size)), Image.LANCZOS)
+            im.save(tmp, "JPEG", quality=int(quality), optimize=True)
+        _replace_retry(tmp, dst)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 def _ab_scan(d):
@@ -141,8 +195,7 @@ def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=Tr
     os.makedirs(d, exist_ok=True)
     idx_dir = os.path.join(d, "_index")
     os.makedirs(os.path.join(idx_dir, "thumbs"), exist_ok=True)
-    with open(os.path.join(d, "index.html"), "w", encoding="utf-8") as f:
-        f.write(_render_spa())
+    _write_atomic_text(os.path.join(d, "index.html"), _render_spa())
     entries, jobs = [], []
     for rel, p in _ab_scan(d):
         thumb_rel = rel  # fallback = image complete
@@ -180,8 +233,8 @@ def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=Tr
     manifest = {"count": len(entries), "blur": bool(blur), "thumb_size": int(thumb_size),
                 "pending_thumbs": len(jobs),
                 "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "images": entries}
-    with open(os.path.join(idx_dir, "manifest.json"), "w", encoding="utf-8") as f:
-        json.dump(manifest, f, ensure_ascii=False)
+    _write_atomic_text(os.path.join(idx_dir, "manifest.json"),
+                       json.dumps(manifest, ensure_ascii=False))
     if jobs and background_thumbs:
         threading.Thread(target=_ab_gen_thumbs, args=(jobs, int(thumb_size), int(quality)),
                          daemon=True).start()
@@ -196,8 +249,7 @@ def ab_open_fast(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=
     reconstruit -> pas de latence au clic (comme Fooocus)."""
     d = _ab_resolve_dir(output_dir)
     os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, "index.html"), "w", encoding="utf-8") as f:
-        f.write(_render_spa())
+    _write_atomic_text(os.path.join(d, "index.html"), _render_spa())
     # Manifest STUB immediat si aucun n'existe -> la SPA charge tout de suite (plus jamais
     # "No manifest") ; le vrai manifest (indexation en tache de fond) arrive via le polling.
     idx_dir = os.path.join(d, "_index")
@@ -205,9 +257,9 @@ def ab_open_fast(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=
     mpath = os.path.join(idx_dir, "manifest.json")
     if not os.path.isfile(mpath):
         try:
-            with open(mpath, "w", encoding="utf-8") as f:
-                json.dump({"count": 0, "building": True, "blur": bool(blur),
-                           "generated": "", "images": []}, f)
+            _write_atomic_text(mpath, json.dumps(
+                {"count": 0, "building": True, "blur": bool(blur),
+                 "generated": "", "images": []}))
         except Exception as e:
             _dbg(f"stub manifest failed: {e}")
     threading.Thread(
@@ -344,8 +396,8 @@ def ab_build_catalog(output_dir, loras_dir, checkpoints_dir):
         manifest = {"count": len(items), "kind": kind,
                     "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "images": items}
-        with open(os.path.join(idx, kind + ".json"), "w", encoding="utf-8") as f:
-            json.dump(manifest, f, ensure_ascii=False)
+        _write_atomic_text(os.path.join(idx, kind + ".json"),
+                           json.dumps(manifest, ensure_ascii=False))
         _log(f"asset-browser catalog: {kind} = {len(items)} item(s)")
     return True
 

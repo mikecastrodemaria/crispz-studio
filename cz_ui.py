@@ -1830,6 +1830,11 @@ _XYZ_AXES = {
     "Tile":         {"kind": "val", "idx": 27, "cast": int, "param": "tile"},
     "Refine tile":  {"kind": "val", "idx": 29, "cast": int, "param": "refine_tile"},
     "LoRA weight":  {"kind": "lora_weight"},
+    # Comparer plusieurs LoRA dans le slot 1 : epochs d'un meme entrainement,
+    # versions CivitAI du meme modele. Le poids courant est conserve ; l'axe
+    # "LoRA + weight" fait varier les deux ensemble ("ma_lora.safetensors:0.8").
+    "LoRA":         {"kind": "lora_name"},
+    "LoRA + weight": {"kind": "lora_name_weight"},
     "Performance":  {"kind": "performance"},
     "Prompt S/R":   {"kind": "sr"},
 }
@@ -1863,6 +1868,18 @@ def _xyz_csv_join(values):
     return ", ".join(out)
 
 
+def _xyz_current_lora_weight(default=0.8):
+    """Poids du 1er slot LoRA actif, pour pre-remplir l'axe 'LoRA + weight' et
+    pour conserver le reglage courant quand l'axe 'LoRA' ne fait varier que le nom."""
+    try:
+        cur = list(cz_pipeline.LORAS or [])
+        if cur:
+            return float(cur[0][1])
+    except Exception:
+        pass
+    return float(default)
+
+
 def _xyz_suggestions(axis):
     """Suggestions contextuelles d'un axe: (texte inserable, placeholder). Listes
     fermees de l'app pour les choix finis, calibrage pour le numerique, aide pour S/R."""
@@ -1875,6 +1892,16 @@ def _xyz_suggestions(axis):
     if kind == "checkpoint":
         names = ZIMAGE_BASE_REPOS + list_checkpoints()
         return _xyz_csv_join(names), f"e.g. {_xyz_csv_join(names[:2])}"
+    if kind in ("lora_name", "lora_name_weight"):
+        names = ["None"] + list_loras()
+        if kind == "lora_name_weight":
+            # on suffixe le poids courant : la liste inseree est directement
+            # editable, il ne reste qu'a changer les nombres.
+            w = _xyz_current_lora_weight()
+            names = [n if n == "None" else f"{n}:{w}" for n in names]
+        ph = (f"e.g. {_xyz_csv_join(names[1:3])}" if len(names) > 1
+              else f"no LoRA found in {cz_pipeline.LORAS_DIR}")
+        return _xyz_csv_join(names), ph
     if kind == "performance":
         names = list(PERFORMANCE)
         return _xyz_csv_join(names), f"e.g. {_xyz_csv_join(names[:2])}"
@@ -1968,6 +1995,32 @@ def _xyz_validate_axis(name, raw_values, base_vals, base_ms):
                 return None, f"Checkpoint: {err}"
             out.append(m)
         return out, None
+    if kind in ("lora_name", "lora_name_weight"):
+        choices = list_loras()
+        if not choices:
+            return None, f"LoRA: no file found in {cz_pipeline.LORAS_DIR}"
+        out = []
+        for v in raw_values:
+            raw = str(v).strip()
+            weight = None
+            if kind == "lora_name_weight":
+                raw, _, w = raw.rpartition(":")   # dernier ':' -> les chemins Windows passent
+                if not raw:
+                    return None, (f"LoRA + weight: '{v}' must be written name:weight "
+                                  "(e.g. my_lora.safetensors:0.8)")
+                try:
+                    weight = float(w.strip().replace(",", "."))
+                except ValueError:
+                    return None, f"LoRA + weight: invalid weight in '{v}' (expected name:0.8)"
+                raw = raw.strip()
+            if raw.lower() in ("none", "-"):      # case temoin : aucun LoRA
+                out.append(("None", weight))
+                continue
+            m, err = _xyz_match(raw, choices)
+            if err:
+                return None, f"LoRA: {err}"
+            out.append((m, weight))
+        return out, None
     choices = spec.get("choices")
     if choices:
         out = []
@@ -1999,6 +2052,17 @@ def _xyz_apply(name, value, vals, ms):
             ms["transformer"] = resolve_checkpoint(value)
     elif kind == "lora_weight":
         ms["loras"] = [(p, float(value)) for p, _w in (ms.get("loras") or [])]
+    elif kind in ("lora_name", "lora_name_weight"):
+        name, weight = value
+        if weight is None:                       # axe "LoRA" : on garde le poids courant
+            cur = list(ms.get("loras") or [])
+            weight = float(cur[0][1]) if cur else _xyz_current_lora_weight()
+        if name == "None":
+            ms["loras"] = []
+        else:
+            # remplace le slot 1 et laisse les autres slots actifs intacts
+            rest = list(ms.get("loras") or [])[1:]
+            ms["loras"] = [(_path_for_lora(name), float(weight))] + rest
     elif kind == "performance":
         st, g = PERFORMANCE[value]
         vals[_Q_IDX["gen_steps"]], vals[18] = int(st), float(g)
@@ -2006,6 +2070,27 @@ def _xyz_apply(name, value, vals, ms):
         term = spec["_term"]
         if str(value) != term:
             vals[_Q_IDX["prompt"]] = str(vals[_Q_IDX["prompt"]] or "").replace(term, str(value))
+
+
+def _xyz_fmt_value(axis, value, maxlen=28):
+    """Libelle court d'une valeur d'axe, pour l'etiquette de job et pour les
+    en-tetes de la planche. Les axes LoRA portent des tuples (nom, poids) et des
+    noms de fichiers longs : on affiche le nom de base sans extension, tronque
+    par la GAUCHE — les LoRA compares ne different souvent que par leur suffixe
+    (..._e000010 / ..._e000020), couper la fin rendrait toutes les colonnes
+    identiques."""
+    kind = (_XYZ_AXES.get(axis) or {}).get("kind")
+    if kind not in ("lora_name", "lora_name_weight"):
+        return str(value)
+    name, weight = value if isinstance(value, tuple) else (value, None)
+    if name != "None":
+        name = os.path.splitext(os.path.basename(str(name)))[0]
+    if len(name) > maxlen:
+        name = "..." + name[-(maxlen - 3):]
+    if weight is not None:
+        w = int(weight) if float(weight) == int(weight) else weight
+        name = f"{name}@{w}"
+    return name
 
 
 def _xyz_build_jobs(axes, base_vals, base_ms):
@@ -2029,12 +2114,14 @@ def _xyz_build_jobs(axes, base_vals, base_ms):
                     _xyz_apply(yn, y, vals, ms)
                 if zn is not None:
                     _xyz_apply(zn, z, vals, ms)
-                parts = [f"{xn}={x}"] + ([f"{yn}={y}"] if yn else []) + ([f"{zn}={z}"] if zn else [])
+                parts = ([f"{xn}={_xyz_fmt_value(xn, x)}"]
+                         + ([f"{yn}={_xyz_fmt_value(yn, y)}"] if yn else [])
+                         + ([f"{zn}={_xyz_fmt_value(zn, z)}"] if zn else []))
                 jobs.append({"vals": vals, "ms": ms, "label": "xyz · " + " · ".join(parts),
                              "xyz": {"gid": gid, "ix": ix, "iy": iy, "iz": iz}})
-    meta = {"gid": gid, "x": (xn, [str(v) for v in xv]),
-            "y": (yn, [str(v) for v in yv]) if yn else None,
-            "z": (zn, [str(v) for v in zv]) if zn else None,
+    meta = {"gid": gid, "x": (xn, [_xyz_fmt_value(xn, v) for v in xv]),
+            "y": (yn, [_xyz_fmt_value(yn, v) for v in yv]) if yn else None,
+            "z": (zn, [_xyz_fmt_value(zn, v) for v in zv]) if zn else None,
             "out_dir": str(base_vals[32] or DEFAULT_OUTPUT_DIR)}
     return jobs, meta
 

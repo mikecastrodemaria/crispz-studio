@@ -154,11 +154,140 @@ def test_cli_axis_name_resolution():
     assert cz_ui._xyz_match("tile", ax) == ("Tile", None)           # exact (casse ignoree) gagne
 
 
+def _with_fake_loras(names):
+    """Remplace temporairement la liste des LoRA disponibles (les tests ne doivent
+    pas dependre du contenu du dossier loras de la machine)."""
+    import contextlib
+
+    @contextlib.contextmanager
+    def _ctx():
+        orig_list, orig_dir = cz_ui.list_loras, cz_ui.cz_pipeline.LORAS_DIR
+        cz_ui.list_loras = lambda: list(names)
+        cz_ui.cz_pipeline.LORAS_DIR = "D:/loras"
+        try:
+            yield
+        finally:
+            cz_ui.list_loras = orig_list
+            cz_ui.cz_pipeline.LORAS_DIR = orig_dir
+    return _ctx()
+
+
+_FAKE_LORAS = ["epochs/ollie_e000010.safetensors",
+               "epochs/ollie_e000020.safetensors",
+               "epochs/ollie_e000030.safetensors",
+               "style/other, comma.safetensors"]
+
+
+def test_lora_name_validate():
+    vals, ms = _base_vals(), {"loras": []}
+    with _with_fake_loras(_FAKE_LORAS):
+        # resolution par fragment unique + case temoin None
+        ok, err = cz_ui._xyz_validate_axis("LoRA", ["e000010", "e000030", "None"], vals, ms)
+        assert err is None, err
+        assert ok == [("epochs/ollie_e000010.safetensors", None),
+                      ("epochs/ollie_e000030.safetensors", None), ("None", None)], ok
+        # fragment ambigu -> refus, pas de choix au hasard
+        ok, err = cz_ui._xyz_validate_axis("LoRA", ["ollie"], vals, ms)
+        assert ok is None and "ambiguous" in err, (ok, err)
+        # inconnu -> refus
+        ok, err = cz_ui._xyz_validate_axis("LoRA", ["nope"], vals, ms)
+        assert ok is None and "not found" in err, (ok, err)
+        # nom contenant une virgule (protege par des guillemets en amont)
+        ok, err = cz_ui._xyz_validate_axis("LoRA", ["other, comma"], vals, ms)
+        assert err is None and ok[0][0] == "style/other, comma.safetensors", (ok, err)
+
+
+def test_lora_name_weight_validate():
+    vals, ms = _base_vals(), {"loras": []}
+    with _with_fake_loras(_FAKE_LORAS):
+        ok, err = cz_ui._xyz_validate_axis(
+            "LoRA + weight", ["e000010:0.5", "e000020:0.9"], vals, ms)
+        assert err is None, err
+        assert ok == [("epochs/ollie_e000010.safetensors", 0.5),
+                      ("epochs/ollie_e000020.safetensors", 0.9)], ok
+        # poids manquant / illisible
+        ok, err = cz_ui._xyz_validate_axis("LoRA + weight", ["e000010"], vals, ms)
+        assert ok is None and "name:weight" in err, (ok, err)
+        ok, err = cz_ui._xyz_validate_axis("LoRA + weight", ["e000010:abc"], vals, ms)
+        assert ok is None and "invalid weight" in err, (ok, err)
+
+
+def test_lora_name_apply_and_labels():
+    base_vals = _base_vals()
+    base_ms = {"loras": [("D:/loras/old.safetensors", 0.65)],
+               "sampler": "euler", "schedule": "sgm_uniform"}
+    with _with_fake_loras(_FAKE_LORAS):
+        axes = [("LoRA", [("epochs/ollie_e000010.safetensors", None),
+                          ("epochs/ollie_e000020.safetensors", None),
+                          ("None", None)])]
+        jobs, meta = cz_ui._xyz_build_jobs(axes, base_vals, base_ms)
+    assert len(jobs) == 3
+    # l'axe "LoRA" conserve le poids courant (0.65)
+    # _path_for_lora = os.path.join -> separateurs mixtes sous Windows, comme pour
+    # les slots LoRA normaux (set_loras s'en accommode).
+    assert jobs[0]["ms"]["loras"] == [
+        (os.path.join("D:/loras", "epochs/ollie_e000010.safetensors"), 0.65)], \
+        jobs[0]["ms"]["loras"]
+    assert jobs[2]["ms"]["loras"] == []                     # None -> aucun LoRA
+    assert base_ms["loras"] == [("D:/loras/old.safetensors", 0.65)], "snapshot de base intact"
+    # etiquettes : nom de base, sans extension, colonnes distinctes
+    assert meta["x"][1] == ["ollie_e000010", "ollie_e000020", "None"], meta["x"]
+    assert len(set(meta["x"][1])) == 3
+    assert "LoRA=ollie_e000010" in jobs[0]["label"], jobs[0]["label"]
+
+
+def test_lora_name_weight_apply():
+    base_vals = _base_vals()
+    base_ms = {"loras": [], "sampler": "euler", "schedule": "sgm_uniform"}
+    with _with_fake_loras(_FAKE_LORAS):
+        axes = [("LoRA + weight", [("epochs/ollie_e000010.safetensors", 0.5),
+                                   ("epochs/ollie_e000020.safetensors", 0.9)])]
+        jobs, meta = cz_ui._xyz_build_jobs(axes, base_vals, base_ms)
+    assert jobs[0]["ms"]["loras"] == [
+        (os.path.join("D:/loras", "epochs/ollie_e000010.safetensors"), 0.5)]
+    assert jobs[1]["ms"]["loras"] == [
+        (os.path.join("D:/loras", "epochs/ollie_e000020.safetensors"), 0.9)]
+    assert meta["x"][1] == ["ollie_e000010@0.5", "ollie_e000020@0.9"], meta["x"]
+
+
+def test_lora_label_truncates_left():
+    """Les LoRA compares ne different que par leur suffixe : une troncature par la
+    droite rendrait toutes les colonnes identiques."""
+    long_a = "x" * 40 + "_e000010.safetensors"
+    long_b = "x" * 40 + "_e000020.safetensors"
+    a = cz_ui._xyz_fmt_value("LoRA", (long_a, None))
+    b = cz_ui._xyz_fmt_value("LoRA", (long_b, None))
+    assert a != b, (a, b)
+    assert a.endswith("_e000010") and b.endswith("_e000020"), (a, b)
+    assert len(a) <= 28, a
+
+
+def test_lora_suggestions():
+    with _with_fake_loras(_FAKE_LORAS):
+        fill, ph = cz_ui._xyz_suggestions("LoRA")
+        # la liste inseree doit se re-parser (le nom a virgule est guillemete)
+        assert cz_ui._xyz_parse_values(fill) == ["None"] + _FAKE_LORAS, fill
+        assert "e.g." in ph
+        fill_w, _ = cz_ui._xyz_suggestions("LoRA + weight")
+        vals = cz_ui._xyz_parse_values(fill_w)
+        assert vals[0] == "None" and all(":" in v for v in vals[1:]), vals
+        # chaque suggestion pondere doit repasser la validation
+        ok, err = cz_ui._xyz_validate_axis("LoRA + weight", vals[1:], _base_vals(), {"loras": []})
+        assert err is None, err
+    # aucun LoRA disponible -> placeholder explicite, pas de plantage
+    with _with_fake_loras([]):
+        fill, ph = cz_ui._xyz_suggestions("LoRA")
+        assert "no LoRA found" in ph, ph
+
+
 if __name__ == "__main__":
     for fn in (test_parse_values, test_match, test_validate, test_build_jobs,
                test_build_jobs_sr, test_assemble, test_csv_join_roundtrip,
                test_suggestions, test_fill_preserves_user_input,
-               test_cli_apply, test_cli_axis_name_resolution):
+               test_cli_apply, test_cli_axis_name_resolution,
+               test_lora_name_validate, test_lora_name_weight_validate,
+               test_lora_name_apply_and_labels, test_lora_name_weight_apply,
+               test_lora_label_truncates_left, test_lora_suggestions):
         fn()
         print(f"OK {fn.__name__}")
     print("All xyz tests passed.")

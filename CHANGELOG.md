@@ -3,6 +3,56 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## 1.12.0 — 2026-07-20 — X/Y/Z grid: compare LoRA files (epochs, versions)
+
+Comparing several trainings of the same LoRA — epochs of one run, or successive CivitAI
+versions — meant editing the Models panel and rebuilding a grid by hand. Two axes now do
+it in one build.
+
+- **`LoRA` axis**: swaps the *file* in LoRA slot 1 and keeps the weight set in the Models
+  panel. Other active slots are left untouched. `None` is a valid value → control cell
+  with no LoRA.
+- **`LoRA + weight` axis**: varies both at once, written `name:weight`
+  (`ollie_e10:0.6, ollie_e20:0.9`), for when the best weight differs per epoch. Split on
+  the *last* `:` so Windows paths survive.
+- **`⤵ suggest` lists the available LoRAs** (same mechanism as Checkpoint): the button
+  drops the full list into the field, ready to prune. For `LoRA + weight` each entry is
+  pre-filled with the current weight, so only the numbers need editing. The inserted list
+  is CSV-quoted, so a filename containing a comma round-trips.
+- Names resolve like every other closed list (`_xyz_match`): any unambiguous fragment
+  works (`e000020`), ambiguous or unknown ones are rejected at **Build** time rather than
+  mid-series.
+- Cell labels show the base name without extension, truncated **from the left** — LoRA
+  being compared usually differ only by their `_e000020` suffix, so trimming the end
+  would have made every column read the same.
+- Available from the CLI too: `--xyz "LoRA=ollie_e10, ollie_e20, None"`.
+- Files: `cz_ui.py` (`_XYZ_AXES` + `lora_name` / `lora_name_weight` in `_xyz_suggestions`
+  / `_xyz_validate_axis` / `_xyz_apply`, new `_xyz_fmt_value` + `_xyz_current_lora_weight`),
+  `cz_cli.py` (`_xyz_cli_apply`, labels), `tests/test_xyz.py` (+6 tests: resolution,
+  ambiguity, weights, apply, left-truncation, suggest round-trip).
+
+## 1.11.4 — 2026-07-20 — Fix: asset-browser thumbnails corrupted files being served
+
+Generating thumbnails while the Asset Browser SPA was displaying them produced
+`h11 LocalProtocolError: Too much data for declared Content-Length` bursts in the console,
+and broken images in the page. `FileResponse` takes `Content-Length` from an `os.stat`,
+then re-reads the file to send it; `im.save(dst)` truncates `dst` to 0 and grows it, so a
+request landing in that window declared one size and sent another. With 8 worker threads
+over hundreds of files, the window was wide open.
+
+- Thumbnails are now written to a temp file then `os.replace()`d (atomic): a reader sees
+  either the previous complete file or the new one, never one mid-write. Same treatment
+  for the other served files rewritten in place — `index.html`, `manifest.json` (both the
+  reindex and the stub) and `<kind>.json`; `ab_open_fast` had the same race by design,
+  since it spawns a background reindex that rewrites the manifest the SPA is polling.
+- Side effect fixed: a truncated thumbnail kept a fresh mtime, so the
+  `getmtime(thumb) >= getmtime(src)` check considered it up to date and it stayed corrupt.
+- `os.replace` retries on Windows `PermissionError` (a destination held open by the
+  serving thread), ~1 s with capped backoff; on definitive failure the thumbnail is
+  counted as failed and regenerated next pass rather than written unsafely.
+- Measured on a 1 writer / 4 reader race: 1725 Content-Length mismatches before, 0 after.
+- Files: `cz_assetbrowser.py` (`_write_atomic_text`, `_replace_retry`, `_ab_make_thumb`).
+
 ## 1.11.3 — 2026-07-16 — Fix: LoRA hot-swap left stale adapters ("Already found a peft_config")
 
 Switching LoRA in the UI logged a PEFT warning — *"Already found a `peft_config` attribute

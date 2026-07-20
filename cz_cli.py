@@ -182,6 +182,14 @@ def _xyz_cli_apply(name, value, p, base_ms):
             set_zimage_transformer(resolve_checkpoint(value))
     elif kind == "lora_weight":
         set_loras([(path, float(value)) for path, _w in (base_ms.get("loras") or [])])
+    elif kind in ("lora_name", "lora_name_weight"):
+        from cz_ui import _path_for_lora, _xyz_current_lora_weight
+        lora_name, weight = value
+        cur = list(base_ms.get("loras") or [])
+        if weight is None:                       # axe "LoRA" : garde le poids courant
+            weight = float(cur[0][1]) if cur else _xyz_current_lora_weight()
+        set_loras([] if lora_name == "None"
+                  else [(_path_for_lora(lora_name), float(weight))] + cur[1:])
     elif kind == "performance":
         st, g = PERFORMANCE[value]
         p["gen_steps"], p["guidance"] = int(st), float(g)
@@ -197,7 +205,7 @@ def _xyz_cli_run(args, parser, model_name):
     Ctrl+C = planche partielle avec les cellules deja rendues."""
     from cz_ui import (_XYZ_AXES, _xyz_parse_values, _xyz_validate_axis, _xyz_match,
                        _xyz_assemble, XYZ_FEATURE_ENABLED, XYZ_MAX_JOBS, XYZ_THUMB,
-                       _gen_meta)
+                       _gen_meta, _xyz_fmt_value)
     if not XYZ_FEATURE_ENABLED:
         parser.error("--xyz: xyz_grid is disabled in config.txt")
     if len(args.xyz) > 3:
@@ -250,7 +258,7 @@ def _xyz_cli_run(args, parser, model_name):
                     for aname, aval in combo:
                         _xyz_cli_apply(aname, aval, p, base_ms)
                     set_guidance(p["guidance"])
-                    label = " ".join(f"{n}={v}" for n, v in combo)
+                    label = " ".join(f"{n}={_xyz_fmt_value(n, v)}" for n, v in combo)
                     _log(f"combo {done + 1}/{total}: {label}", mod="xyz")
                     img, t = txt2img_run(
                         p["prompt"], args.gen_width, args.gen_height, p["gen_steps"],
@@ -280,9 +288,9 @@ def _xyz_cli_run(args, parser, model_name):
                         print(f"[{done}/{total}] {label}  ({t['txt2img']:.1f}s)")
     except KeyboardInterrupt:
         _log(f"interrupted after {done}/{total}; assembling partial sheet(s)", mod="xyz")
-    meta = {"gid": gid, "x": (xn, [str(v) for v in xv]),
-            "y": (yn, [str(v) for v in yv]) if yn else None,
-            "z": (zn, [str(v) for v in zv]) if zn else None,
+    meta = {"gid": gid, "x": (xn, [_xyz_fmt_value(xn, v) for v in xv]),
+            "y": (yn, [_xyz_fmt_value(yn, v) for v in yv]) if yn else None,
+            "z": (zn, [_xyz_fmt_value(zn, v) for v in zv]) if zn else None,
             "out_dir": args.output_dir}
     for s in _xyz_assemble(meta, cells, thumb=XYZ_THUMB):
         print(os.path.abspath(s))

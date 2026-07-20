@@ -56,10 +56,19 @@ python app.py --txt2img --prompt "..." \
 # Prompt S/R (first value = search term) + an upscale axis (needs --upscale)
 python app.py --txt2img --prompt "a red cat" --upscale \
     --xyz "prompt=cat, dog, fox" --xyz "Denoise=0.2, 0.4"
+
+# Compare LoRA epochs (partial names resolve; None = control cell without LoRA)
+python app.py --txt2img --prompt "..." \
+    --xyz "LoRA=ollie_e000010, ollie_e000020, ollie_e000030, None"
+
+# Vary LoRA file AND weight together
+python app.py --txt2img --prompt "..." \
+    --xyz "LoRA + weight=ollie_e10:0.6, ollie_e20:0.9"
 ```
 
 Axes: `Checkpoint`, `Sampler`, `Schedule`, `Steps`, `Guidance`, `Seed`, `ESRGAN model`,
-`Factor`, `Denoise`, `Tile`, `Refine tile`, `LoRA weight`, `Performance`, `Prompt S/R`.
+`Factor`, `Denoise`, `Tile`, `Refine tile`, `LoRA` (file in slot 1), `LoRA + weight`
+(`name:weight`), `LoRA weight`, `Performance`, `Prompt S/R`.
 Axis names and closed-list values resolve case-insensitively (`step` → `Steps`,
 `uni` → `unipc`); quotes protect commas; upscale-only axes require `--upscale`.
 **Ctrl+C assembles a partial sheet** with the cells rendered so far.
