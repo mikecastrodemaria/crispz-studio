@@ -475,6 +475,12 @@ FOOOCUS_CSS = """
   animation: cz-spin .7s linear infinite; }
 /* Bloc styles: scroller interne */
 #cz_styles { max-height: 340px; overflow-y: auto; padding-right: 6px; }
+/* Sliders de poids LoRA: Gradio pose overflow-x:auto sur .block avec un
+   min-width: min(160px, 100%). Dans la colonne Advanced (etroite) le contenu du
+   slider depasse et Windows affiche une barre de defilement horizontale sous
+   chaque "Weight N". Un slider n'a rien a faire defiler lateralement -> on la
+   supprime. overflow-y reste intact. */
+.cz-lora-weight { overflow-x: hidden !important; }
 /* Preview de style au survol */
 .cz-style-preview { position: fixed; z-index: 10000; pointer-events: none;
   border: 1px solid #2a3346; border-radius: 8px; overflow: hidden;
