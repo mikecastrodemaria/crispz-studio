@@ -135,8 +135,12 @@ if "!REQFILE!"=="requirements-lock.txt" echo   ^(inclut torch cu128, ~3,5 Go de 
 REM Pillow est filtre du fichier: gradio 5.50 declare pillow^<12 et refuserait
 REM de resoudre avec le pin 12.x. Il est pose juste apres, en --no-deps.
 REM Le pin reste dans le lock pour que Dependabot voie la version corrigee.
+REM onnxruntime (build CPU) est filtre lui aussi: rembg le tire en dependance, et
+REM une fois installe il MASQUE onnxruntime-gpu a l'import (meme nom de module,
+REM le CPU gagne) -^> faceswap, GFPGAN/CodeFormer et rembg tombent silencieusement
+REM sur le CPU malgre onnxruntime-gpu present. On ne garde que le build GPU.
 set "REQTMP=%TEMP%\cz_req_nopillow.txt"
-findstr /V /B /C:"pillow==" "!REQFILE!" > "!REQTMP!"
+findstr /V /B /C:"pillow==" /C:"onnxruntime==" "!REQFILE!" > "!REQTMP!"
 !RUNPY! -m pip install -r "!REQTMP!"
 if errorlevel 1 (
     echo [ERREUR] echec pip install. Verifie le log ci-dessus.

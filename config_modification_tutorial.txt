@@ -136,6 +136,50 @@ faceswap_model_path     Absolute path to an inswapper .onnx file (Face Swap tab)
 faceswap_model_url      Optional URL to auto-download inswapper_128.onnx once (into the
                         'faceswap' folder) if the model is not found locally.
 
+--- Face Swap: blending quality (UI: Face Swap > Blending quality) ---
+Background: inswapper outputs a 128px face and insightface pastes it through a plain
+RECTANGLE. That rectangle ignores whatever is in front of the face, so a hand, some
+food, a mic or a strand of hair over the mouth gets repainted by the generated pixels.
+The masks below replace that paste-back. Each model is downloaded once into 'faceswap'
+and, if unavailable, its pass is skipped with a log line (the swap still runs).
+
+faceswap_occlusion      true (default) = keep pixels that occlude the face. THE setting
+                        for shots where something touches the face. Model: dfl_xseg.onnx.
+faceswap_occluder_path  Override the local path of dfl_xseg.onnx.
+faceswap_occluder_url   Where to fetch it (default: facefusion/models-3.0.0).
+faceswap_regions        true (default) = restrict the swap to skin/brows/eyes/glasses/
+                        nose/mouth/lips, so it does not bleed onto hair, neck, clothes
+                        or background. Model: bisenet_resnet_34.onnx.
+faceswap_parser_path    Override the local path of bisenet_resnet_34.onnx.
+faceswap_parser_url     Where to fetch it.
+faceswap_color_match    true (default) = match the swapped face's LAB mean/std to the
+                        original face, so the source photo's skin tone and exposure do
+                        not show through. No model needed.
+faceswap_restore        true (default) = re-synthesise the face at 512 (a 128px swap is
+                        soft on any large image).
+faceswap_restore_blend  0..1, strength of that restore pass (default 0.8).
+faceswap_restore_model  "codeformer" (default, recovers more detail) | "gfpgan" (lighter).
+                        Falls back to gfpgan if CodeFormer cannot be fetched.
+faceswap_restore_fidelity
+                        CodeFormer only. 0 = maximum detail (more generative), 1 = maximum
+                        fidelity to the swapped pixels. A 128px swap is a heavy
+                        degradation, so 0.5-0.7 works best (default 0.7).
+faceswap_codeformer_path / faceswap_codeformer_url
+                        Local path / download URL for codeformer.onnx.
+faceswap_restore_path / faceswap_restore_url
+                        Local path / download URL for gfpgan_1.4.onnx.
+
+NOTE (GPU): if BOTH 'onnxruntime' and 'onnxruntime-gpu' are installed, the CPU build
+shadows the GPU one at import (same module name) and every ONNX pass -- face swap,
+restore, masks, rembg -- silently runs on CPU. install.bat/install.sh now filter the
+CPU build out. To check an existing venv:
+  .venv/Scripts/python -c "import onnxruntime as o; print(o.get_available_providers())"
+CUDAExecutionProvider must be listed. If not:
+  .venv/Scripts/python -m pip uninstall -y onnxruntime
+  .venv/Scripts/python -m pip install --force-reinstall --no-deps onnxruntime-gpu
+(the reinstall is required: uninstalling the CPU build also removes the shared module
+directory that onnxruntime-gpu relies on).
+
 default_save_mode       "display" (no save) | "local" | "alongside" | "custom".
 default_output_dir      Folder for "local"/"custom" save modes. Absolute paths are
                         allowed (e.g. another drive). WINDOWS PATHS IN JSON: use "/" or
