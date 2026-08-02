@@ -161,7 +161,7 @@ from cz_ollama import (  # noqa: E402,F401
 # restore) vit dans le module.
 import cz_face
 from cz_face import (  # noqa: E402,F401
-    _local_caption, _remove_bg, set_faceswap_restore,
+    _local_caption, _remove_bg, set_faceswap_restore, set_faceswap_quality,
     set_caption_model, _current_caption_kind,
 )
 
@@ -2776,12 +2776,41 @@ def build_ui():
                             faceswap_enable = gr.Checkbox(value=False, label="Apply face swap to result")
                             faceswap_restore_cb = gr.Checkbox(
                                 value=cz_face.FACESWAP_RESTORE,
-                                label="Restore face (GFPGAN) - fixes the soft 128px swap",
-                                info="Sharpens the swapped face. Downloads gfpgan_1.4.onnx on first "
-                                     "use (faceswap_restore_url in config.txt).")
+                                label="Restore face - fixes the soft 128px swap",
+                                info="Re-synthesises the face at 512. Downloads the enhancer on "
+                                     "first use (faceswap_restore_model in config.txt).")
                             faceswap_restore_blend = gr.Slider(0.0, 1.0, value=float(cz_face.FACESWAP_RESTORE_BLEND),
                                                                step=0.05, label="Restore strength")
                             faceswap_restore_status = gr.Markdown("")
+                            with gr.Accordion("Blending quality", open=False):
+                                gr.Markdown(
+                                    "*insightface pastes the swapped face through a plain "
+                                    "**rectangle**, so anything in front of the face (a hand, "
+                                    "food, a mic) gets painted over. These masks fix that.*")
+                                faceswap_occlusion_cb = gr.Checkbox(
+                                    value=cz_face.FACESWAP_OCCLUSION,
+                                    label="Occlusion mask (XSeg) - keeps objects in front of the face",
+                                    info="The single most important setting for scenes where "
+                                         "something touches the face. Downloads dfl_xseg.onnx.")
+                                faceswap_regions_cb = gr.Checkbox(
+                                    value=cz_face.FACESWAP_REGIONS,
+                                    label="Face-region mask (BiSeNet) - no bleed onto hair or neck",
+                                    info="Restricts the swap to skin/eyes/nose/mouth. "
+                                         "Downloads bisenet_resnet_34.onnx.")
+                                faceswap_color_cb = gr.Checkbox(
+                                    value=cz_face.FACESWAP_COLOR_MATCH,
+                                    label="Colour match - aligns skin tone and exposure")
+                                faceswap_restore_model = gr.Radio(
+                                    ["codeformer", "gfpgan"], value=cz_face._restore_kind(),
+                                    label="Enhancer",
+                                    info="CodeFormer recovers more detail on a heavily degraded "
+                                         "(128px) swap; GFPGAN is lighter.")
+                                faceswap_fidelity = gr.Slider(
+                                    0.0, 1.0, value=float(cz_face.FACESWAP_RESTORE_FIDELITY),
+                                    step=0.05, label="CodeFormer fidelity",
+                                    info="0 = maximum detail (more generative), "
+                                         "1 = maximum fidelity to the swap. Ignored by GFPGAN.")
+                                faceswap_quality_status = gr.Markdown("")
 
             # ===== Colonne Advanced (a droite, masquee par defaut comme Fooocus) =====
             with gr.Column(scale=2, visible=False) as advanced_col:
@@ -3189,6 +3218,10 @@ def build_ui():
         faceswap_restore_blend.change(set_faceswap_restore,
                                       [faceswap_restore_cb, faceswap_restore_blend],
                                       [faceswap_restore_status])
+        _fs_quality_inputs = [faceswap_occlusion_cb, faceswap_regions_cb, faceswap_color_cb,
+                              faceswap_restore_model, faceswap_fidelity]
+        for _c in _fs_quality_inputs:
+            _c.change(set_faceswap_quality, _fs_quality_inputs, [faceswap_quality_status])
         # Onglet unifie Inpaint / Outpaint / Reframe: le mode affiche les bons controles.
         edit_mode.change(
             lambda mo: (gr.update(visible="expand" in mo.lower()),

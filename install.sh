@@ -130,8 +130,12 @@ fi
 # Pillow est filtre du fichier: gradio 5.50 declare pillow<12 et refuserait de
 # resoudre avec le pin 12.x. Il est pose juste apres, en --no-deps. Le pin reste
 # dans le lock pour que Dependabot voie la version corrigee.
+# onnxruntime (build CPU) est filtre lui aussi: rembg le tire en dependance, et une
+# fois installe il MASQUE onnxruntime-gpu a l'import (meme nom de module, le CPU
+# gagne) -> faceswap, GFPGAN/CodeFormer et rembg tombent silencieusement sur le CPU
+# malgre onnxruntime-gpu present. On ne garde que le build GPU.
 REQTMP="${TMPDIR:-/tmp}/cz_req_nopillow.txt"
-grep -v '^pillow==' "$REQFILE" > "$REQTMP"
+grep -vE '^(pillow|onnxruntime)==' "$REQFILE" > "$REQTMP"
 $RUNPY -m pip install -r "$REQTMP"
 echo
 

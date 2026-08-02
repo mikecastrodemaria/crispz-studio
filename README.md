@@ -323,6 +323,37 @@ dep/model is missing, the run still succeeds and the report says `faceswap skipp
 > Hugging Face mirror, e.g. `ezioruan/inswapper_128.onnx`. Local model files
 > (`faceswap/`, `*.onnx`) are gitignored.
 
+### Blending quality
+
+inswapper produces a **128 px** face and insightface pastes it back through a plain
+**rectangle**. That rectangle is blind to what is in front of the face: a hand, food,
+a microphone or a strand of hair falling over the mouth gets painted over by the
+generated pixels. crispz-studio therefore does its own compositing, with four passes
+you can toggle under *Face Swap → Blending quality* (all on by default):
+
+| Setting | What it fixes | Model (auto-downloaded) |
+|---|---|---|
+| **Occlusion mask** | objects *in front of* the face are preserved | `dfl_xseg.onnx` |
+| **Face-region mask** | no bleed onto hair, neck, clothes, background | `bisenet_resnet_34.onnx` |
+| **Colour match** | skin tone / exposure differences between source and target | — |
+| **Restore** | the soft 128 px swap, re-synthesised at 512 | `codeformer.onnx` or `gfpgan_1.4.onnx` |
+
+The occlusion mask is the important one: without it, any shot where something touches
+the face comes out broken around the mouth. Each model is fetched once into `faceswap/`
+and can be pointed elsewhere via `faceswap_occluder_path` / `faceswap_parser_path` /
+`faceswap_codeformer_path`. If one is unavailable the pass is skipped with a log line —
+the swap still runs. Total cost is about **90 ms per face** on GPU.
+
+The enhancer is `codeformer` by default (`faceswap_restore_model`); its
+`faceswap_restore_fidelity` goes from 0 (maximum detail, more generative) to 1 (maximum
+fidelity to the swapped pixels) — 0.5–0.7 suits a 128 px swap. GFPGAN ignores it.
+
+> **Not the same thing as Fooocus's “FaceSwap”.** Fooocus conditions the *diffusion*
+> on a face embedding (IP-Adapter face), so the whole image is generated coherently and
+> occlusion can never break — but the identity is only approximate, and it cannot be
+> applied to an existing image. The swap here transfers the *exact* face as a
+> post-process. Different trade-offs, not a better/worse pair.
+
 ## Text -> Image
 
 ```bash

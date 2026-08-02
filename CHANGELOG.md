@@ -3,6 +3,34 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Face Swap: occlusion-aware blending, and ONNX actually on the GPU
+
+**The bug.** inswapper renders a 128 px face and insightface pastes it back through a
+plain rectangle (`img_white` in `model_zoo/inswapper.py`), which is blind to depth: on a
+shot of someone eating, the ice cream and the hand holding it sat inside that rectangle
+and were repainted by the generated face. The mouth area came out broken on every image
+where an object touches the face.
+
+**The fix.** `_faceswap` now uses `paste_back=False` and composites itself, through a
+mask built from an **occlusion pass** (XSeg, `dfl_xseg.onnx`) intersected with a
+**face-region pass** (BiSeNet, `bisenet_resnet_34.onnx`), both computed on the *original*
+frame — the only place the occluding object is still visible. The restore pass is masked
+the same way, so it cannot repaint over an occlusion either. Added **LAB colour matching**
+between the swapped and original face, and **CodeFormer** as the default enhancer
+(`faceswap_restore_model`, with a `faceswap_restore_fidelity` weight) over GFPGAN.
+`faceswap_restore` now defaults to **on**: without it a 128 px swap is visibly soft.
+Each model is fetched once and every pass degrades cleanly to a log line if absent.
+Cost: ~90 ms per face on GPU.
+
+**GPU.** `requirements-lock.txt` pinned both `onnxruntime` and `onnxruntime-gpu` (rembg
+pulls the CPU build). Same module name, so the CPU build **shadowed** the GPU one and
+every ONNX pass — swap, restore, masks, rembg — had been running on CPU. The installers
+now filter the CPU build out of the lock, like the existing Pillow filter.
+
+**Not** a replacement for Fooocus-style FaceSwap, which conditions the diffusion itself
+(IP-Adapter face) rather than pasting afterwards. No IP-Adapter or ControlNet exists for
+Z-Image-Turbo today — only LoRAs — so the post-process remains the only route here.
+
 ## 1.15.0 — 2026-07-28 — Release: Asset Browser rearchitecture, security, GPU-agnostic tooling
 
 Consolidates everything since **v1.11.2**. Nothing new here beyond the last build change
