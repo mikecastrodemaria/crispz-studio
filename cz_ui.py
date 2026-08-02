@@ -2992,7 +2992,8 @@ def build_ui():
                                     _lw = gr.Slider(cz_pipeline.LORA_WEIGHT_MIN,
                                                     cz_pipeline.LORA_WEIGHT_MAX,
                                                     value=float(cz_pipeline.LORA_WEIGHT),
-                                                    step=0.05, label=f"Weight {_i + 1}", scale=2)
+                                                    step=0.05, label=f"Weight {_i + 1}", scale=2,
+                                                    elem_classes="cz-lora-weight")
                                 lora_dds.append(_dd)
                                 lora_lws.append(_lw)
                                 lora_rows.append(_row)
