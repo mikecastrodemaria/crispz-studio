@@ -1,7 +1,16 @@
 # NE PAS reinstaller torch : garder ton build PyTorch 2.7 / CUDA 12.8 existant.
 # Z-Image n'est dans diffusers que depuis la source, d'ou le git+ ci-dessous.
 
-git+https://github.com/huggingface/diffusers
+# ATTENTION : le commit est EPINGLE volontairement.
+# Un `git+.../diffusers` sans commit prend le HEAD du jour, ce qui n'est pas une
+# borne mais une bombe a retardement : diffusers main est passe a
+# huggingface-hub>=1.23 alors que transformers<5 exige huggingface-hub<1.0
+# -> ResolutionImpossible a l'installation, pour tout le monde, du jour au
+# lendemain. Ce commit est celui sur lequel CE repo a ete valide (il differe
+# d'un fork a l'autre, cf. requirements-lock.txt).
+# Pour tenter une version plus recente : remplacer le hash ci-dessous, relancer
+# install.bat, et verifier que `transformers` s'installe encore.
+git+https://github.com/huggingface/diffusers@2c7efb95349296cf6bcce981ea036275a82a94df
 
 # transformers >= 4.51 requis : Z-Image Turbo utilise un encodeur Qwen3 (Qwen3Model),
 # absent avant 4.51 (echec "module transformers has no attribute Qwen3Model").
