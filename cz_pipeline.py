@@ -130,9 +130,23 @@ if SAMPLER not in SAMPLER_CHOICES:
 # (linspace + dynamic shift). beta/karras/exponential = re-mapping des sigmas applique
 # PAR-DESSUS le schedule du pipeline (FlowMatchEuler/UniPC: use_*_sigmas). beta -> scipy.
 SCHEDULE_CHOICES = ("sgm_uniform", "beta", "karras", "exponential")
-SCHEDULE = (os.environ.get("ZIMAGE_SCHEDULE") or CONFIG.get("default_schedule") or "sgm_uniform").strip().lower()
-if SCHEDULE not in SCHEDULE_CHOICES:
-    SCHEDULE = "sgm_uniform"
+# 'simple' (ComfyUI) designe EXACTEMENT le schedule natif expose ici sous 'sgm_uniform':
+# les sigmas que le pipeline Z-Image impose sont linspace(1, 1/n, n)
+# (get_default_z_image_sigmas), ce que ComfyUI appelle 'simple' sur un modele flow. Accepte
+# en entree partout (config/env/CLI/XYZ) pour recopier une recette CivitAI au mot pres,
+# mais normalise vers le nom canonique: metadonnees et presets ne portent qu'un seul nom.
+_SCHEDULE_ALIASES = {"simple": "sgm_uniform"}
+SCHEDULE_INPUTS = SCHEDULE_CHOICES + tuple(_SCHEDULE_ALIASES)   # listes ouvertes (CLI/XYZ)
+
+
+def _norm_schedule(name, default="sgm_uniform"):
+    """Nom de schedule -> nom canonique (alias resolus). Inconnu -> `default`."""
+    n = (name or "").strip().lower()
+    n = _SCHEDULE_ALIASES.get(n, n)
+    return n if n in SCHEDULE_CHOICES else default
+
+
+SCHEDULE = _norm_schedule(os.environ.get("ZIMAGE_SCHEDULE") or CONFIG.get("default_schedule"))
 _SCHEDULE_FLAG = {"beta": "use_beta_sigmas", "karras": "use_karras_sigmas",
                   "exponential": "use_exponential_sigmas"}  # sgm_uniform -> aucun flag (natif)
 # Config natif du scheduler du modele (capture au 1er chargement) -> base de construction
@@ -249,12 +263,10 @@ def set_sampler(name):
 
 
 def set_schedule(name):
-    """Change le schedule de sigmas (sgm_uniform/beta/karras/exponential) et le
-    re-applique aux pipes en cache."""
+    """Change le schedule de sigmas (sgm_uniform/beta/karras/exponential, alias 'simple'
+    = sgm_uniform) et le re-applique aux pipes en cache."""
     global SCHEDULE
-    name = (name or "sgm_uniform").strip().lower()
-    if name not in SCHEDULE_CHOICES:
-        name = "sgm_uniform"
+    name = _norm_schedule(name)
     if name != SCHEDULE:
         SCHEDULE = name
         _reapply_sampler_all()

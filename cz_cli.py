@@ -23,7 +23,7 @@ from cz_ui import (  # noqa: F401
     # orchestration / pipeline (re-exportes par cz_ui)
     run, process_one, txt2img_run, outpaint, build_ui,
     free_vram, set_offload_mode, set_guidance, set_sampler, SAMPLER_CHOICES,
-    set_schedule, SCHEDULE_CHOICES, set_esrgan_dir, set_zimage_model,
+    set_schedule, SCHEDULE_INPUTS, set_esrgan_dir, set_zimage_model,
     set_zimage_transformer, set_loras_dir, set_loras, list_esrgan_models,
     build_output_path, save_image, _faceswap, _remove_bg,
     _ollama_vision_models, _ollama_describe, _ollama_compose,
@@ -352,9 +352,11 @@ def cli_main(argv=None):
                         help="Sampler: euler (native flow, default) or unipc (UniPC multistep). "
                              "Default from config default_sampler. (DPM++/DPM2a unavailable: "
                              "Z-Image forces custom sigmas.)")
-    parser.add_argument("--schedule", choices=list(SCHEDULE_CHOICES), default=None,
+    parser.add_argument("--schedule", choices=list(SCHEDULE_INPUTS), default=None,
                         help="Sigma schedule (ComfyUI-style): sgm_uniform (native Z-Image, "
-                             "default), beta, karras, exponential. Default from default_schedule.")
+                             "default), beta, karras, exponential. 'simple' is accepted as an "
+                             "alias of sgm_uniform (same curve, ComfyUI's name for it). "
+                             "Default from default_schedule.")
     parser.add_argument("--no-esrgan", action="store_true",
                         help="img2img only: skip the ESRGAN upscale, just run the Z-Image refine "
                              "on the input at native size (no enlargement).")

@@ -3,6 +3,19 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Schedule: `simple` accepted as an alias of `sgm_uniform`
+
+**Why.** ComfyUI and CivitAI recipes name the native flow schedule `simple`. Ours was
+only reachable as `sgm_uniform`, so every copied recipe needed a mental translation and
+`--schedule simple` was rejected outright.
+
+**What.** `simple` is now accepted wherever a schedule is written (`default_schedule`,
+`ZIMAGE_SCHEDULE`, `--schedule`, the XYZ `Schedule` axis) and normalised back to
+`sgm_uniform`, so metadata and presets keep one name for one curve. It is **not** a
+second entry in the UI dropdown: same schedule, not a new option. The sigmas the pipeline
+hands to the scheduler are `linspace(1, 1/steps, steps)` — exactly what ComfyUI's
+`simple` produces on a flow model, so the alias is an equality, not an approximation.
+
 ## Unreleased — CivitAI: the ⚠ update badge now compares within the same base model
 
 **The bug.** The check took `modelVersions[0]` from `GET /models/<id>` — the most recent
