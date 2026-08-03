@@ -94,10 +94,17 @@ ASPECT_RATIOS = {
     "896 x 1152  (7:9)":   (896, 1152),
     "1216 x 832  (3:2)":   (1216, 832),
     "832 x 1216  (2:3)":   (832, 1216),
+    "1024 x 1536  (2:3)":  (1024, 1536),
     "1344 x 768  (16:9)":  (1344, 768),
     "768 x 1344  (9:16)":  (768, 1344),
+    "864 x 1536  (9:16)":  (864, 1536),
     "1536 x 640  (21:9)":  (1536, 640),
 }
+# Les deux formats en 1536 de haut sont ceux qu'on lit sur les recettes CivitAI/ComfyUI
+# (ratios exacts, contrairement aux 832x1216 / 768x1344 herites de Fooocus qui n'en sont
+# qu'approches). Ils pesent ~1,5 Mpix la ou le reste de la liste tourne autour de 1 Mpix:
+# plus lent, et un modele entraine autour du million de pixels peut y deriver en
+# composition (sujet duplique). A preferer quand la recette suivie les demande.
 # Performance facon Fooocus -> (gen_steps, guidance) pour le modele charge.
 PERFORMANCE = {
     "Turbo (8 steps)":    (8, 0.0),
