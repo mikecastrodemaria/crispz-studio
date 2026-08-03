@@ -227,7 +227,8 @@ from cz_pipeline import (  # noqa: E402,F401
     list_checkpoints, list_loras, set_checkpoints_dir, set_checkpoints_extra_dir,
     resolve_checkpoint, set_loras_dir, lora_keywords,
     set_omni_model, check_omni_available, set_offload_mode, free_vram, set_loras,
-    set_sampler, SAMPLER_CHOICES, set_schedule, SCHEDULE_CHOICES, set_force_ratio,
+    set_sampler, SAMPLER_CHOICES, set_schedule, SCHEDULE_CHOICES, SCHEDULE_INPUTS,
+    _norm_schedule, set_force_ratio,
     generate, generate_omni, inpaint_run, outpaint, outpaint_directions, reframe,
     txt2img_run, process_one, round_to_multiple, _reframe_canvas, _gen_meta,
 )
@@ -1819,7 +1820,9 @@ _XYZ_AXES = {
     "(none)":       None,
     "Checkpoint":   {"kind": "checkpoint"},
     "Sampler":      {"kind": "ms", "key": "sampler", "choices": lambda: list(SAMPLER_CHOICES)},
-    "Schedule":     {"kind": "ms", "key": "schedule", "choices": lambda: list(SCHEDULE_CHOICES)},
+    # SCHEDULE_INPUTS et non SCHEDULE_CHOICES: 'simple' (alias de sgm_uniform) est accepte
+    # ici aussi -- c'est justement ou l'on recopie une recette CivitAI telle quelle.
+    "Schedule":     {"kind": "ms", "key": "schedule", "choices": lambda: list(SCHEDULE_INPUTS)},
     "Steps":        {"kind": "val", "idx": 15, "cast": int, "param": "gen_steps"},
     "Guidance":     {"kind": "val", "idx": 18, "cast": float, "param": "guidance"},
     "Seed":         {"kind": "val", "idx": 17, "cast": int, "param": "seed"},
@@ -2870,12 +2873,11 @@ def build_ui():
                                      "Z-Image forces custom sigmas.)")
                             schedule_dd = gr.Dropdown(
                                 list(SCHEDULE_CHOICES),
-                                value=(CONFIG.get("default_schedule") or "sgm_uniform").strip().lower()
-                                if (CONFIG.get("default_schedule") or "sgm_uniform").strip().lower() in SCHEDULE_CHOICES
-                                else "sgm_uniform",
+                                value=_norm_schedule(CONFIG.get("default_schedule")),
                                 label="Schedule", scale=1,
-                                info="sigma schedule (ComfyUI-style). sgm_uniform = native Z-Image. "
-                                     "beta/karras/exponential remap the sigmas.")
+                                info="sigma schedule (ComfyUI-style). sgm_uniform = native Z-Image "
+                                     "(what ComfyUI calls 'simple'). beta/karras/exponential remap "
+                                     "the sigmas.")
                         # set_sampler/set_schedule renvoient un statut: on l'AFFICHE au lieu
                         # de le jeter (sinon Gradio avertit "returned too many output values").
                         sampler_status = gr.Markdown(

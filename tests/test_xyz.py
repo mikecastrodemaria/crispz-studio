@@ -55,6 +55,28 @@ def test_validate():
     assert ok == [0.5, 1.0] and err is None
     ok, err = cz_ui._xyz_validate_axis("Sampler", ["uni"], vals, ms)
     assert ok == ["unipc"] and err is None
+    # 'simple' (nom ComfyUI du schedule natif) doit passer comme alias de sgm_uniform
+    ok, err = cz_ui._xyz_validate_axis("Schedule", ["simple", "beta"], vals, ms)
+    assert ok == ["simple", "beta"] and err is None
+
+
+def test_schedule_alias_simple():
+    """'simple' = sgm_uniform: accepte partout en entree, normalise en sortie (les
+    metadonnees et les presets ne doivent porter qu'un seul nom pour une seule courbe)."""
+    assert cz_pipeline._norm_schedule("simple") == "sgm_uniform"
+    assert cz_pipeline._norm_schedule(" SIMPLE ") == "sgm_uniform"
+    assert cz_pipeline._norm_schedule("beta") == "beta"
+    assert cz_pipeline._norm_schedule("nope") == "sgm_uniform"      # inconnu -> defaut
+    assert "simple" in cz_pipeline.SCHEDULE_INPUTS
+    assert "simple" not in cz_pipeline.SCHEDULE_CHOICES             # pas un 2e choix UI
+    old = cz_pipeline.SCHEDULE
+    try:
+        cz_pipeline.set_schedule("beta")
+        assert cz_pipeline.SCHEDULE == "beta"
+        cz_pipeline.set_schedule("simple")
+        assert cz_pipeline.SCHEDULE == "sgm_uniform"
+    finally:
+        cz_pipeline.SCHEDULE = old
 
 
 def test_build_jobs():
@@ -290,7 +312,8 @@ def test_lora_suggestions():
 
 
 if __name__ == "__main__":
-    for fn in (test_parse_values, test_match, test_validate, test_build_jobs,
+    for fn in (test_parse_values, test_match, test_validate, test_schedule_alias_simple,
+               test_build_jobs,
                test_build_jobs_sr, test_assemble, test_csv_join_roundtrip,
                test_suggestions, test_fill_preserves_user_input,
                test_cli_apply, test_cli_axis_name_resolution,

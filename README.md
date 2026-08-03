@@ -420,7 +420,10 @@ Next to the **CFG guidance** slider there are two dropdowns, ComfyUI-style:
   back to Euler.
 - **Schedule** (the sigma schedule, = ComfyUI's "scheduler"): `sgm_uniform` (the
   native Z-Image linear schedule, default), `beta`, `karras`, `exponential`. These
-  remap the sigmas on top of the model's dynamic shift.
+  remap the sigmas on top of the model's dynamic shift. **`simple` is accepted as an
+  alias of `sgm_uniform`** wherever a schedule is written (config, `--schedule`, XYZ
+  axis) — it is the same curve under ComfyUI's name, so a CivitAI recipe copies over
+  without translation. It is normalised back to `sgm_uniform` in metadata and presets.
 
 Both apply to txt2img / img2img / inpaint (not Omni). CLI: `--sampler`, `--schedule`.
 For a **Z-Image Base** checkpoint (e.g. Civitai), the typical recipe is CFG ~4-5,
@@ -756,7 +759,7 @@ Every UI setting has a CLI flag and a prefs key:
 | ESRGAN tile | `--tile` | `tile` | `760` |
 | Overlap | `--overlap` | `overlap` | `32` |
 | Sampler | `--sampler {euler,unipc,lcm}` | "Sampler" dropdown (next to CFG) | `default_sampler` (`euler`) |
-| Sigma schedule | `--schedule {sgm_uniform,beta,karras,exponential}` | "Schedule" dropdown | `default_schedule` (`sgm_uniform`) |
+| Sigma schedule | `--schedule {sgm_uniform,beta,karras,exponential}` (`simple` = `sgm_uniform`) | "Schedule" dropdown | `default_schedule` (`sgm_uniform`) |
 | CPU offload (diffusion) | `--cpu-offload` | - | `none` |
 | Diffusion tile (4K+) | `--refine-tile` | - | `0` (whole image) |
 | Diffusion tile overlap | `--refine-overlap` | - | `64` |
