@@ -160,6 +160,71 @@ def test_get_version_by_hash_carries_images(monkeypatch=None):
     assert ver["trainedWords"] == ["trg"] and ver["versionId"] == 42
 
 
+def _with_model_payload(payload, fn):
+    old = cz_civitai._api_get
+    cz_civitai._api_get = lambda ep, params=None, api_key=None, timeout=20: payload
+    try:
+        return fn()
+    finally:
+        cz_civitai._api_get = old
+
+
+# Page CivitAI typique: la derniere version publiee l'est pour une AUTRE base.
+_MIXED_BASES = {"modelVersions": [
+    {"id": 300, "name": "3.0 (Krea2)", "baseModel": "Krea 2"},
+    {"id": 200, "name": "2.0", "baseModel": "Z-Image"},
+    {"id": 100, "name": "1.0", "baseModel": "Z Image"},     # libelle variant -> meme base
+]}
+
+
+def test_latest_version_ignores_other_base_models():
+    """Regression: '3.0 (Krea2)' etait signale comme update d'un LoRA Z-Image alors qu'il
+    ne tourne pas dessus. La derniere version de la MEME base doit gagner."""
+    got = _with_model_payload(_MIXED_BASES,
+                              lambda: cz_civitai.get_latest_version(9, base_model="Z-Image"))
+    assert got["id"] == 200 and got["name"] == "2.0"
+    # Sans filtre (base locale inconnue) -> comportement historique: la plus recente.
+    raw = _with_model_payload(_MIXED_BASES, lambda: cz_civitai.get_latest_version(9))
+    assert raw["id"] == 300
+
+
+def test_update_flag_not_raised_by_a_new_base_model():
+    upd = _with_model_payload(
+        _MIXED_BASES, lambda: cz_civitai._update_fields(9, 200, base_model="Z-Image"))
+    assert upd["update_available"] is False, "Krea2 n'est pas un update pour du Z-Image"
+    # Vraie mise a jour: on est sur la 1.0 Z-Image -> la 2.0 Z-Image (pas la 3.0 Krea2).
+    upd = _with_model_payload(
+        _MIXED_BASES, lambda: cz_civitai._update_fields(9, 100, base_model="z image"))
+    assert upd["update_available"] is True and upd["latest_versionId"] == 200
+    assert upd["latest_versionName"] == "2.0"
+
+
+def test_update_flag_infers_base_from_our_own_version():
+    """Vieux sidecar sans 'baseModel': la base est deduite de NOTRE versionId dans la
+    reponse (deja telechargee) -> le filtre marche sans requete supplementaire."""
+    upd = _with_model_payload(_MIXED_BASES, lambda: cz_civitai._update_fields(9, 200))
+    assert upd["update_available"] is False
+    upd = _with_model_payload(_MIXED_BASES, lambda: cz_civitai._update_fields(9, 100))
+    assert upd["update_available"] is True and upd["latest_versionId"] == 200
+
+
+def test_update_flag_when_no_version_shares_our_base():
+    """Le fichier local est d'une base absente de la page (ou renommee cote API) ->
+    pas d'update plutot qu'un faux positif."""
+    upd = _with_model_payload(
+        _MIXED_BASES, lambda: cz_civitai._update_fields(9, 200, base_model="Flux.1 D"))
+    assert upd["update_available"] is False and upd["latest_versionId"] is None
+
+
+def test_update_flag_when_api_omits_base_models():
+    """Si l'API ne renseigne aucun baseModel, l'info est indisponible (pas
+    contradictoire) -> on ne filtre pas et on garde le comportement historique."""
+    payload = {"modelVersions": [{"id": 300, "name": "3.0"}, {"id": 200, "name": "2.0"}]}
+    upd = _with_model_payload(
+        payload, lambda: cz_civitai._update_fields(9, 200, base_model="Z-Image"))
+    assert upd["update_available"] is True and upd["latest_versionId"] == 300
+
+
 def test_api_get_falls_back_to_global_key():
     """api_key=None doit utiliser la cle globale (sinon les appels internes partent
     anonymes et ratent les contenus gates/NSFW)."""
@@ -197,7 +262,12 @@ if __name__ == "__main__":
                test_get_version_by_hash_carries_images, test_api_get_falls_back_to_global_key,
                test_sha256_is_cached_and_reused, test_sha256_cache_invalidated_when_size_changes,
                test_metadata_sidecar_wins_over_our_cache,
-               test_fetch_sidecar_merge_keeps_hash_cache):
+               test_fetch_sidecar_merge_keeps_hash_cache,
+               test_latest_version_ignores_other_base_models,
+               test_update_flag_not_raised_by_a_new_base_model,
+               test_update_flag_infers_base_from_our_own_version,
+               test_update_flag_when_no_version_shares_our_base,
+               test_update_flag_when_api_omits_base_models):
         fn()
         print(f"OK {fn.__name__}")
     print("All civitai tests passed.")

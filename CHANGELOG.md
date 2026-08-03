@@ -3,6 +3,21 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — CivitAI: the ⚠ update badge now compares within the same base model
+
+**The bug.** The check took `modelVersions[0]` from `GET /models/<id>` — the most recent
+version of the *page*, whatever it was trained on. A LoRA page that moves on to another
+base (a *3.0 (Krea2)* release over a Z-Image *2.0*) flagged every local copy as outdated,
+pointing at a file that would not even load in the app.
+
+**The fix.** `get_latest_version` takes the local `baseModel` (from the sidecar, or
+deduced from our own version inside the same response for pre-existing sidecars) and only
+considers versions published for that base — normalised comparison, so *Z-Image* /
+*Z Image* / *zimage* match. No version shares our base → no update, rather than a false
+positive. If the API returns no `baseModel` at all, nothing is filtered: the information
+is missing, not contradictory. Stale flags clear on the next `civitai_index` pass (or
+**🔄 Fetch all missing**), which re-checks already-enriched models without re-downloading.
+
 ## Unreleased — Face Swap: occlusion-aware blending, and ONNX actually on the GPU
 
 **The bug.** inswapper renders a 128 px face and insightface pastes it back through a

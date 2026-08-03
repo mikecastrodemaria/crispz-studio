@@ -15,6 +15,7 @@ Browser). An optional CivitAI API key (config 'civitai_api_key') is passed as a 
 
 import os
 import io
+import re
 import json
 import hashlib
 import urllib.request
@@ -176,25 +177,48 @@ def get_version_by_hash(sha, api_key=None):
     }
 
 
-def get_latest_version(model_id, api_key=None):
-    """Derniere version publiee d'un modele CivitAI: {id, name} ou None. GET /models/<id>
-    -> modelVersions[0] est la plus recente (l'API les trie du plus recent au plus ancien)."""
+def _norm_base(s):
+    """'Z-Image', 'Z Image', 'zimage' -> 'zimage'. Les libelles de modele de base CivitAI
+    varient en casse/espaces/tirets d'une version a l'autre -> comparaison tolerante."""
+    return re.sub(r"[^a-z0-9]+", "", str(s or "").lower())
+
+
+def get_latest_version(model_id, api_key=None, base_model=None, current_version_id=None):
+    """Derniere version publiee d'un modele CivitAI: {id, name, baseModel} ou None.
+    GET /models/<id> -> modelVersions[0] est la plus recente (l'API les trie du plus recent
+    au plus ancien).
+
+    base_model (ex. 'Z-Image') restreint la recherche aux versions du MEME modele de base.
+    Beaucoup de pages CivitAI publient la suite d'un LoRA pour une AUTRE base (Krea2, Flux,
+    SDXL...): ce n'est pas une mise a jour de notre fichier, qui ne tournerait pas dessus.
+    Aucune version de la meme base -> None (pas d'update). Si l'API ne renseigne le
+    baseModel nulle part, on ne filtre pas: l'info est indisponible, pas contradictoire.
+    base_model inconnue (vieux sidecar) -> deduite de current_version_id dans la reponse."""
     if not model_id:
         return None
     data = _api_get(f"/models/{model_id}", api_key=api_key)
-    vers = (data or {}).get("modelVersions") or []
-    if not vers or not isinstance(vers[0], dict):
+    vers = [v for v in ((data or {}).get("modelVersions") or []) if isinstance(v, dict)]
+    want = _norm_base(base_model)
+    if not want and current_version_id is not None:
+        want = _norm_base(next((v.get("baseModel") for v in vers
+                                if v.get("id") == current_version_id), None))
+    if want and any(_norm_base(v.get("baseModel")) for v in vers):
+        vers = [v for v in vers if _norm_base(v.get("baseModel")) == want]
+    if not vers:
         return None
     v = vers[0]
-    return {"id": v.get("id"), "name": str(v.get("name") or "").strip()}
+    return {"id": v.get("id"), "name": str(v.get("name") or "").strip(),
+            "baseModel": str(v.get("baseModel") or "").strip()}
 
 
-def _update_fields(model_id, current_version_id, api_key=None):
-    """Compare la version locale a la derniere sur CivitAI. Renvoie un dict a fusionner
-    dans le sidecar: {update_available, latest_versionId, latest_versionName}. Silencieux
-    en cas d'echec (network/inconnu) -> pas de faux positif."""
+def _update_fields(model_id, current_version_id, api_key=None, base_model=None):
+    """Compare la version locale a la derniere sur CivitAI *pour le meme modele de base*
+    (base_model, cf. get_latest_version). Renvoie un dict a fusionner dans le sidecar:
+    {update_available, latest_versionId, latest_versionName}. Silencieux en cas d'echec
+    (network/inconnu) -> pas de faux positif."""
     try:
-        latest = get_latest_version(model_id, api_key)
+        latest = get_latest_version(model_id, api_key, base_model=base_model,
+                                    current_version_id=current_version_id)
     except Exception as e:
         _dbg(f"latest-version check failed for model {model_id}: {e}")
         latest = None
@@ -320,7 +344,8 @@ def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=No
     upd = {"update_available": False, "latest_versionId": None, "latest_versionName": ""}
     if check_update:
         _p("update", None, "Checking for a newer version…")
-        upd = _update_fields(ver.get("modelId"), ver.get("versionId"), api_key)
+        upd = _update_fields(ver.get("modelId"), ver.get("versionId"), api_key,
+                             base_model=ver.get("baseModel"))
     sidecar.update(upd)
     try:
         tmp = stem + ".civitai.json.tmp"
@@ -349,7 +374,8 @@ def refresh_update_flag(safepath, api_key=None):
     sc = load_civitai_sidecar(safepath)
     if not sc or sc.get("modelId") is None or sc.get("versionId") is None:
         return {"success": False, "update_available": False}
-    upd = _update_fields(sc.get("modelId"), sc.get("versionId"), api_key)
+    upd = _update_fields(sc.get("modelId"), sc.get("versionId"), api_key,
+                         base_model=sc.get("baseModel"))
     sc.update(upd)
     try:
         p = os.path.splitext(safepath)[0] + ".civitai.json"
