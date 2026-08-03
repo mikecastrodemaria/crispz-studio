@@ -3,18 +3,24 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
-## Unreleased — Two portrait sizes from the CivitAI recipes: 1024x1536 and 864x1536
+## Unreleased — Aspect ratio: 8 sizes to 17, sorted, with the exact CivitAI ratios
 
-The Aspect ratio dropdown only carried the Fooocus list, whose portrait entries
-(`832 x 1216`, `768 x 1344`) are *approximations* of 2:3 and 9:16. CivitAI and ComfyUI
-recipes are written on the exact sizes, so following one meant either accepting a
-different framing or dropping to the CLI (`--gen-width` / `--gen-height`). Both are now
-in the dropdown: **`1024 x 1536 (2:3)`** and **`864 x 1536 (9:16)`**, exact ratios and
-multiples of 16.
+The dropdown only carried the Fooocus list, whose portrait/landscape entries
+(`832 x 1216`, `768 x 1344`, `1536 x 640`) are *approximations* of 2:3, 9:16 and 21:9,
+and which had no 5:4 or 4:3 at all. Following a CivitAI or ComfyUI recipe meant accepting
+a different framing or dropping to the CLI (`--gen-width` / `--gen-height`).
 
-They cost more: ~1,6 and ~1,3 Mpix against ~1 Mpix for the rest of the list — slower, and
-a model trained around a megapixel can drift in composition there (duplicated subject).
-Worth it when the recipe you are following calls for them, not as a new default.
+Nine sizes added, all multiples of 16, all **exact** ratios except where they mirror an
+existing Fooocus label: `1280 x 1024` / `1024 x 1280` (5:4, 4:5), `1280 x 960` /
+`960 x 1280` (4:3, 3:4), `1536 x 1024` / `1024 x 1536` (3:2, 2:3), `1536 x 864` /
+`864 x 1536` (16:9, 9:16), `640 x 1536` (the missing portrait ultra-wide). The Fooocus
+entries stay as they are — existing presets and seeds depend on them.
+
+The list is now sorted from squarest to widest, each landscape size followed by its
+portrait counterpart, instead of the historical order. Cost runs 1,0 to 1,6 Mpix: past
+~1,3 Mpix generation is slower and a model trained around a megapixel can drift in
+composition (duplicated subject), so the big ones are for when a recipe calls for them.
+
 
 ## Unreleased — Schedule: `simple` accepted as an alias of `sgm_uniform`
 

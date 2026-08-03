@@ -90,21 +90,32 @@ PRESET_FLAGMAP = {
 # Ratios d'aspect facon Fooocus. label -> (width, height) en multiples de 16.
 ASPECT_RATIOS = {
     "1024 x 1024  (1:1)":  (1024, 1024),
+    "1280 x 1024  (5:4)":  (1280, 1024),
+    "1024 x 1280  (4:5)":  (1024, 1280),
     "1152 x 896  (9:7)":   (1152, 896),
     "896 x 1152  (7:9)":   (896, 1152),
+    "1280 x 960  (4:3)":   (1280, 960),
+    "960 x 1280  (3:4)":   (960, 1280),
     "1216 x 832  (3:2)":   (1216, 832),
     "832 x 1216  (2:3)":   (832, 1216),
+    "1536 x 1024  (3:2)":  (1536, 1024),
     "1024 x 1536  (2:3)":  (1024, 1536),
     "1344 x 768  (16:9)":  (1344, 768),
     "768 x 1344  (9:16)":  (768, 1344),
+    "1536 x 864  (16:9)":  (1536, 864),
     "864 x 1536  (9:16)":  (864, 1536),
     "1536 x 640  (21:9)":  (1536, 640),
+    "640 x 1536  (9:21)":  (640, 1536),
 }
-# Les deux formats en 1536 de haut sont ceux qu'on lit sur les recettes CivitAI/ComfyUI
-# (ratios exacts, contrairement aux 832x1216 / 768x1344 herites de Fooocus qui n'en sont
-# qu'approches). Ils pesent ~1,5 Mpix la ou le reste de la liste tourne autour de 1 Mpix:
-# plus lent, et un modele entraine autour du million de pixels peut y deriver en
-# composition (sujet duplique). A preferer quand la recette suivie les demande.
+# Liste triee du plus carre au plus large, chaque format suivi de son pendant portrait.
+# Les entrees en 1536 (3:2, 16:9) et les 5:4 / 4:3 sont des ratios EXACTS, ceux qu'on lit
+# sur les recettes CivitAI/ComfyUI -- contrairement aux 832x1216 / 768x1344 / 1536x640
+# herites de Fooocus, qui n'en sont que des approches (conservees telles quelles: des
+# presets et des seeds existants s'y appuient; 640x1536 reprend la meme convention que son
+# pendant paysage plutot que d'introduire un 2e libelle). Tout est multiple de 16.
+# Cout: 1,0 a 1,6 Mpix. Au-dela de ~1,3 Mpix c'est plus lent, et un modele entraine autour
+# du million de pixels peut y deriver en composition (sujet duplique) -- a choisir quand la
+# recette suivie le demande, pas par defaut.
 # Performance facon Fooocus -> (gen_steps, guidance) pour le modele charge.
 PERFORMANCE = {
     "Turbo (8 steps)":    (8, 0.0),
