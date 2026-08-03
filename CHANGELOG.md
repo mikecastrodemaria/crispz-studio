@@ -3,6 +3,19 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Two portrait sizes from the CivitAI recipes: 1024x1536 and 864x1536
+
+The Aspect ratio dropdown only carried the Fooocus list, whose portrait entries
+(`832 x 1216`, `768 x 1344`) are *approximations* of 2:3 and 9:16. CivitAI and ComfyUI
+recipes are written on the exact sizes, so following one meant either accepting a
+different framing or dropping to the CLI (`--gen-width` / `--gen-height`). Both are now
+in the dropdown: **`1024 x 1536 (2:3)`** and **`864 x 1536 (9:16)`**, exact ratios and
+multiples of 16.
+
+They cost more: ~1,6 and ~1,3 Mpix against ~1 Mpix for the rest of the list — slower, and
+a model trained around a megapixel can drift in composition there (duplicated subject).
+Worth it when the recipe you are following calls for them, not as a new default.
+
 ## Unreleased — Schedule: `simple` accepted as an alias of `sgm_uniform`
 
 **Why.** ComfyUI and CivitAI recipes name the native flow schedule `simple`. Ours was
