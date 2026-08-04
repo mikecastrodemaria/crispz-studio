@@ -3,6 +3,24 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Asset Browser: thumbnail cache on a fast disk (`asset_browser.cache_dir`)
+
+**Why.** Thumbnails are the Asset Browser's hot path — one file per image, re-read on
+every grid paint — and they were always written next to the images. With the output
+folder on a slow HDD (plus antivirus write-scanning), serving a single 84 KB thumbnail
+cold took **~1.1 s**; a grid of thousands crawled.
+
+**What.** New `asset_browser.cache_dir` (config, empty by default). When set to a fast
+disk (e.g. `"D:/crispz-cache"`), thumbnails go to `<cache_dir>/crispz-thumbs/<slug>/`
+(one slug per output folder — several output folders never collide) and the manifests
+reference them by absolute `/gradio_api/file=` URL; the launcher serves that folder
+automatically. Empty keeps the previous `<out>/_index/thumbs` layout, so nothing changes
+for existing setups. The path logic is centralised (`_thumbs_root` / `_thumb_paths`) and
+used everywhere thumbs are built, checked, or deleted — `delete_asset` and freshness
+checks follow the cache. The cache is disposable: delete it any time, it rebuilds on
+demand. Measured on a 10 576-image folder (HDD → SSD): cold thumbnail ~1.1 s → **~3 ms**,
+30 grid thumbnails in **88 ms** total.
+
 ## Unreleased — Aspect ratio: 8 sizes to 17, sorted, with the exact CivitAI ratios
 
 The dropdown only carried the Fooocus list, whose portrait/landscape entries
