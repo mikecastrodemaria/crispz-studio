@@ -3,6 +3,27 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — 🔧 Auto face detailer (ADetailer-style)
+
+**Why (last real Fooocus-parity gap).** Small faces in a wide shot come out soft: the
+model spends ~1 Mpix on the whole scene, so a 150 px face gets almost none of it.
+Fooocus's *Enhance* / A1111's *ADetailer* fix this by re-rendering each face at high
+resolution; crispz had nothing equivalent.
+
+**What.** New `cz_detailer.py` + a **🔧 Detail faces** checkbox under the Generate button
+(module flag — the queue and X/Y/Z grid snapshots are untouched). After each render (and
+after the optional auto-upscale), faces are detected with insightface buffalo_l (already
+loaded for Face Swap; detection no longer requires the inswapper model —
+`cz_face.detect_faces` / `_ensure_face_detector` factored out) and each face, biggest
+first (up to `face_detailer_max_faces`, default 4), is:
+enlarged crop (+60 % context) → scaled to the model's ~832 px sweet spot → **Z-Image
+img2img** (same prompt/seed, `face_detailer_denoise` 0.35, live slider in Advanced >
+Generation) → scaled back → pasted through a **feathered elliptical mask** (no square
+edges, same technique as the Face Swap GFPGAN paste). Full-frame portraits are skipped
+(nothing to gain), failures degrade to the untouched image.
+Validated: geometry/mask units, real detection on an actual render, effective crop→
+refine→paste round-trip, build_ui, smoke 22/22.
+
 ## Unreleased — PNG Info "✨ Apply all" + one-click "🎲 Vary" (Fooocus parity)
 
 - **PNG Info** could only send the prompt and the seed. The new **✨ Apply all** button
