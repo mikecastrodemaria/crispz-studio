@@ -13,7 +13,9 @@ SwarmUI. On top of crispz's upscaler it adds:
   **Upscale after generate** toggle (under the Generate button) that auto-chains each
   image through the ESRGAN + refine pipeline — no manual step. CLI equivalent:
   `--txt2img --upscale` (see README_CLI.md).
-- **Image → Upscale** (the crispz pipeline): Real-ESRGAN + Z-Image refine, 4K tiling.
+- **Image → Upscale** (the crispz pipeline): Real-ESRGAN + Z-Image refine, 4K tiling —
+  plus one-click **🎲 Vary (subtle / strong)** (pure img2img re-roll of an input image,
+  denoise 0.25 / 0.6, Fooocus-style).
 - **Job queue**: `+ Queue` snapshots ALL current settings (incl. model, LoRAs, sampler)
   into a labeled job list; `Run queue` chains them unattended (overnight batches with
   different models/settings). **Stop pauses the queue** — remaining jobs are kept. VRAM
@@ -56,7 +58,9 @@ SwarmUI. On top of crispz's upscaler it adds:
   compatibility), **read wildcards in order**, **also save pre-upscale image**, live
   **LoRA-slot count**, and the **Hugging Face token** (gated models).
 - **PNG Info**: drop an image into *Input Image* to read its embedded **prompt + params**
-  (crispz, **A1111/Civitai**, or ComfyUI) and send them to the fields.
+  (crispz, **A1111/Civitai**, or ComfyUI) — **✨ Apply all** loads everything in one click
+  (prompt, negative, seed, steps, CFG, size, sampler/schedule with A1111-name mapping),
+  or send just the prompt / seed.
 - **Ollama (optional)**: **Describe** (image→prompt), **Improve prompt**, and **Vision
   Mix** (blend several reference images into one prompt). Models unload from VRAM after
   use. Without Ollama, **Describe** uses a local BLIP captioner and **Improve prompt**

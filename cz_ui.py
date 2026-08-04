@@ -2428,6 +2428,68 @@ def _ui_read_meta(path):
     return "\n\n".join(lines), meta
 
 
+def _ui_meta_apply_all(m):
+    """PNG Info: applique TOUS les parametres embarques de l'image — prompt, negatif,
+    seed, steps, CFG, taille, sampler/schedule (equivalent du chargement complet de
+    Fooocus). Sampler: format crispz 'euler/sgm_uniform' reconnu tel quel, noms A1111
+    ('Euler a', 'DPM++ 2M Karras'...) mappes via cz_civitai.map_sampler_name."""
+    m = m or {}
+    applied = []
+
+    def _upd(key, cast, label=None):
+        v = m.get(key)
+        if v in (None, ""):
+            return gr.update()
+        try:
+            v = cast(v)
+        except (TypeError, ValueError):
+            return gr.update()
+        applied.append(f"{label or key}={v}" if not isinstance(v, str) or len(v) < 40
+                       else f"{label or key}=…")
+        return gr.update(value=v)
+
+    p_u = _upd("prompt", str)
+    n_u = _upd("negative", str)
+    sd_u = _upd("seed", int)
+    st_u = _upd("steps", int)
+    g_u = _upd("guidance", float, "CFG")
+    w_u = h_u = gr.update()
+    sz = str(m.get("size") or "")
+    if "x" in sz:
+        try:
+            w, h = (int(x) for x in sz.lower().split("x")[:2])
+            w_u, h_u = gr.update(value=w), gr.update(value=h)
+            applied.append(f"size={w}x{h}")
+        except (TypeError, ValueError):
+            pass
+    samp_u = sched_u = gr.update()
+    s = str(m.get("sampler") or "").strip()
+    if s:
+        if "/" in s:                       # format crispz "sampler/schedule"
+            a, b = (x.strip().lower() for x in s.split("/", 1))
+            if a in cz_pipeline.SAMPLER_CHOICES:
+                samp_u = gr.update(value=a)
+                applied.append(f"sampler={a}")
+            sched = cz_pipeline._norm_schedule(b, default=None)
+            if sched:
+                sched_u = gr.update(value=sched)
+                applied.append(f"schedule={sched}")
+        else:                              # nom A1111/CivitAI ("Euler a", "DPM++ ...")
+            import cz_civitai
+            sa, sc = cz_civitai.map_sampler_name(s)
+            if sa:
+                samp_u = gr.update(value=sa)
+                applied.append(f"sampler={s}→{sa}")
+            elif s:
+                applied.append(f"sampler={s} (no equivalent, kept current)")
+            if sc:
+                sched_u = gr.update(value=sc)
+                applied.append(f"schedule={sc}")
+    status = ("✅ **Applied:** " + ", ".join(applied)) if applied \
+        else "*No applicable parameters in this image.*"
+    return status, p_u, n_u, sd_u, st_u, g_u, w_u, h_u, samp_u, sched_u
+
+
 # ============================ Presets (facon Fooocus) =========================
 # Un preset = un bundle de reglages (prompt, styles, taille, steps/CFG, sampler,
 # checkpoint, transformer, LoRAs) sauve en JSON dans presets/. Charger / creer / mettre
@@ -2713,6 +2775,9 @@ def build_ui():
                                                                   label="Refine before upscale (faster)",
                                                                   info="Refine at native res THEN ESRGAN enlarge "
                                                                        "(~4-16x faster refine; a touch less high-res detail).")
+                                    with gr.Row():
+                                        vary_subtle_btn = gr.Button("🎲 Vary (subtle)", size="sm")
+                                        vary_strong_btn = gr.Button("🎲 Vary (strong)", size="sm")
                                     preset = gr.Dropdown(list(PRESETS), value="Custom", label="Use case preset")
                                     esrgan = gr.Dropdown(models, value=default_model, label="ESRGAN model")
                                     factor = gr.Slider(1.0, 4.0, value=DEFAULT_FACTOR, step=0.5, label="Upscale factor")
@@ -2731,6 +2796,8 @@ def build_ui():
                                     "*Upload an image above to read its prompt & parameters.*")
                                 meta_state = gr.State({})
                                 with gr.Row():
+                                    meta_apply_all_btn = gr.Button("✨ Apply all", size="sm",
+                                                                   variant="primary")
                                     meta_to_prompt_btn = gr.Button("→ Send prompt", size="sm",
                                                                    variant="primary")
                                     meta_to_seed_btn = gr.Button("→ Send seed", size="sm")
@@ -3204,6 +3271,25 @@ def build_ui():
             lambda m: (gr.update(value=(m or {}).get("prompt", "")),
                        gr.update(value=(m or {}).get("negative", ""))),
             [meta_state], [prompt, negative])
+        meta_apply_all_btn.click(_ui_meta_apply_all, [meta_state],
+                                 [input_meta_md, prompt, negative, seed, gen_steps, guidance,
+                                  width, height, sampler_dd, schedule_dd]) \
+            .then(set_sampler, [sampler_dd], None) \
+            .then(set_schedule, [schedule_dd], None)
+
+        # Vary (facon Fooocus): 1 clic arme un img2img pur (ESRGAN off) a denoise fixe,
+        # ouvre le panneau Input Image, et laisse l'utilisateur presser Generate.
+        def _ui_vary(d):
+            return (gr.update(value=True), gr.update(value=False), gr.update(value=True),
+                    gr.update(value=float(d)),
+                    f"🎲 **Vary {'subtle' if d < 0.4 else 'strong'}** armed — img2img only "
+                    f"(ESRGAN off), denoise **{d}**. Drop an image in Input Image, then "
+                    f"press **Generate**.")
+        _vary_outs = [use_input, do_esrgan_cb, do_refine_cb, denoise, report]
+        vary_subtle_btn.click(lambda: _ui_vary(0.25), None, _vary_outs) \
+            .then(lambda v: gr.update(visible=bool(v)), use_input, input_group)
+        vary_strong_btn.click(lambda: _ui_vary(0.6), None, _vary_outs) \
+            .then(lambda v: gr.update(visible=bool(v)), use_input, input_group)
         meta_to_seed_btn.click(
             lambda m: gr.update(value=int((m or {}).get("seed"))) if (m or {}).get("seed") is not None
             else gr.update(),
