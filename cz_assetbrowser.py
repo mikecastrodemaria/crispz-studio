@@ -78,6 +78,22 @@ def _write_atomic_text(path, text):
                 pass
 
 
+def _write_text_if_changed(path, text):
+    """Comme _write_atomic_text, mais NE reecrit pas si le contenu est deja identique.
+    Evite le write lent (HDD + scan antivirus a chaque write) de index.html a CHAQUE
+    ouverture de l'Asset Browser : la SPA est un constante, on ne l'ecrit qu'apres une
+    mise a jour du code. Lecture+comparaison = rapide (~10 Ko)."""
+    try:
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                if f.read() == text:
+                    return False
+    except Exception:
+        pass
+    _write_atomic_text(path, text)
+    return True
+
+
 def _ab_make_thumb(src, dst, size, quality):
     """Ecriture ATOMIQUE : fichier temporaire puis os.replace().
 
@@ -312,7 +328,7 @@ def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=Tr
     os.makedirs(d, exist_ok=True)
     idx_dir = os.path.join(d, "_index")
     os.makedirs(os.path.join(idx_dir, "thumbs"), exist_ok=True)
-    _write_atomic_text(os.path.join(d, "index.html"), _render_spa())
+    _write_text_if_changed(os.path.join(d, "index.html"), _render_spa())
     meta_cache = _load_meta_cache(idx_dir)
     fresh_cache, hits, reads = {}, 0, 0
     entries, jobs = [], []
@@ -368,7 +384,7 @@ def ab_open_fast(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=
     reconstruit -> pas de latence au clic (comme Fooocus)."""
     d = _ab_resolve_dir(output_dir)
     os.makedirs(d, exist_ok=True)
-    _write_atomic_text(os.path.join(d, "index.html"), _render_spa())
+    _write_text_if_changed(os.path.join(d, "index.html"), _render_spa())
     # Manifest STUB immediat si aucun n'existe -> la SPA charge tout de suite (plus jamais
     # "No manifest") ; le vrai manifest (indexation en tache de fond) arrive via le polling.
     idx_dir = os.path.join(d, "_index")
