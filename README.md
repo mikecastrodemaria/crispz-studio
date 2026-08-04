@@ -2,7 +2,7 @@
 
 > Z-Image txt2img + upscaler/detailer studio (a Fooocus-style fork of
 > [crispz](https://github.com/mikecastrodemaria/crispz)).
-> Current version: **1.15.0** — see [CHANGELOG.md](CHANGELOG.md).
+> Current version: **1.16.0** — see [CHANGELOG.md](CHANGELOG.md).
 
 ![crispz-studio — Z-Image creation + enhancement studio](assets/screenshot.png)
 
