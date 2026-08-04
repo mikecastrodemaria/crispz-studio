@@ -403,6 +403,10 @@ def cli_main(argv=None):
     parser.add_argument("--port", type=int, default=7861, help="Server port (--serve)")
     parser.add_argument("--idle-timeout", type=int, default=300,
                         help="Seconds of inactivity before the server frees VRAM (0 = never)")
+    parser.add_argument("--auth", default=None, metavar="USER:PASSWORD",
+                        help="Protect the Gradio UI with a login page. Several accounts: "
+                             "\"a:pw1,b:pw2\". Also via config.txt 'auth' or env CRISPZ_AUTH. "
+                             "Strongly recommended when exposing over LAN or a tunnel.")
     # Chemins config / Z-Image
     parser.add_argument("--esrgan-dir", help="Override ESRGAN_DIR for this run")
     parser.add_argument("--zimage-model",
@@ -603,7 +607,25 @@ def cli_main(argv=None):
         # servir aussi, les vignettes y sont referencees en URL absolue.
         import cz_assetbrowser as _ab
         _thumbs_dir = _ab._thumbs_root(_ab._ab_resolve_dir(DEFAULT_OUTPUT_DIR))[0]
-        build_ui().launch(allowed_paths=[os.path.join(HERE, "styles", "samples"),
+        # Auth optionnelle (page de login Gradio). Off par defaut (localhost). Source:
+        # --auth > env CRISPZ_AUTH > config 'auth'. Format "user:password" (multi via ",").
+        _auth_raw = (args.auth or os.environ.get("CRISPZ_AUTH")
+                     or str(cz_core.CONFIG.get("auth") or "")).strip()
+        _auth = None
+        if _auth_raw:
+            _pairs = []
+            for part in _auth_raw.split(","):
+                if ":" in part:
+                    u, p = part.split(":", 1)
+                    if u.strip() and p.strip():
+                        _pairs.append((u.strip(), p.strip()))
+            if _pairs:
+                _auth = _pairs
+                _log(f"auth: login page enabled ({len(_pairs)} account(s))")
+            else:
+                _log("auth: IGNORED (expected \"user:password\")")
+        build_ui().launch(auth=_auth,
+                          allowed_paths=[os.path.join(HERE, "styles", "samples"),
                                          os.path.join(HERE, "tags"),
                                          _ab_resolve_dir(DEFAULT_OUTPUT_DIR),
                                          _thumbs_dir] + _model_dirs)
