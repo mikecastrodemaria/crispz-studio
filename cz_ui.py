@@ -590,6 +590,57 @@ def _apply_checkpoint(name):
             gr.update(value=st), gr.update(value=g), _perf_update(st, g))
 
 
+def _ui_civitai_reco(name, progress=gr.Progress()):
+    """Applique au modele courant les reglages communautaires CivitAI (consensus des
+    'meta' des images d'exemple: steps/CFG en mediane, sampler en majorite). Fetch le
+    sidecar civitai.json s'il manque (avec progression: le hash d'un checkpoint de
+    12 Go sans cache peut prendre plusieurs minutes sur un HDD). Les samplers sans
+    equivalent Z-Image (DPM++...) sont ignores: on garde le sampler courant et on
+    n'applique que steps/CFG."""
+    import cz_civitai
+    _noop = (gr.update(), gr.update(), gr.update(), gr.update())
+    if not name or name in ZIMAGE_BASE_REPOS:
+        return ("Pick a local checkpoint first (official base repos have no CivitAI page).",
+                *_noop)
+    try:
+        path = resolve_checkpoint(name)
+    except Exception as e:
+        return (f"Checkpoint not found: {e}", *_noop)
+    civ = cz_civitai.load_civitai_sidecar(path)
+    reco = civ.get("recommended") or {}
+    if not reco:
+        def _prog(phase, frac, text):
+            try:
+                progress(frac if frac is not None else 0.5, desc=text or phase)
+            except Exception:
+                pass
+        res = cz_civitai.fetch_civitai_for_model(path, progress=_prog)  # ecrit 'recommended'
+        civ = cz_civitai.load_civitai_sidecar(path)
+        reco = civ.get("recommended") or {}
+        if not reco:
+            return ("No community settings published on CivitAI for this model "
+                    f"({res.get('message', '')}).", *_noop)
+    samp, sched = cz_civitai.map_sampler_name(reco.get("sampler"))
+    parts = []
+    st_u = g_u = gr.update()
+    if reco.get("steps") is not None:
+        st_u = gr.update(value=int(reco["steps"]))
+        parts.append(f"steps={reco['steps']}")
+    if reco.get("guidance") is not None:
+        g_u = gr.update(value=float(reco["guidance"]))
+        parts.append(f"CFG={reco['guidance']}")
+    if reco.get("sampler"):
+        parts.append(f"sampler={reco['sampler']}"
+                     + ("" if samp else " → no Z-Image equivalent, kept current"))
+    if reco.get("size"):
+        parts.append(f"size={reco['size']} (info only)")
+    msg = (f"📊 CivitAI consensus ({reco.get('n', '?')} community image(s)): "
+           + ", ".join(parts) if parts else "CivitAI page has no usable settings.")
+    return (msg, st_u, g_u,
+            gr.update(value=samp) if samp else gr.update(),
+            gr.update(value=sched) if sched else gr.update())
+
+
 def _apply_transformer_repo(repo):
     """Definit le transformer depuis un repo HF / dossier diffusers OU un .safetensors.
     Ajuste steps/guidance ET le preset Performance selon le profil du modele.
@@ -2983,6 +3034,9 @@ def build_ui():
                                 ckpt_open_btn = gr.Button("\U0001F5BC️", size="sm", scale=0, min_width=44,
                                                           elem_id="cz_ckpt_open")
                                 ckpt_refresh_btn = gr.Button("Refresh", size="sm", scale=1)
+                            civitai_reco_btn = gr.Button(
+                                "📊 Apply CivitAI recommended settings", size="sm",
+                                variant="secondary")
                             ckpt_status = gr.Markdown("")
                             with gr.Row():
                                 transformer_tb = gr.Textbox(
@@ -3181,6 +3235,12 @@ def build_ui():
         ckpt_refresh_btn.click(_refresh_checkpoints, [ckpt_dir_tb, ckpt_extra_dir_tb],
                                [ckpt_dd, ckpt_status, preset_dd])
         ckpt_dd.change(_apply_checkpoint, [ckpt_dd], [ckpt_status, gen_steps, guidance, performance])
+        # Reglages communautaires CivitAI -> steps/CFG/sampler/schedule (les updates
+        # programmatiques ne declenchent pas .change, d'ou les .then explicites).
+        civitai_reco_btn.click(_ui_civitai_reco, [ckpt_dd],
+                               [ckpt_status, gen_steps, guidance, sampler_dd, schedule_dd]) \
+            .then(set_sampler, [sampler_dd], None) \
+            .then(set_schedule, [schedule_dd], None)
         transformer_apply_btn.click(_apply_transformer_repo, [transformer_tb],
                                     [ckpt_status, gen_steps, guidance, performance])
         lora_refresh_btn.click(_refresh_loras, [lora_dir_tb], lora_dds + [lora_status])

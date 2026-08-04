@@ -20,12 +20,16 @@ crispz-studio is a **local desktop application**. `build_ui().launch()`
 (`cz_cli.py`) runs with Gradio's defaults: it binds **127.0.0.1** and creates **no
 public share link**.
 
-The app has **no authentication of any kind**. Exposing it beyond localhost — Gradio's
-`share=True`, `server_name="0.0.0.0"`, or a reverse proxy — is outside the supported
-configuration and is done at your own risk. In particular, `launch(allowed_paths=[...])`
-deliberately grants the web UI read access to your output folder and your LoRA /
-checkpoint directories so it can serve previews; on an exposed instance that becomes
-file disclosure.
+By default the app has **no authentication**. An **optional login page** exists: set
+`auth` in `config.txt` to `"user:password"` (several accounts via commas), or pass
+`--auth user:pw`, or set the `CRISPZ_AUTH` environment variable — Gradio then gates
+every route (UI, API endpoints, and `file=` serving all return 401 until login).
+**Enable it before** exposing the app beyond localhost — Gradio's `share=True`,
+`server_name="0.0.0.0"`, a tunnel, or a reverse proxy. Exposure without auth is outside
+the supported configuration and is done at your own risk. In particular,
+`launch(allowed_paths=[...])` deliberately grants the web UI read access to your output
+folder and your LoRA / checkpoint directories so it can serve previews; on an exposed
+unauthenticated instance that becomes file disclosure.
 
 Reports that depend on the app being deliberately exposed to a network, or on the
 operator loading model files they do not trust, are considered configuration choices

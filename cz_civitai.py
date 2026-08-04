@@ -256,6 +256,81 @@ def _examples_from(imgs, limit=8):
     return out
 
 
+def analyze_settings(imgs, min_meta=2):
+    """Consensus des reglages communautaires (technique Fooocus2026): a partir des 'meta'
+    des images d'exemple (sampler, cfgScale, steps, Size), renvoie
+      {steps, guidance, sampler, size, n} (mediane pour steps/CFG, majorite pour le reste)
+    ou {} si moins de min_meta images publient leurs parametres."""
+    samplers, cfgs, steps, sizes = [], [], [], []
+    for it in imgs or []:
+        meta = (it or {}).get("meta") or {}
+        if not isinstance(meta, dict) or not meta:
+            continue
+        s = str(meta.get("sampler") or "").strip()
+        if s:
+            samplers.append(s)
+        try:
+            if meta.get("cfgScale") is not None:
+                cfgs.append(float(meta["cfgScale"]))
+        except (TypeError, ValueError):
+            pass
+        try:
+            if meta.get("steps") is not None:
+                steps.append(int(meta["steps"]))
+        except (TypeError, ValueError):
+            pass
+        sz = str(meta.get("Size") or meta.get("size") or "").strip()
+        if sz and "x" in sz:
+            sizes.append(sz)
+    n = max(len(cfgs), len(steps), len(samplers))
+    if n < min_meta:
+        return {}
+
+    def _median(vals):
+        v = sorted(vals)
+        return v[len(v) // 2] if v else None
+
+    def _majority(vals):
+        return max(set(vals), key=vals.count) if vals else None
+
+    out = {"n": n}
+    if steps:
+        out["steps"] = int(_median(steps))
+    if cfgs:
+        out["guidance"] = round(float(_median(cfgs)), 1)
+    if samplers:
+        out["sampler"] = _majority(samplers)
+    if sizes:
+        out["size"] = _majority(sizes)
+    return out
+
+
+def map_sampler_name(name):
+    """Mappe un nom de sampler CivitAI/A1111 vers (sampler crispz, schedule crispz).
+    Conservateur: renvoie (None, None) pour les familles sans equivalent (DPM++ etc.),
+    l'appelant garde alors le sampler courant et n'applique que steps/CFG."""
+    n = str(name or "").strip().lower()
+    if not n:
+        return None, None
+    sched = None
+    if "karras" in n:
+        sched = "karras"
+    elif "exponential" in n:
+        sched = "exponential"
+    elif "beta" in n:
+        sched = "beta"
+    elif "simple" in n or "normal" in n or "sgm" in n:
+        sched = "sgm_uniform"
+    samp = None
+    if n.startswith("euler"):
+        samp = "euler"          # 'Euler a' -> euler (le plus proche chez Z-Image)
+    elif "unipc" in n or n.startswith("uni"):
+        samp = "unipc"
+    elif "lcm" in n:
+        samp = "lcm"
+    return samp, sched
+
+
 def _download(url, timeout=30):
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -337,6 +412,7 @@ def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=No
         "modelName": ver.get("modelName"), "modelId": ver.get("modelId"),
         "versionId": ver.get("versionId"), "baseModel": ver.get("baseModel"),
         "trainedWords": ver.get("trainedWords") or [], "examples": examples,
+        "recommended": analyze_settings(imgs),
         "url": f"https://civitai.com/models/{ver.get('modelId')}" if ver.get("modelId") else "",
     })
     sidecar.setdefault("sha256", sha)

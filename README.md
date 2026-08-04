@@ -75,7 +75,9 @@ SwarmUI. On top of crispz's upscaler it adds:
   (models show a Civitai preview if one sits next to the `.safetensors`, else a placeholder
   + trigger words). A **🔎 Fetch from CivitAI** button (per model, in its lightbox) looks the
   model up by **SHA256** and pulls its **preview + trigger words + example images** (saved as
-  `<name>.preview.png` + `<name>.civitai.json`). The fetch shows **live progress** (spinner +
+  `<name>.preview.png` + `<name>.civitai.json`), plus the **community consensus settings**
+  (median steps/CFG, majority sampler — shown on the model card, and appliable in one click
+  via **📊 Apply CivitAI recommended settings** in Models > Checkpoints). The fetch shows **live progress** (spinner +
   bar: real `Hashing… %` when the file must be hashed, then Querying / Downloading) with an
   inline ✅/⚠️ result. **Example images are clickable** → a full-screen viewer shows each
   example **large with its generation prompt** (Copy prompt) and **← / →** to browse. A small
@@ -113,7 +115,7 @@ Tabbed Gradio UI + scriptable CLI + persistent server (`--serve`).
 | `run.bat` | Standard local launch (127.0.0.1:7860). |
 | `xyz_example.bat` | Ready-to-run **X/Y/Z grid** CLI example (`xyz_example.bat "your prompt"`) — 2×2 Steps × Guidance, prints the sheet path. Unix: `xyz_example.sh`. |
 | `boot_check.bat` | **Smart boot diagnostic**, any GPU (RTX 50xx/40xx/30xx/20xx…): driver, and — the decisive check — whether the installed torch build actually has kernels for your card's `sm_XX`. That is what catches *"RTX 50xx + non-cu128 torch"* (`WinError 127 torch_cuda.dll`) **before** the app crashes, with the exact fix to run. Then reports VRAM and recommends CPU offload / tiling / resolution for *your* card, checks the diffusers pipelines and lists your real model folders (read from `config.txt`, not hardcoded). `--no-run` diagnoses without launching. |
-| `boot_check_lan.bat` / `boot_check_web.bat` | Same diagnostic, then **LAN** (`0.0.0.0`) or **Cloudflare tunnel**. Both warn first: the app has **no authentication** (see `SECURITY.md`). |
+| `boot_check_lan.bat` / `boot_check_web.bat` | Same diagnostic, then **LAN** (`0.0.0.0`) or **Cloudflare tunnel**. **Set a login first**: `"auth": "user:password"` in `config.txt` (or `--auth` / `CRISPZ_AUTH`) shows a login page and gates every route — without it, anyone with the URL can generate and browse/delete your images (see `SECURITY.md`). |
 | `update.bat` / `update.sh` | **Update after a GitHub pull**: refuses to `git pull` over uncommitted work, reinstalls dependencies **only if the requirements file changed**, warns if `torch` was swapped (a transitive resolve can replace a `+cu128` build with a CPU wheel), re-runs the hardware check, verifies the app still imports, and lists **new config keys** added to `config-sample.txt` (your `config.txt` is never overwritten). `--no-pull` / `--force-deps` / `--shared`. |
 
 They set `GRADIO_SERVER_NAME` / `GRADIO_SERVER_PORT` (Gradio reads them) and call `run.bat`.
