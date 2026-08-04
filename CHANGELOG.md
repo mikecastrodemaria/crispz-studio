@@ -31,8 +31,14 @@ img2img** (same prompt/seed, `face_detailer_denoise` 0.35, live slider in Advanc
 Generation) → scaled back → pasted through a **feathered elliptical mask** (no square
 edges, same technique as the Face Swap GFPGAN paste). Full-frame portraits are skipped
 (nothing to gain), failures degrade to the untouched image.
-Validated: geometry/mask units, real detection on an actual render, effective crop→
-refine→paste round-trip, build_ui, smoke 22/22.
+Validated: geometry/mask units, build_ui, smoke 22/22 — then **end-to-end on a real GPU
+render** (832×1216 classical-portrait scene, seed 20260804): txt2img 4.5 s, one face
+detected, refined at denoise 0.35 / 12 steps in ~30 s (one-time insightface load +
+img2img-pipe derivation included; subsequent images are much faster). Pixel-diff check:
+**4.62 mean inside the face crop, 0.0000 outside** — the feathered paste is surgical,
+the rest of the image is untouched to the pixel. Visually: a ring-shaped artifact on the
+forehead ornament became a clean dot, skin gradients and lashes tightened, identity fully
+preserved, no visible seam.
 
 ### PNG Info "✨ Apply all" + one-click "🎲 Vary" (Fooocus parity)
 
