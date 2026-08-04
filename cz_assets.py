@@ -170,6 +170,11 @@ h+='<button onclick="cp(\''+'all'+'\')">Copy all</button>';
 if(isOut){h+='<a href="'+encodeURI(e.file)+'" download="'+esc(e.file.split('/').pop())+'" style="margin-left:6px;color:#9fb3d6">Download</a>';
 h+='<button onclick="delAsset()" style="margin-left:6px;background:#5a2230;border-color:#7a2e40">Delete</button>';}
 else{if(e.update)h+='<div class="v" style="color:#ffd27a;margin-bottom:8px">⚠️ Newer version on CivitAI'+(e.latest?': '+esc(e.latest):'')+'</div>';
+if(e.reco&&(e.reco.steps!=null||e.reco.guidance!=null||e.reco.sampler)){
+h+='<h3>Community settings <span style="color:var(--mut);font-weight:400">('+(e.reco.n||'?')+' images)</span></h3><div class="v">'+
+[e.reco.steps!=null?('steps: '+e.reco.steps):null, e.reco.guidance!=null?('CFG: '+e.reco.guidance):null,
+ e.reco.sampler?('sampler: '+esc(e.reco.sampler)):null, e.reco.size?('size: '+esc(e.reco.size)):null]
+.filter(Boolean).join('\n')+'</div>';}
 h+='<button id="cvbtn" onclick="civitaiFetch()" style="margin-left:6px;background:#274b6d;border-color:#3a6ea5">🔎 Fetch from CivitAI</button>';
 if(e.civitai)h+='<a href="'+encodeURI(e.civitai)+'" target="_blank" style="margin-left:6px;color:#9fb3d6">CivitAI page</a>';
 EX=(e.examples||[]).map(function(x){return (typeof x==='string')?{url:x,prompt:''}:x;}).filter(function(x){return x&&x.url;});

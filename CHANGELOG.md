@@ -3,6 +3,34 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Security: optional login page (`auth` / `--auth` / `CRISPZ_AUTH`)
+
+**Why.** The UI can be exposed on a LAN or through a tunnel (cloudflared) — until now with
+no protection at all: anyone with the URL could generate images and browse/delete outputs.
+
+**What.** Optional auth, off by default (localhost unchanged). Set config `auth` to
+`"user:password"` (several accounts via commas), or pass `--auth user:pw`, or the
+`CRISPZ_AUTH` env var: Gradio then shows a login page and gates every route — verified
+live: without login, `file=` serving and API endpoints return 401; a wrong password is
+rejected; a no-auth launch behaves exactly as before.
+
+## Unreleased — CivitAI: community "recommended settings" (consensus) + one-click apply
+
+**Why (Fooocus2026 parity).** CivitAI's example images publish their generation `meta`
+(sampler, cfgScale, steps, size). Fooocus2026 analyses them into consensus settings;
+crispz fetched previews/triggers/examples but ignored the settings.
+
+**What.** `cz_civitai.analyze_settings` computes the consensus (median steps/CFG, majority
+sampler/size, with the number of images used) and stores it as `"recommended"` in
+`<name>.civitai.json` on every fetch. The Asset Browser model card shows a **Community
+settings** block. In **Models > Checkpoints**, a new **📊 Apply CivitAI recommended
+settings** button fetches (with progress — hashing a 12 GB checkpoint without a cached
+hash takes minutes on an HDD) and applies steps/CFG plus sampler/schedule when a Z-Image
+equivalent exists (`Euler*` → euler, `UniPC` → unipc, `LCM` → lcm, `*Karras*` → karras
+schedule…); DPM++-style samplers with no equivalent are reported and left unchanged.
+Validated against live CivitAI: consensus `{steps 9, CFG 1.0, sampler Euler}` from 5
+community images, applied as steps=9 / CFG=1.0 / euler.
+
 ## Unreleased — Asset Browser: thumbnail cache on a fast disk (`asset_browser.cache_dir`)
 
 **Why.** Thumbnails are the Asset Browser's hot path — one file per image, re-read on

@@ -574,6 +574,7 @@ def _scan_catalog(model_dir, out_dir, kind):
                               "has_prompt": bool((e.get("prompt") or "").strip())}
                              for e in (civ.get("examples") or []) if e.get("url")][:8],
                 "civitai": civ.get("url") or "",
+                "reco": civ.get("recommended") or {},
                 "update": bool(civ.get("update_available")),
                 "latest": civ.get("latest_versionName") or "",
             })
