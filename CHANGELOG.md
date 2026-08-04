@@ -3,6 +3,20 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — PNG Info "✨ Apply all" + one-click "🎲 Vary" (Fooocus parity)
+
+- **PNG Info** could only send the prompt and the seed. The new **✨ Apply all** button
+  loads *everything* the image carries — prompt, negative, seed, steps, CFG, size
+  (width/height), sampler/schedule — like Fooocus's full parameter load. crispz's own
+  `sampler/schedule` notation is applied as-is (aliases like `simple` normalised); A1111/
+  CivitAI sampler names go through the same conservative mapping as the CivitAI
+  recommended settings (`Euler a` → euler, `DPM++ 2M Karras` → keeps the sampler, applies
+  the karras schedule) and the status line spells out what was applied vs kept.
+- **Vary (subtle / strong)** — two buttons in the Upscale/img2img tab arm a pure img2img
+  pass in one click (ESRGAN off, refine on, denoise **0.25** / **0.6**), tick *Input
+  Image* and open its panel; drop an image and press Generate. The report line explains
+  what was armed.
+
 ## Unreleased — Security: optional login page (`auth` / `--auth` / `CRISPZ_AUTH`)
 
 **Why.** The UI can be exposed on a LAN or through a tunnel (cloudflared) — until now with
