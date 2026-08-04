@@ -65,7 +65,10 @@ SwarmUI. On top of crispz's upscaler it adds:
   prompt + Generate + **Stop**, dark theme, Settings (aspect/performance/batch **1–30**),
   **277 styles** (search + hover previews), and a **crop editor** on every image input.
 - **Asset Browser** (standalone gallery, new tab): opens **instantly** (indexing +
-  thumbnails in the background, shimmer placeholder → real thumbnail); images save into
+  thumbnails in the background, shimmer placeholder → real thumbnail); the thumbnail
+  cache can live on a **fast disk** (`asset_browser.cache_dir`, e.g. `"D:/cache"`) when
+  the output folder is on a slow HDD/NAS — cold-grid loads go from ~1 s to ~3 ms per
+  thumbnail; images save into
   **`out/YYYY-MM-DD/`** date subfolders; a **subfolder sidebar** with counts + per-folder
   **hide** + a **Hidden** toggle (persisted), **defaults to today**; **metadata keyword
   search**, per-image copy/delete, NSFW blur; and **Outputs / LoRAs / Models** source tabs
