@@ -10,6 +10,7 @@ cz_imageio (_read_image_meta) et cz_assets (ASSET_BROWSER_HTML). Les boutons UI
 import os
 import json
 import time
+import hashlib
 import datetime
 import threading
 
@@ -20,7 +21,8 @@ from cz_imageio import _read_image_meta
 from cz_assets import ASSET_BROWSER_HTML
 
 _AB_DEFAULTS = {"enabled": False, "generate_thumbnails": True,
-                "thumbnail_size": 256, "thumbnail_quality": 85, "blur_thumbnails": False}
+                "thumbnail_size": 256, "thumbnail_quality": 85, "blur_thumbnails": False,
+                "cache_dir": ""}
 
 
 def _ab_get(key):
@@ -42,6 +44,28 @@ def _render_spa():
 def _ab_resolve_dir(output_dir):
     d = output_dir or DEFAULT_OUTPUT_DIR
     return d if os.path.isabs(d) else os.path.join(HERE, d)
+
+
+def _thumbs_root(d):
+    """(dossier disque des miniatures, prefixe d'URL) pour un dossier de sortie.
+
+    Defaut: '<sortie>/_index/thumbs', servi en RELATIF par la SPA.
+    Si asset_browser.cache_dir est defini (ex. un SSD alors que les images sont sur un
+    disque lent), les miniatures vont dans '<cache>/crispz-thumbs/<slug>' et sont servies
+    en URL ABSOLUE (/gradio_api/file=...). Le slug depend du dossier de sortie: deux
+    dossiers de sortie ne partagent pas leur cache."""
+    cache = str(_ab_get("cache_dir") or "").strip()
+    if not cache:
+        return os.path.join(d, "_index", "thumbs"), "_index/thumbs/"
+    slug = hashlib.sha1(os.path.abspath(d).lower().encode("utf-8")).hexdigest()[:12]
+    root = os.path.join(cache, "crispz-thumbs", slug)
+    return root, "/gradio_api/file=" + os.path.abspath(root).replace("\\", "/") + "/"
+
+
+def _thumb_paths(d, key):
+    """(chemin disque, URL) de la miniature 'key' (ex. '2026-08-03/img.jpg', 'loras/x.jpg')."""
+    root, pfx = _thumbs_root(d)
+    return os.path.join(root, key.replace("/", os.sep)), pfx + key
 
 
 def _replace_retry(tmp, dst, attempts=10):
@@ -327,7 +351,8 @@ def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=Tr
     d = _ab_resolve_dir(output_dir)
     os.makedirs(d, exist_ok=True)
     idx_dir = os.path.join(d, "_index")
-    os.makedirs(os.path.join(idx_dir, "thumbs"), exist_ok=True)
+    os.makedirs(_thumbs_root(d)[0], exist_ok=True)
+    os.makedirs(idx_dir, exist_ok=True)
     _write_text_if_changed(os.path.join(d, "index.html"), _render_spa())
     meta_cache = _load_meta_cache(idx_dir)
     fresh_cache, hits, reads = {}, 0, 0
@@ -335,8 +360,7 @@ def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=Tr
     t_idx = time.time()
     for rel, p in _ab_scan(d):
         thumb_rel = rel  # fallback = image complete
-        trel = "_index/thumbs/" + os.path.splitext(rel)[0] + ".jpg"
-        tp = os.path.join(d, trel)
+        tp, trel = _thumb_paths(d, os.path.splitext(rel)[0] + ".jpg")
         if os.path.isfile(tp) and os.path.getmtime(tp) >= os.path.getmtime(p):
             thumb_rel = trel
         elif gen_thumbs:
@@ -425,8 +449,7 @@ def on_image_saved(image_path, output_dir=None, meta=None):
         quality = int(_ab_get("thumbnail_quality") or 85)
         with _INCR_LOCK:
             # 1) miniature
-            trel = "_index/thumbs/" + os.path.splitext(rel)[0] + ".jpg"
-            tp = os.path.join(d, trel)
+            tp, trel = _thumb_paths(d, os.path.splitext(rel)[0] + ".jpg")
             thumb_rel = rel
             if _ab_get("generate_thumbnails"):
                 try:
@@ -526,8 +549,8 @@ def _scan_catalog(model_dir, out_dir, kind):
             prev = _find_preview(fp)
             thumb, img = "", ""
             if prev:
-                trel = "_index/thumbs/" + kind + "/" + os.path.splitext(rel)[0] + ".jpg"
-                jobs.append((prev, os.path.join(out_dir, trel)))
+                tp, trel = _thumb_paths(out_dir, kind + "/" + os.path.splitext(rel)[0] + ".jpg")
+                jobs.append((prev, tp))
                 thumb = trel
                 img = "/gradio_api/file=" + os.path.abspath(prev).replace("\\", "/")
             # CivitAI sidecar (<stem>.civitai.json): trigger words + exemples + lien.
@@ -567,7 +590,7 @@ def _thumb_jobs_for(kind, output_dir, loras_dir=None, checkpoints_dir=None, size
     jobs = []
     if kind == "outputs":
         for rel, p in _ab_scan(d):
-            jobs.append((p, os.path.join(d, "_index/thumbs/" + os.path.splitext(rel)[0] + ".jpg")))
+            jobs.append((p, _thumb_paths(d, os.path.splitext(rel)[0] + ".jpg")[0]))
         return jobs
     mdir = loras_dir if kind == "loras" else checkpoints_dir
     if not mdir or not os.path.isdir(mdir):
@@ -582,8 +605,7 @@ def _thumb_jobs_for(kind, output_dir, loras_dir=None, checkpoints_dir=None, size
             if not prev:
                 continue
             rel = os.path.relpath(fp, mdir).replace("\\", "/")
-            trel = "_index/thumbs/" + kind + "/" + os.path.splitext(rel)[0] + ".jpg"
-            jobs.append((prev, os.path.join(d, trel)))
+            jobs.append((prev, _thumb_paths(d, kind + "/" + os.path.splitext(rel)[0] + ".jpg")[0]))
     return jobs
 
 
@@ -632,7 +654,7 @@ def delete_asset(rel, output_dir=None):
     try:
         os.remove(target)
         for extra in (target + ".json",
-                      os.path.join(d, "_index", "thumbs", os.path.splitext(rel)[0] + ".jpg")):
+                      _thumb_paths(d, os.path.splitext(rel)[0] + ".jpg")[0]):
             if os.path.isfile(extra):
                 os.remove(extra)
         _log(f"asset deleted: {rel}")

@@ -599,9 +599,14 @@ def cli_main(argv=None):
                                    getattr(cz_pipeline, "CHECKPOINTS_DIR", ""),
                                    getattr(cz_pipeline, "CHECKPOINTS_EXTRA_DIR", ""))
                        if p and os.path.isdir(p)]
+        # Cache de miniatures deporte (asset_browser.cache_dir, ex. un SSD): il faut le
+        # servir aussi, les vignettes y sont referencees en URL absolue.
+        import cz_assetbrowser as _ab
+        _thumbs_dir = _ab._thumbs_root(_ab._ab_resolve_dir(DEFAULT_OUTPUT_DIR))[0]
         build_ui().launch(allowed_paths=[os.path.join(HERE, "styles", "samples"),
                                          os.path.join(HERE, "tags"),
-                                         _ab_resolve_dir(DEFAULT_OUTPUT_DIR)] + _model_dirs)
+                                         _ab_resolve_dir(DEFAULT_OUTPUT_DIR),
+                                         _thumbs_dir] + _model_dirs)
         return 0
 
     if not models and not args.no_esrgan:
