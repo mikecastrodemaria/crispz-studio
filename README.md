@@ -38,6 +38,10 @@ SwarmUI. On top of crispz's upscaler it adds:
   whole result) to unify grain/light and remove the "added zone" look. Steps follow the
   model.
 - **Remove Background** (rembg) and **Face Swap** with optional **GFPGAN restore**.
+- **🔧 Auto face detailer** (ADetailer-style): tick *Detail faces* under Generate — after
+  each render (and upscale), faces are detected and each is re-refined at high resolution
+  (enlarged crop → Z-Image img2img → feathered paste). Denoise slider in Advanced;
+  `face_detailer*` config keys.
 - **Models**: one **Z-Image checkpoint** dropdown merging the official base repos
   (Turbo / Z-Image) with single-file `.safetensors` from a main **and** an optional
   extra folder, a **Transformer override** (diffusers repo/folder, e.g. Juggernaut-Z),

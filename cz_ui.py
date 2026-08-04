@@ -240,6 +240,7 @@ if isinstance(CONFIG.get("performance_presets"), dict) and CONFIG["performance_p
 # pose cz_pipeline._PROGRESS / cz_pipeline._STOP depuis les handlers UI.
 import cz_pipeline
 import cz_civitai
+import cz_detailer
 from cz_pipeline import (  # noqa: E402,F401
     set_guidance, request_stop, set_zimage_model, set_zimage_transformer,
     list_checkpoints, list_loras, set_checkpoints_dir, set_checkpoints_extra_dir,
@@ -1643,6 +1644,15 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                             _dbg(f"saved pre-upscale: {pre_dst}")
                     except Exception as e:
                         _dbg(f"pre-upscale save failed: {e}")
+            # Detaileur auto (visages) sur l'image FINALE (apres l'upscale eventuel).
+            if cz_detailer.DETAILER_ENABLED:
+                progress((i + 0.85) / n, desc=f"Detailing faces {i + 1}/{n}")
+                try:
+                    img, _nf = cz_detailer.detail_faces(
+                        img, fp, s, steps=int(refine_steps),
+                        progress=lambda t: progress((i + 0.9) / n, desc=t))
+                except Exception as e:
+                    _log(f"detailer failed: {e}")
             images.append(img)
             dst = None
             if save_mode != "display":
@@ -2709,6 +2719,10 @@ def build_ui():
                         label="Upscale after generate — chain each txt2img image through the "
                               "Upscale pipeline (ESRGAN + refine), no manual step")
                     improve_btn = gr.Button("Improve prompt", scale=1, min_width=150)
+                detail_faces_cb = gr.Checkbox(
+                    value=cz_detailer.DETAILER_ENABLED,
+                    label="🔧 Detail faces — after each render (and upscale), detect faces and "
+                          "re-refine each one at high resolution (ADetailer-style)")
                 improve_status = gr.Markdown("")
 
                 if JOB_QUEUE_ENABLED:
@@ -3261,6 +3275,12 @@ def build_ui():
                                                    label="LoRA slots (Models > LoRA)",
                                                    info="How many LoRA slots to show. Applied live and "
                                                         "persisted (preferences.json).")
+                        detailer_denoise_sl = gr.Slider(
+                            0.1, 0.7, value=cz_detailer.DETAILER_DENOISE, step=0.05,
+                            label="Face detailer denoise (🔧 Detail faces)",
+                            info="Strength of the per-face refine pass. 0.3-0.4 sharpens "
+                                 "details; higher starts changing the identity.")
+                        detailer_denoise_status = gr.Markdown("")
 
         # Toggles facon Fooocus
         advanced_cb.change(lambda v: gr.update(visible=bool(v)), advanced_cb, advanced_col)
@@ -3307,6 +3327,9 @@ def build_ui():
         meta_scheme_dd.change(set_metadata_scheme, [meta_scheme_dd], [meta_scheme_status])
         wildcards_order_cb.change(set_wildcards_in_order, [wildcards_order_cb], [wild_order_status])
         save_pre_upscale_cb.change(cz_pipeline.set_save_pre_upscale, [save_pre_upscale_cb], None)
+        detail_faces_cb.change(cz_detailer.set_enabled, [detail_faces_cb], None)
+        detailer_denoise_sl.change(cz_detailer.set_denoise, [detailer_denoise_sl],
+                                   [detailer_denoise_status])
         lora_slots_num.change(_ui_set_lora_slots, [lora_slots_num], lora_rows)
         refresh_btn.click(_refresh_models, [esrgan_dir_tb], [esrgan, paths_status])
         save_paths_btn.click(_save_paths_to_prefs,

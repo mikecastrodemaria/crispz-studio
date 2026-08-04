@@ -133,6 +133,14 @@ zimage_omni_model       HF repo id OR local diffusers folder of a Z-Image Omni/E
                         Z-Image-Base. 'Z-Image-Omni-Base' and 'Z-Image-Edit' are still
                         "coming soon". Leave this empty until they ship, then set it
                         (likely "Tongyi-MAI/Z-Image-Omni-Base" or "Tongyi-MAI/Z-Image-Edit").
+face_detailer           false (default). true -> '🔧 Detail faces' checked at startup:
+                        after each render (and upscale), faces are detected (insightface)
+                        and each one is re-refined at high resolution (ADetailer-style):
+                        enlarged crop -> Z-Image img2img -> feathered elliptical paste.
+face_detailer_denoise   Strength of the per-face refine (0.1-0.7, default 0.35). Also a
+                        live slider in Advanced > Generation. Higher = sharper but starts
+                        changing the identity.
+face_detailer_max_faces Max faces per image (default 4, biggest first).
 faceswap_model_path     Absolute path to an inswapper .onnx file (Face Swap tab). If
                         empty, the app also looks for inswapper_128.onnx in the
                         'faceswap' folder (next to app.py), 'models', checkpoints_dir,

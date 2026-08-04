@@ -108,6 +108,32 @@ _FACE_APP = None
 _FACE_SWAPPER = None
 
 
+def _ensure_face_detector():
+    """Charge (une fois) le detecteur de visages insightface buffalo_l. Detection
+    SEULE: n'exige pas l'inswapper (utilise par le detaileur auto, pas que le swap)."""
+    global _FACE_APP
+    if _FACE_APP is not None:
+        return _FACE_APP
+    try:
+        from insightface.app import FaceAnalysis
+    except Exception:
+        raise RuntimeError("insightface not installed (pip install insightface onnxruntime-gpu).")
+    provs = _onnx_providers()
+    _log(f"loading insightface buffalo_l (face detection); providers={provs} ...")
+    app = FaceAnalysis(name="buffalo_l", providers=provs) if provs else FaceAnalysis(name="buffalo_l")
+    app.prepare(ctx_id=0 if DEVICE == "cuda" else -1, det_size=(640, 640))
+    _FACE_APP = app
+    return app
+
+
+def detect_faces(image):
+    """Bboxes des visages [(x1, y1, x2, y2), ...] d'une image PIL (floats, ordre natif
+    insightface). Liste vide si aucun visage."""
+    app = _ensure_face_detector()
+    arr = np.asarray(image.convert("RGB"))[:, :, ::-1].copy()   # RGB -> BGR
+    return [tuple(float(v) for v in f.bbox) for f in app.get(arr)]
+
+
 def _resolve_faceswap_model(checkpoints_dir=None):
     """Trouve le modele inswapper: faceswap_model_path, sinon recherche dans des
     emplacements usuels, sinon telechargement si faceswap_model_url est defini."""
@@ -161,11 +187,7 @@ def _faceswap(target_img, source_img, checkpoints_dir=None):
             "(next to app.py), or set 'faceswap_model_path' in config.txt, or set "
             "'faceswap_model_url' to download it once.")
     provs = _onnx_providers()
-    if _FACE_APP is None:
-        _log(f"loading insightface buffalo_l (face detection); providers={provs} ...")
-        app = FaceAnalysis(name="buffalo_l", providers=provs) if provs else FaceAnalysis(name="buffalo_l")
-        app.prepare(ctx_id=0 if DEVICE == "cuda" else -1, det_size=(640, 640))
-        _FACE_APP = app
+    _ensure_face_detector()
     if _FACE_SWAPPER is None:
         _log(f"loading inswapper: {model_path}")
         _FACE_SWAPPER = (insightface.model_zoo.get_model(model_path, providers=provs) if provs
