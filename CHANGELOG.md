@@ -3,7 +3,17 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
-## Unreleased — 🔧 Auto face detailer (ADetailer-style)
+## 1.16.0 — 2026-08-04 — Release: Fooocus-parity pass (auth, CivitAI consensus, face detailer) + SSD thumb cache
+
+Consolidates everything since **1.15.0** — the gap-analysis pass against Fooocus2026:
+optional **login page** (auth) for LAN/tunnel exposure, **CivitAI community recommended
+settings** with one-click apply, **PNG Info ✨ Apply all**, one-click **🎲 Vary
+(subtle/strong)**, the **🔧 auto face detailer** (ADetailer-style), the Asset Browser
+**thumbnail cache on a fast disk** (`asset_browser.cache_dir`), **17 exact aspect
+ratios**, the `simple` schedule alias, the same-base-model **⚠ update badge** fix, and
+**occlusion-aware Face Swap** blending. Details in the sections below.
+
+### 🔧 Auto face detailer (ADetailer-style)
 
 **Why (last real Fooocus-parity gap).** Small faces in a wide shot come out soft: the
 model spends ~1 Mpix on the whole scene, so a 150 px face gets almost none of it.
@@ -24,7 +34,7 @@ edges, same technique as the Face Swap GFPGAN paste). Full-frame portraits are s
 Validated: geometry/mask units, real detection on an actual render, effective crop→
 refine→paste round-trip, build_ui, smoke 22/22.
 
-## Unreleased — PNG Info "✨ Apply all" + one-click "🎲 Vary" (Fooocus parity)
+### PNG Info "✨ Apply all" + one-click "🎲 Vary" (Fooocus parity)
 
 - **PNG Info** could only send the prompt and the seed. The new **✨ Apply all** button
   loads *everything* the image carries — prompt, negative, seed, steps, CFG, size
@@ -38,7 +48,7 @@ refine→paste round-trip, build_ui, smoke 22/22.
   Image* and open its panel; drop an image and press Generate. The report line explains
   what was armed.
 
-## Unreleased — Security: optional login page (`auth` / `--auth` / `CRISPZ_AUTH`)
+### Security: optional login page (`auth` / `--auth` / `CRISPZ_AUTH`)
 
 **Why.** The UI can be exposed on a LAN or through a tunnel (cloudflared) — until now with
 no protection at all: anyone with the URL could generate images and browse/delete outputs.
@@ -49,7 +59,7 @@ no protection at all: anyone with the URL could generate images and browse/delet
 live: without login, `file=` serving and API endpoints return 401; a wrong password is
 rejected; a no-auth launch behaves exactly as before.
 
-## Unreleased — CivitAI: community "recommended settings" (consensus) + one-click apply
+### CivitAI: community "recommended settings" (consensus) + one-click apply
 
 **Why (Fooocus2026 parity).** CivitAI's example images publish their generation `meta`
 (sampler, cfgScale, steps, size). Fooocus2026 analyses them into consensus settings;
@@ -66,7 +76,7 @@ schedule…); DPM++-style samplers with no equivalent are reported and left unch
 Validated against live CivitAI: consensus `{steps 9, CFG 1.0, sampler Euler}` from 5
 community images, applied as steps=9 / CFG=1.0 / euler.
 
-## Unreleased — Asset Browser: thumbnail cache on a fast disk (`asset_browser.cache_dir`)
+### Asset Browser: thumbnail cache on a fast disk (`asset_browser.cache_dir`)
 
 **Why.** Thumbnails are the Asset Browser's hot path — one file per image, re-read on
 every grid paint — and they were always written next to the images. With the output
@@ -84,7 +94,7 @@ checks follow the cache. The cache is disposable: delete it any time, it rebuild
 demand. Measured on a 10 576-image folder (HDD → SSD): cold thumbnail ~1.1 s → **~3 ms**,
 30 grid thumbnails in **88 ms** total.
 
-## Unreleased — Aspect ratio: 8 sizes to 17, sorted, with the exact CivitAI ratios
+### Aspect ratio: 8 sizes to 17, sorted, with the exact CivitAI ratios
 
 The dropdown only carried the Fooocus list, whose portrait/landscape entries
 (`832 x 1216`, `768 x 1344`, `1536 x 640`) are *approximations* of 2:3, 9:16 and 21:9,
@@ -103,7 +113,7 @@ portrait counterpart, instead of the historical order. Cost runs 1,0 to 1,6 Mpix
 composition (duplicated subject), so the big ones are for when a recipe calls for them.
 
 
-## Unreleased — Schedule: `simple` accepted as an alias of `sgm_uniform`
+### Schedule: `simple` accepted as an alias of `sgm_uniform`
 
 **Why.** ComfyUI and CivitAI recipes name the native flow schedule `simple`. Ours was
 only reachable as `sgm_uniform`, so every copied recipe needed a mental translation and
@@ -116,7 +126,7 @@ second entry in the UI dropdown: same schedule, not a new option. The sigmas the
 hands to the scheduler are `linspace(1, 1/steps, steps)` — exactly what ComfyUI's
 `simple` produces on a flow model, so the alias is an equality, not an approximation.
 
-## Unreleased — CivitAI: the ⚠ update badge now compares within the same base model
+### CivitAI: the ⚠ update badge now compares within the same base model
 
 **The bug.** The check took `modelVersions[0]` from `GET /models/<id>` — the most recent
 version of the *page*, whatever it was trained on. A LoRA page that moves on to another
@@ -131,7 +141,7 @@ positive. If the API returns no `baseModel` at all, nothing is filtered: the inf
 is missing, not contradictory. Stale flags clear on the next `civitai_index` pass (or
 **🔄 Fetch all missing**), which re-checks already-enriched models without re-downloading.
 
-## Unreleased — Face Swap: occlusion-aware blending, and ONNX actually on the GPU
+### Face Swap: occlusion-aware blending, and ONNX actually on the GPU
 
 **The bug.** inswapper renders a 128 px face and insightface pastes it back through a
 plain rectangle (`img_white` in `model_zoo/inswapper.py`), which is blind to depth: on a
