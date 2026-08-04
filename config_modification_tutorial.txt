@@ -201,6 +201,12 @@ asset_browser.cache_dir Where the Asset Browser caches thumbnails. Empty (defaul
                         thumbnails go to <cache_dir>/crispz-thumbs/<slug>/ (one slug per
                         output folder) and are served from there -> the grid fills in much
                         faster. The folder is served automatically; delete it any time.
+auth                    Login page for the Gradio UI. Empty (default) = no login, fine
+                        for localhost. "user:password" (several: "a:pw1,b:pw2") shows a
+                        login page before anything else - REQUIRED before exposing the
+                        app on a LAN or through a tunnel (cloudflared), or anyone with
+                        the URL can generate and browse/delete your images. Same via
+                        --auth user:pw or the CRISPZ_AUTH environment variable.
 civitai_api_key         Optional CivitAI API token. In the Asset Browser (LoRAs/Models
                         tabs), "Fetch from CivitAI" looks a model up by its SHA256, then
                         saves <name>.preview.png + <name>.civitai.json (trigger words +
