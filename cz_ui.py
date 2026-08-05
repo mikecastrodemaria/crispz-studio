@@ -3255,28 +3255,25 @@ def build_ui():
 
                     with gr.Tab("Advanced"):
                         gr.Markdown("### Hugging Face access (gated models)")
-                        with gr.Row():
-                            hf_token_tb = gr.Textbox(
-                                value="", type="password", scale=3, label="HF token",
-                                placeholder="hf_... (for gated models, e.g. FLUX.1-Krea-dev)",
-                                info="Saved to preferences.json (gitignored) and applied immediately. "
-                                     "Leave empty to keep the current token.")
-                            hf_token_save_btn = gr.Button("Save token", size="sm", scale=1, variant="primary")
+                        hf_token_tb = gr.Textbox(
+                            value="", type="password", label="HF token",
+                            placeholder="hf_... (for gated models, e.g. FLUX.1-Krea-dev)",
+                            info="Saved to preferences.json (gitignored) and applied immediately. "
+                                 "Leave empty to keep the current token.")
+                        hf_token_save_btn = gr.Button("Save token", size="sm", variant="primary")
                         hf_token_status = gr.Markdown(
                             "✅ A Hugging Face token is currently set."
                             if hf_token_is_set() else
                             "No HF token set (only needed for gated models).")
 
                         gr.Markdown("### CivitAI access (previews / trigger words)")
-                        with gr.Row():
-                            civitai_key_tb = gr.Textbox(
-                                value="", type="password", scale=3, label="CivitAI API key",
-                                placeholder="CivitAI token (optional)",
-                                info="Saved to preferences.json (gitignored). Used by 'Fetch from "
-                                     "CivitAI' in the Asset Browser. Public models work without a key; "
-                                     "a key unlocks gated/NSFW previews and avoids rate limits.")
-                            civitai_key_save_btn = gr.Button("Save key", size="sm", scale=1,
-                                                             variant="primary")
+                        civitai_key_tb = gr.Textbox(
+                            value="", type="password", label="CivitAI API key",
+                            placeholder="CivitAI token (optional)",
+                            info="Saved to preferences.json (gitignored). Used by 'Fetch from "
+                                 "CivitAI' in the Asset Browser. Public models work without a key; "
+                                 "a key unlocks gated/NSFW previews and avoids rate limits.")
+                        civitai_key_save_btn = gr.Button("Save key", size="sm", variant="primary")
                         civitai_key_status = gr.Markdown(
                             "✅ A CivitAI key is set." if cz_civitai.API_KEY
                             else "No CivitAI key set (public models still work).")
@@ -3311,8 +3308,7 @@ def build_ui():
                             0.1, 0.7, value=cz_detailer.DETAILER_DENOISE, step=0.05,
                             label="Face detailer denoise (🔧 Detail faces)",
                             info="Strength of the per-face refine pass. 0.3-0.4 sharpens "
-                                 "details; higher starts changing the identity.")
-                        detailer_denoise_status = gr.Markdown("")
+                                 "details; higher starts changing the identity. Applied live.")
 
         # Toggles facon Fooocus
         advanced_cb.change(lambda v: gr.update(visible=bool(v)), advanced_cb, advanced_col)
@@ -3360,8 +3356,7 @@ def build_ui():
         wildcards_order_cb.change(set_wildcards_in_order, [wildcards_order_cb], [wild_order_status])
         save_pre_upscale_cb.change(cz_pipeline.set_save_pre_upscale, [save_pre_upscale_cb], None)
         detail_faces_cb.change(cz_detailer.set_enabled, [detail_faces_cb], None)
-        detailer_denoise_sl.change(cz_detailer.set_denoise, [detailer_denoise_sl],
-                                   [detailer_denoise_status])
+        detailer_denoise_sl.change(cz_detailer.set_denoise, [detailer_denoise_sl], None)
         lora_slots_num.change(_ui_set_lora_slots, [lora_slots_num], lora_rows)
         refresh_btn.click(_refresh_models, [esrgan_dir_tb], [esrgan, paths_status])
         save_paths_btn.click(_save_paths_to_prefs,
