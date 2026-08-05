@@ -3,6 +3,24 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Thumbnail cache: app-folder default, UI field, and CLI flags for the new features
+
+- **New default location**: the Asset Browser thumbnail cache now lives in **`<app>/cache/`**
+  (gitignored) instead of inside the output folder — the app folder is usually on a fast
+  disk, so the grid stays fast even when outputs are on an HDD/NAS, with zero configuration.
+  The special value **`output`** restores the old next-to-the-images layout
+  (`<out>/_index/thumbs`, relative URLs); any path still works as a custom cache.
+- **UI field**: *Save > Asset Browser > Thumbnail cache folder* (+ Save) — persisted to
+  `preferences.json` (which now overrides `asset_browser.cache_dir` from config), applied
+  immediately for writing; a restart is needed to *serve* from a brand-new path
+  (`allowed_paths` is fixed at launch).
+- **CLI**: the recent features are usable headless too — **`--detail-faces`** (+
+  `--detailer-denoise`) runs the auto face detailer after a `--txt2img` render, and
+  **`--metadata-scheme a1111`** writes the Civitai-readable `parameters` chunk. `--auth`
+  was already in. Validated: default resolves to the app cache (the 10 951 migrated
+  thumbnails are picked up unchanged — same output-dir slug), `output`/custom overrides,
+  the UI handler, `--help`, build_ui, smoke 22/22.
+
 ## 1.16.0 — 2026-08-04 — Release: Fooocus-parity pass (auth, CivitAI consensus, face detailer) + SSD thumb cache
 
 Consolidates everything since **1.15.0** — the gap-analysis pass against Fooocus2026:

@@ -77,3 +77,6 @@ desktop.ini
 .idea/
 *.swp
 tags/
+
+# --- Cache local de miniatures Asset Browser (reconstructible) ---
+cache/

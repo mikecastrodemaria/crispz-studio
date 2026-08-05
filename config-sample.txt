@@ -125,7 +125,7 @@
         "_thumb_workers_help": "Threads used to generate thumbnails (0 = auto: min(8, CPU cores)). Thumbnails are made in parallel, both for background indexing and for the Asset Browser's 'Rebuild ALL thumbnails (force)' button. Lower it if indexing a huge folder makes the machine sluggish.",
         "blur_thumbnails": false,
         "cache_dir": "",
-        "_cache_dir_help": "Where thumbnails are cached. Empty = inside the output folder (<out>/_index/thumbs). Set it to a fast disk (e.g. \"D:/cache\") when your output folder lives on a slow HDD/network drive: thumbnails then go to <cache_dir>/crispz-thumbs/<slug>/ and are served from there, which makes the Asset Browser grid fill in much faster. Safe to delete at any time (rebuilt on demand)."
+        "_cache_dir_help": "Where thumbnails are cached. Empty (default) = <app>/cache (the app folder, gitignored - usually a fast disk, much faster than an HDD/NAS output folder). 'output' = next to the images (<out>/_index/thumbs, relative URLs). Any path = custom cache (e.g. an SSD): thumbnails go to <cache_dir>/crispz-thumbs/<slug>/. Also settable in the UI (Save > Asset Browser). Safe to delete at any time (rebuilt on demand)."
     },
 
     "log_level": "info"

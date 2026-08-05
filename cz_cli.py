@@ -403,6 +403,14 @@ def cli_main(argv=None):
     parser.add_argument("--port", type=int, default=7861, help="Server port (--serve)")
     parser.add_argument("--idle-timeout", type=int, default=300,
                         help="Seconds of inactivity before the server frees VRAM (0 = never)")
+    parser.add_argument("--detail-faces", action="store_true",
+                        help="txt2img: after the render, detect faces and re-refine each at "
+                             "high res (ADetailer-style, same as the UI '🔧 Detail faces').")
+    parser.add_argument("--detailer-denoise", type=float, default=None, metavar="0.35",
+                        help="Face-detailer strength (0.1-0.7; default from config).")
+    parser.add_argument("--metadata-scheme", choices=["crispz", "a1111"], default=None,
+                        help="PNG metadata scheme for saved images ('a1111' adds the "
+                             "Civitai-readable 'parameters' chunk). Default from config.")
     parser.add_argument("--auth", default=None, metavar="USER:PASSWORD",
                         help="Protect the Gradio UI with a login page. Several accounts: "
                              "\"a:pw1,b:pw2\". Also via config.txt 'auth' or env CRISPZ_AUTH. "
@@ -443,6 +451,10 @@ def cli_main(argv=None):
     elif args.quiet:
         cz_core.LOG_LEVEL = 0
     _log(f"log level = {cz_core.LOG_LEVEL} (0=quiet 1=info 2=debug)")
+
+    if args.metadata_scheme:
+        import cz_imageio
+        _log(cz_imageio.set_metadata_scheme(args.metadata_scheme))
 
     if args.esrgan_dir:
         set_esrgan_dir(args.esrgan_dir)
@@ -550,6 +562,13 @@ def cli_main(argv=None):
             refine_tile=args.refine_tile, refine_overlap=args.refine_overlap,
             refine_first=args.refine_first)
         result = _maybe_faceswap(result)
+        if args.detail_faces:
+            import cz_detailer
+            if args.detailer_denoise is not None:
+                cz_detailer.set_denoise(args.detailer_denoise)
+            result, _nf = cz_detailer.detail_faces(result, args.prompt, args.seed,
+                                                   steps=args.steps)
+            _log(f"detailer: {_nf} face(s) refined")
         # Sortie : -o fichier, sinon output_dir (sauf save-mode display)
         dst = None
         if args.output and not (os.path.isdir(args.output) or args.output.endswith(("/", "\\"))):

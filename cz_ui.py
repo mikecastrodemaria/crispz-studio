@@ -1274,6 +1274,30 @@ def _bg_job_set(key, **fields):
         _BG_JOBS[key] = st
 
 
+def _ui_set_ab_cache(path):
+    """Change le dossier du cache de miniatures (persiste + effet immediat pour
+    l'ECRITURE; le SERVICE des vignettes d'un nouveau chemin demande un redemarrage:
+    allowed_paths est fige au launch)."""
+    import cz_core
+    path = (path or "").strip()
+    cz_core._prefs["ab_cache_dir"] = path        # effet immediat (lu par _ab_get)
+    try:
+        _save_prefs_keys({"ab_cache_dir": path})
+    except Exception as e:
+        return f"Save failed: {e}"
+    if path.lower() == "output":
+        return ("✅ Thumbnails will live NEXT TO the images (<out>/_index/thumbs, relative "
+                "URLs — no restart needed).")
+    target = path or os.path.join(HERE, "cache")
+    try:
+        os.makedirs(target, exist_ok=True)
+    except Exception as e:
+        return f"Saved, but cannot create '{target}': {e}"
+    return (f"✅ Thumbnail cache → `{target}` (saved). New thumbnails are written there "
+            "now; **restart the app** so they can be served (allowed_paths is fixed at "
+            "launch), then Rebuild ALL thumbnails.")
+
+
 def _api_civitai_fetch(rel, kind):
     """API (Asset Browser): demarre l'enrichissement CivitAI d'un modele EN ARRIERE-PLAN
     et renvoie immediatement la cle du job. Le client interroge ensuite civitai_progress.
@@ -3215,6 +3239,14 @@ def build_ui():
                             ab_gen_thumbs = gr.Checkbox(value=bool(_ab_get("generate_thumbnails")),
                                                         label="Generate thumbnails")
                         with gr.Row():
+                            ab_cache_tb = gr.Textbox(
+                                value=str(_ab_get("cache_dir") or ""), scale=3,
+                                label="Thumbnail cache folder",
+                                placeholder=os.path.join(HERE, "cache") + "  (default: app folder, gitignored)",
+                                info="Empty = <app>/cache (fast disk). 'output' = next to the images "
+                                     "(<out>/_index/thumbs). Any path = custom cache (e.g. an SSD).")
+                            ab_cache_save_btn = gr.Button("Save cache folder", size="sm", scale=1)
+                        with gr.Row():
                             ab_open_btn = gr.Button("\U0001F5BC️ Open Asset Browser",
                                                     variant="primary", size="sm")
                             ab_reindex_btn = gr.Button("Rebuild ALL thumbnails (force)", size="sm")
@@ -3384,6 +3416,7 @@ def build_ui():
                              [output_dir, ab_thumb_size, ab_quality, ab_blur, ab_gen_thumbs],
                              [ab_open_link, ab_status])
         # Open Asset Browser in a new tab (fast: manifest now, thumbnails in background).
+        ab_cache_save_btn.click(_ui_set_ab_cache, [ab_cache_tb], [ab_status])
         ab_open_btn.click(_ui_gallery_open, [output_dir], [ab_status, gallery_url]).then(
             None, [gallery_url], None, js="(u) => { if (u) window.open(u, '_blank'); }")
         # Icones 🖼️: ouvrir l'Asset Browser centre sur le checkpoint / la LoRA selectionne(e).
