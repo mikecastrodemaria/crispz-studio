@@ -16,7 +16,7 @@ import threading
 
 from PIL import Image
 
-from cz_core import CONFIG, DEFAULT_OUTPUT_DIR, HERE, IMG_EXTS, _log, _dbg
+from cz_core import CONFIG, DEFAULT_OUTPUT_DIR, HERE, IMG_EXTS, _log, _dbg, _prefs
 from cz_imageio import _read_image_meta
 from cz_assets import ASSET_BROWSER_HTML
 
@@ -26,6 +26,11 @@ _AB_DEFAULTS = {"enabled": False, "generate_thumbnails": True,
 
 
 def _ab_get(key):
+    """Reglage Asset Browser. Priorite: preferences.json ('ab_<cle>', pose par l'UI) >
+    config.txt (asset_browser.<cle>) > defaut."""
+    v = _prefs.get("ab_" + key)
+    if v not in (None, ""):
+        return v
     cfg = CONFIG.get("asset_browser") or {}
     return cfg.get(key, _AB_DEFAULTS.get(key))
 
@@ -49,14 +54,18 @@ def _ab_resolve_dir(output_dir):
 def _thumbs_root(d):
     """(dossier disque des miniatures, prefixe d'URL) pour un dossier de sortie.
 
-    Defaut: '<sortie>/_index/thumbs', servi en RELATIF par la SPA.
-    Si asset_browser.cache_dir est defini (ex. un SSD alors que les images sont sur un
-    disque lent), les miniatures vont dans '<cache>/crispz-thumbs/<slug>' et sont servies
-    en URL ABSOLUE (/gradio_api/file=...). Le slug depend du dossier de sortie: deux
-    dossiers de sortie ne partagent pas leur cache."""
+    Defaut: '<app>/cache/crispz-thumbs/<slug>' — le dossier de l'app (gitignore) est en
+    general sur un disque rapide, alors que le dossier de sortie peut etre un HDD/NAS
+    lent. Servi en URL ABSOLUE (/gradio_api/file=...). Le slug depend du dossier de
+    sortie: deux dossiers de sortie ne partagent pas leur cache.
+    cache_dir personnalisable (UI Save > Asset Browser / config asset_browser.cache_dir);
+    la valeur speciale 'output' remet l'ancien comportement: '<sortie>/_index/thumbs',
+    servi en RELATIF, a cote des images."""
     cache = str(_ab_get("cache_dir") or "").strip()
-    if not cache:
+    if cache.lower() == "output":
         return os.path.join(d, "_index", "thumbs"), "_index/thumbs/"
+    if not cache:
+        cache = os.path.join(HERE, "cache")
     slug = hashlib.sha1(os.path.abspath(d).lower().encode("utf-8")).hexdigest()[:12]
     root = os.path.join(cache, "crispz-thumbs", slug)
     return root, "/gradio_api/file=" + os.path.abspath(root).replace("\\", "/") + "/"
