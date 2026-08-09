@@ -42,6 +42,27 @@ except Exception:
     except Exception:
         pass
 
+# Un gr.ImageEditor garde son fond dans %TEMP%\gradio\...\background.png. Si ce fichier
+# devient illisible (nettoyage du Temp Windows / antivirus pendant une longue session),
+# Gradio explose en PIL.UnidentifiedImageError au PRE-TRAITEMENT de l'event — avant nos
+# handlers, donc impossible a rattraper cote app: CHAQUE clic Generate echoue tant que
+# l'utilisateur ne re-depose pas l'image. On degrade en 'pas d'image' + log clair.
+try:
+    from gradio.components import image_editor as _cz_ge
+    _cz_orig_cafi = _cz_ge.ImageEditor.convert_and_format_image
+
+    def _cz_safe_cafi(self, file):
+        try:
+            return _cz_orig_cafi(self, file)
+        except Exception as _e:
+            print(f"[crispz] image input dropped (stale/unreadable Gradio temp file: {_e}) "
+                  "- re-drop the image in the editor", flush=True)
+            return None
+
+    _cz_ge.ImageEditor.convert_and_format_image = _cz_safe_cafi
+except Exception:
+    pass
+
 
 # _disable_brotli -> cz_cli.py (utilise seulement au lancement de l'UI).
 
