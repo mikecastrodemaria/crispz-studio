@@ -3,6 +3,23 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Fix: concurrent generations no longer corrupt the shared scheduler
+
+**Why.** Gradio does not serialise events from DIFFERENT listeners: a manual **Generate**
+still running while **Run queue** starts its first job (or the face detailer refining)
+meant two threads calling the same shared pipeline and stepping the SAME scheduler — its
+internal index ran past the end and the job died with
+`IndexError: index 31 is out of bounds for dimension 0 with size 31`
+(`scheduling_flow_match_euler_discrete.step`), observed live on crispz-qwen-edit.
+
+**What.** A process-wide **GPU lock** (`_GPU_LOCK`, re-entrant) now serialises every
+generation entry point (`generate`, `txt2img_run`, `process_one`, `_refine_whole`,
+`outpaint`, `inpaint_run`, `generate_omni` — decorator `@_gpu_serial`): a second request
+simply waits for the GPU instead of racing it. Same-thread nesting (txt2img→generate,
+process_one→refine, detailer) stays free thanks to the RLock. Validated: 4 threads on a
+locked function show zero overlap, nesting does not deadlock, all entry points wrapped,
+smoke 22/22.
+
 ## Unreleased — Thumbnail cache: app-folder default, UI field, and CLI flags for the new features
 
 - **New default location**: the Asset Browser thumbnail cache now lives in **`<app>/cache/`**
