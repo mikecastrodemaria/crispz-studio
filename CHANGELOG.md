@@ -3,6 +3,24 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Fix: a LoRA picked as checkpoint no longer hunts for an SD1.5 config
+
+**Why.** A LoRA file misfiled in a checkpoints folder (e.g. `ZITnsfwLoRAv3.safetensors`)
+could be selected as the transformer: diffusers cannot recognise the state dict, falls
+back to its default single-file repo and dies with
+`OSError: stable-diffusion-v1-5/stable-diffusion-v1-5 does not appear to have a file
+named config.json` — observed on a Pinokio install.
+
+**What.** `_safetensors_unsupported` now detects LoRA state dicts from the header
+(kohya `lora_down/up` + `lora_unet_/lora_te` prefixes, peft `lora_A/B`): such files are
+skipped from the checkpoint list and force-loading one raises "LoRA file, not a
+checkpoint - move it to the LoRA folder and pick it in Models > LoRA". The Z-Image
+`from_single_file` also passes `config=BASE_REPO, subfolder="transformer"` (as the Qwen
+fork already did), so a valid-but-unrecognised transformer never falls back to SD1.5 and
+offline mode keeps working. Validated: 3 real Z-Image LoRAs detected, a real checkpoint
+accepted and actually loaded through the new path (25 s, valid model), the forced-LoRA
+guard raises the clear error, smoke 22/22.
+
 ## Unreleased — Fix: concurrent generations no longer corrupt the shared scheduler
 
 **Why.** Gradio does not serialise events from DIFFERENT listeners: a manual **Generate**
