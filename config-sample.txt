@@ -44,6 +44,8 @@
     "force_upscale_ratio": "",
     "_force_ratio_mode_help": "How the forced ratio is reached: 'crop' = centre-crop the input to fit (edges are lost), 'extend' = outpaint the missing bands with Z-Image (nothing is lost, the added bands are generated).",
     "force_ratio_mode": "crop",
+    "_force_ratio_extend_denoise_help": "Extend mode only: after outpainting the bands, one LIGHT img2img pass over the WHOLE extended image blends the band seams (exposure/texture junction lines). 0 = off. 0.15-0.30 sensible; higher redraws more of the original.",
+    "force_ratio_extend_denoise": 0.22,
     "default_performance": "Turbo (8 steps)",
     "default_width": 1024,
     "default_height": 1024,
