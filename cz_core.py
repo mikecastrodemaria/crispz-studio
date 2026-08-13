@@ -145,10 +145,10 @@ def _save_prefs_keys(updates):
 
 
 def _is_single_file(p):
-    """Vrai si p est un fichier checkpoint (ex. .safetensors Civitai) plutot qu'un
-    repo HF ou un dossier diffusers."""
+    """Vrai si p est un fichier checkpoint (ex. .safetensors Civitai, .gguf quantifie)
+    plutot qu'un repo HF ou un dossier diffusers."""
     return bool(p) and os.path.isfile(p) and p.lower().endswith(
-        (".safetensors", ".ckpt", ".pt", ".sft"))
+        (".safetensors", ".ckpt", ".pt", ".sft", ".gguf"))
 
 
 _prefs = _load_prefs_raw()

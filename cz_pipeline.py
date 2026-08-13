@@ -414,32 +414,30 @@ def set_zimage_transformer(path):
              "-> transformer swap on next run (base components kept)")
 
 
+def _safetensors_header(path):
+    """En-tete JSON d'un .safetensors (noms/dtypes/shapes des tenseurs, JAMAIS les
+    poids) -- lecture de quelques centaines de Ko au plus, meme sur un fichier de 12 Go."""
+    import struct
+    with open(path, "rb") as f:
+        n = struct.unpack("<Q", f.read(8))[0]
+        return json.loads(f.read(min(n, 10_000_000)).decode("utf-8", "ignore"))
+
+
 def _safetensors_unsupported(path):
-    """Renvoie une raison (str) si le .safetensors n'est PAS chargeable par diffusers,
-    sinon None. Lit juste l'en-tete (rapide). Deux cas non supportes:
-      - FP8 (F8_E4M3 / F8_E5M2) -> "FP8"
-      - quantifie INT8/INT4 facon ComfyUI / SVDQuant-Nunchaku (tenseurs I8/U8 + facteurs
-        'weight_scale') -> "INT8/INT4 quantized". diffusers ne dequantifie pas ce schema.
-      - SVDQuant / Nunchaku (tenseurs nommes '*.qweight') -> "SVDQuant/Nunchaku INT4".
-        Ce schema n'utilise PAS 'weight_scale', d'ou une detection dediee.
-    Prendre le build BF16/FP16 non quantifie, ou un .gguf."""
+    """Renvoie une raison (str) si le .safetensors n'est PAS chargeable, sinon None.
+    Lit juste l'en-tete (rapide). Deux cas restent non supportes:
+      - fichier LoRA range dans le dossier checkpoints (cles kohya/peft)
+      - SVDQuant / Nunchaku (tenseurs nommes '*.qweight'): poids pre-quantifies INT4
+        qui exigent le runtime nunchaku (kernels dedies), pas dequantifiables ici.
+    Les FP8 / INT8 'scaled' facon ComfyUI ne sont PLUS rejetes: ils passent par le
+    loader dequant (_safetensors_dequant + _load_dequant_state_dict)."""
     try:
-        import struct
-        with open(path, "rb") as f:
-            n = struct.unpack("<Q", f.read(8))[0]
-            hdr = json.loads(f.read(min(n, 3_000_000)).decode("utf-8", "ignore"))
-        has_fp8 = has_int = has_scale = has_qweight = False
+        hdr = _safetensors_header(path)
+        has_qweight = False
         lora_keys = 0
         for k, v in hdr.items():
             if k == "__metadata__" or not isinstance(v, dict):
                 continue
-            dt = str(v.get("dtype", "")).upper()
-            if dt.startswith("F8"):
-                has_fp8 = True
-            elif dt in ("I8", "I4", "U8", "U4", "UINT8", "INT8"):
-                has_int = True
-            if k.endswith("weight_scale") or k.endswith("scale_weight"):
-                has_scale = True
             if k.endswith(".qweight"):
                 has_qweight = True
             if (".lora_down." in k or ".lora_up." in k or ".lora_A." in k
@@ -450,19 +448,132 @@ def _safetensors_unsupported(path):
         # 404 'stable-diffusion-v1-5 does not appear to have a file named config.json'.
         if lora_keys >= 4:
             return "LoRA file, not a checkpoint - move it to the LoRA folder and pick it in Models > LoRA"
-        if has_fp8:
-            return "FP8"
         # '*.qweight' = poids pre-quantifies (SVDQuant/Nunchaku, GPTQ-like). Signal net:
         # un checkpoint BF16/FP16 normal n'a jamais de 'qweight'.
         if has_qweight:
             return "SVDQuant/Nunchaku INT4"
-        # Les dtypes entiers bas seuls ne suffisent pas (evite les faux positifs sur un
-        # buffer U8 isole): on exige les facteurs de dequantification 'weight_scale'.
-        if has_int and has_scale:
-            return "INT8/INT4 quantized"
     except Exception:
         pass
     return None
+
+
+def _safetensors_dequant(path):
+    """Renvoie le schema de quantification ComfyUI a dequantifier au chargement
+    ('FP8', 'FP8 scaled' ou 'INT8 scaled'), sinon None (BF16/FP16 -> chemin normal).
+    Format 'scaled' ComfyUI observe sur les checkpoints Civitai:
+      X.weight (F8_E4M3 ou I8) + X.weight_scale (F32, scalaire ou par ligne [out,1])
+      + X.comfy_quant (petit blob U8 descripteur, a jeter).
+    NB: un bundle AIO dont SEUL l'encodeur texte est quantifie (transformer BF16)
+    declenche aussi -> le loader dequant filtre le transformer et le laisse intact.
+    U8 seul ne declenche pas: les blobs 'comfy_quant' sont U8 dans des fichiers sains."""
+    try:
+        hdr = _safetensors_header(path)
+        has_fp8 = has_int = has_scale = False
+        for k, v in hdr.items():
+            if k == "__metadata__" or not isinstance(v, dict):
+                continue
+            dt = str(v.get("dtype", "")).upper()
+            if dt.startswith("F8"):
+                has_fp8 = True
+            elif dt in ("I8", "I4", "U4", "INT8"):
+                has_int = True
+            if k.endswith(("weight_scale", "scale_weight")):
+                has_scale = True
+        if has_fp8:
+            return "FP8 scaled" if has_scale else "FP8"
+        if has_int and has_scale:
+            return "INT8 scaled"
+    except Exception:
+        pass
+    return None
+
+
+# Architecture attendue dans les .gguf. Un GGUF de diffusion declare son archi dans
+# 'general.architecture': les conversions ComfyUI-GGUF de Z-Image (unsloth, jayn7,
+# QuantStack...) declarent 'lumina2' (S3-DiT, lignee Lumina). 'flux', 'qwen_image',
+# 'llama'... = autres modeles qui exigent leur propre pipeline -> ecartes.
+GGUF_ARCH = str(CONFIG.get("gguf_arch") or "lumina2").strip().lower()
+
+_GGUF_FIXED = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i",
+               6: "<f", 7: "<?", 10: "<Q", 11: "<q", 12: "<d"}
+
+
+def _gguf_skip(f, t):
+    """Avance le flux au-dela d'une valeur GGUF sans la lire (strings et arrays inclus)."""
+    import struct
+    if t == 8:                                   # string
+        f.seek(struct.unpack("<Q", f.read(8))[0], 1)
+        return
+    if t == 9:                                   # array
+        et = struct.unpack("<I", f.read(4))[0]
+        n = struct.unpack("<Q", f.read(8))[0]
+        if et in _GGUF_FIXED:
+            f.seek(struct.calcsize(_GGUF_FIXED[et]) * n, 1)
+        else:
+            for _ in range(n):
+                _gguf_skip(f, et)
+        return
+    f.seek(struct.calcsize(_GGUF_FIXED[t]), 1)
+
+
+def _gguf_arch(path, max_kv=64):
+    """'general.architecture' d'un .gguf -- lit seulement l'en-tete (quelques Ko), jamais
+    les poids. Renvoie 'lumina2' / 'flux' / 'qwen_image' / 'llama'... ou None si illisible
+    (dans ce cas on ne filtre pas: mieux vaut tenter que d'ecarter un modele valide)."""
+    import struct
+    try:
+        with open(path, "rb") as f:
+            if f.read(4) != b"GGUF":
+                return None
+            f.seek(4 + 8, 1)                     # version (u32) + tensor_count (u64)
+            nkv = struct.unpack("<Q", f.read(8))[0]
+            for _ in range(min(nkv, max_kv)):
+                kl = struct.unpack("<Q", f.read(8))[0]
+                if kl > 4096:                    # en-tete incoherent -> on abandonne
+                    return None
+                key = f.read(kl).decode("utf-8", "replace")
+                t = struct.unpack("<I", f.read(4))[0]
+                if key == "general.architecture" and t == 8:
+                    n = struct.unpack("<Q", f.read(8))[0]
+                    return f.read(n).decode("utf-8", "replace").strip().lower()
+                _gguf_skip(f, t)
+    except Exception as e:
+        _dbg(f"gguf header read failed {path}: {e}")
+    return None
+
+
+# Prefixes de tenseurs du layout Z-Image ORIGINAL (celui que le loader GGUF de diffusers
+# sait mapper -- conversions ComfyUI-GGUF: unsloth/jayn7/QuantStack, avec ou sans prefixe
+# ComfyUI). Certains GGUF sont convertis par stable-diffusion.cpp avec un schema compact
+# renomme: l'archi declaree est bonne mais AUCUNE cle ne matche -> tous les poids restent
+# sur le device 'meta' et le .to(device) explose en "Cannot copy out of meta tensor".
+# On detecte ce cas a l'en-tete pour refuser proprement.
+_GGUF_OK_PREFIXES = ("layers.", "noise_refiner", "context_refiner", "final_layer",
+                     "x_embedder", "cap_embedder", "t_embedder",
+                     "model.diffusion_model.")
+
+
+def _gguf_layout_unsupported(path):
+    """Renvoie une raison (str) si le .gguf n'utilise PAS le layout de tenseurs Z-Image
+    original attendu par diffusers, sinon None. Lecture d'en-tete seule (gguf mmap)."""
+    try:
+        from gguf import GGUFReader
+        r = GGUFReader(path)
+        names = [t.name for t in r.tensors]
+        if not names:
+            return None                      # illisible -> ne pas ecarter a tort
+        if any(n.startswith(_GGUF_OK_PREFIXES) for n in names):
+            return None
+        return ("GGUF with a non-standard tensor layout (e.g. stable-diffusion.cpp "
+                "conversion); diffusers cannot map it — use a ComfyUI-GGUF-style "
+                "export (unsloth/jayn7) or the BF16/FP16 .safetensors build")
+    except Exception as e:
+        _dbg(f"gguf layout check failed {path}: {e}")
+        return None
+
+
+def _is_gguf_path(p):
+    return bool(p) and str(p).lower().endswith(".gguf")
 
 
 def _checkpoint_dirs():
@@ -475,10 +586,12 @@ def _checkpoint_dirs():
 
 
 def list_checkpoints():
-    """Modeles Z-Image single-file (.safetensors) des dossiers checkpoints (principal +
-    extra, fusionnes dans une seule liste). Exclut les checkpoints non chargeables par
-    diffusers -- FP8 et INT8/INT4 quantifies facon ComfyUI (prendre la version BF16/FP16).
-    En cas de meme nom de fichier, le dossier principal a la priorite."""
+    """Modeles Z-Image single-file (.safetensors, .gguf) des dossiers checkpoints
+    (principal + extra, fusionnes dans une seule liste). Les FP8/INT8 'scaled' ComfyUI
+    sont listes (dequantifies au chargement); restent exclus: LoRA egarees, SVDQuant/
+    Nunchaku (runtime dedie requis), GGUF d'une autre architecture ou au layout
+    stable-diffusion.cpp. En cas de meme nom de fichier, le dossier principal a la
+    priorite."""
     out = []
     seen = set()
     for d in _checkpoint_dirs():
@@ -487,13 +600,24 @@ def list_checkpoints():
         for f in os.listdir(d):
             if f in seen:
                 continue
-            if not f.lower().endswith((".safetensors", ".ckpt", ".pt", ".sft")):
+            if not f.lower().endswith((".safetensors", ".ckpt", ".pt", ".sft", ".gguf")):
                 continue
             if f.lower().endswith(".safetensors"):
                 reason = _safetensors_unsupported(os.path.join(d, f))
                 if reason:
-                    _log(f"checkpoint skipped ({reason}, not loadable by diffusers; "
-                         f"use the BF16/FP16 build): {f}")
+                    _log(f"checkpoint skipped ({reason}): {f}")
+                    continue
+            if f.lower().endswith(".gguf"):
+                a = _gguf_arch(os.path.join(d, f))
+                # a=None -> en-tete illisible: on laisse passer (ne pas ecarter a tort).
+                if a and a != GGUF_ARCH:
+                    _log(f"checkpoint skipped (GGUF architecture '{a}', this build only "
+                         f"loads '{GGUF_ARCH}' = Z-Image; that model needs its own "
+                         f"pipeline and text encoder/VAE): {f}")
+                    continue
+                lay = _gguf_layout_unsupported(os.path.join(d, f))
+                if lay:
+                    _log(f"checkpoint skipped ({lay}): {f}")
                     continue
             seen.add(f)
             out.append(f)
@@ -805,8 +929,78 @@ def _apply_loras(pipe, force=False):
         return False
 
 
+def _load_dequant_state_dict(path):
+    """Charge en RAM un checkpoint 'scaled' ComfyUI (FP8/INT8) et le dequantifie en
+    DTYPE (bf16), tenseur par tenseur:
+      - bundle AIO (transformer + encodeur texte + VAE): seules les cles
+        'model.diffusion_model.*' sont gardees (VAE + encodeur Qwen3 = repo de base);
+      - X.weight (F8/I8) * X.weight_scale (scalaire ou par ligne) -> bf16;
+      - les cles de quantification (weight_scale/scale_weight, comfy_quant, marqueur
+        scaled_fp8) sont consommees/jetees.
+    Le dict resultant part dans from_single_file (conversion de cles diffusers comprise).
+    NB VRAM/RAM: dequantifie = empreinte d'un BF16 complet (~12 Go); le FP8 n'economise
+    que le disque/telechargement, pas la memoire."""
+    from safetensors import safe_open
+    t0 = time.time()
+    hdr = _safetensors_header(path)
+    entries = [(k, v) for k, v in hdr.items()
+               if k != "__metadata__" and isinstance(v, dict)]
+    # Bundle AIO: ne garder que le transformer. (Sans prefixe ComfyUI = fichier
+    # transformer-only au layout original -> pas de filtre.)
+    if any(k.startswith("model.diffusion_model.") for k, _ in entries):
+        entries = [(k, v) for k, v in entries
+                   if k.startswith("model.diffusion_model.")]
+    # Garde d'architecture: un checkpoint quantifie d'un AUTRE modele (cles sans
+    # aucun marqueur Z-Image) chargerait des poids incoherents -> refus clair.
+    if not any((".feed_forward." in k or "noise_refiner" in k or
+                "context_refiner" in k or "cap_embedder" in k) for k, _ in entries):
+        raise RuntimeError(
+            f"{os.path.basename(path)}: quantized checkpoint does not look like a "
+            "Z-Image transformer (different architecture); this build only loads "
+            "Z-Image models.")
+    # Lecture SEQUENTIELLE dans l'ordre PHYSIQUE du fichier (data_offsets): un HDD
+    # s'effondre en acces aleatoire, et l'ordre des cles ne suit pas celui des donnees
+    # (mesure sur un FP8 de 5.7 Go: 349s en ordre de cles -> lie au debit disque ainsi).
+    entries.sort(key=lambda kv: kv[1].get("data_offsets", [0])[0])
+    raw = {}
+    with safe_open(path, framework="pt", device="cpu") as f:
+        for k, _ in entries:
+            if k.endswith(".comfy_quant"):   # blob descripteur, jamais utilise
+                continue
+            raw[k] = f.get_tensor(k)
+    sd = {}
+    n_dq = 0
+    for k in list(raw.keys()):
+        if k.endswith((".weight_scale", ".scale_weight")) or k.endswith("scaled_fp8"):
+            continue                         # consommees via lookup ci-dessous
+        t = raw.pop(k)
+        if t.dtype in (torch.float8_e4m3fn, torch.float8_e5m2,
+                       torch.int8, torch.uint8):
+            s = None
+            for cand in (k + "_scale",       # X.weight -> X.weight_scale (ComfyUI)
+                         (k[:-len(".weight")] + ".scale_weight")
+                         if k.endswith(".weight") else None):
+                if cand and cand in raw:
+                    s = raw[cand]
+                    break
+            t = t.to(torch.float32)
+            if s is not None:                # scalaire ou [out,1] -> broadcast
+                t = t * s.to(torch.float32)
+            t = t.to(DTYPE)
+            n_dq += 1
+        elif t.is_floating_point() and t.dtype != DTYPE:
+            t = t.to(DTYPE)
+        sd[k] = t
+    raw.clear()
+    _log(f"dequantized {n_dq} tensors ({len(sd)} kept) to bf16 in "
+         f"{time.time() - t0:.1f}s")
+    return sd
+
+
 def _load_transformer():
     """Charge UNIQUEMENT le transformer courant (sans le reste du pipeline):
+      - override GGUF quantifie (.gguf)   -> from_single_file + GGUFQuantizationConfig
+      - override FP8/INT8 'scaled' ComfyUI -> dequant en RAM puis from_single_file(dict)
       - override single-file (.safetensors Civitai) -> from_single_file
       - override repo HF / dossier diffusers        -> sous-dossier 'transformer'
       - pas d'override                              -> transformer du repo de base
@@ -814,12 +1008,45 @@ def _load_transformer():
     from diffusers import ZImageTransformer2DModel
     if ZIMAGE_TRANSFORMER:
         if _is_single_file(ZIMAGE_TRANSFORMER):
-            # Garde: un fichier non chargeable (LoRA egaree, FP8, quantifie) selectionne
-            # via config/CLI/prefs doit echouer avec un message actionnable, pas partir
-            # chercher une config SD1.5 par defaut sur le Hub.
+            # Garde: un fichier non chargeable (LoRA egaree, SVDQuant) selectionne via
+            # config/CLI/prefs doit echouer avec un message actionnable, pas partir
+            # chercher une config SD1.5 par defaut sur le Hub. (Sans effet sur les
+            # .gguf: header safetensors illisible -> None.)
             bad = _safetensors_unsupported(ZIMAGE_TRANSFORMER)
             if bad:
                 raise RuntimeError(f"{os.path.basename(ZIMAGE_TRANSFORMER)}: {bad}.")
+            if _is_gguf_path(ZIMAGE_TRANSFORMER):
+                # transformer Z-Image GGUF (quantifie) -> reste quantifie en memoire
+                # (vraie economie de VRAM). VAE + encodeur texte = repo de base (cache).
+                lay = _gguf_layout_unsupported(ZIMAGE_TRANSFORMER)
+                if lay:
+                    raise RuntimeError(
+                        f"{os.path.basename(ZIMAGE_TRANSFORMER)}: {lay}.")
+                from diffusers import GGUFQuantizationConfig
+                _log(f"loading Z-Image transformer (GGUF, quantized): "
+                     f"{ZIMAGE_TRANSFORMER} ...")
+                # config/subfolder = structure du transformer depuis le repo de base
+                # (cache), sinon from_single_file tente un repo par defaut.
+                return _load_monitor(
+                    f"transformer {os.path.basename(ZIMAGE_TRANSFORMER)} (GGUF)",
+                    lambda: ZImageTransformer2DModel.from_single_file(
+                        ZIMAGE_TRANSFORMER,
+                        quantization_config=GGUFQuantizationConfig(compute_dtype=DTYPE),
+                        config=BASE_REPO, subfolder="transformer",
+                        torch_dtype=DTYPE))
+            dq = _safetensors_dequant(ZIMAGE_TRANSFORMER)
+            if dq:
+                # FP8/INT8 'scaled' ComfyUI (majorite des builds Civitai legers) ->
+                # dequant en RAM puis chargement du dict (conversion de cles diffusers
+                # incluse: prefixe ComfyUI, split QKV fusionne...).
+                _log(f"loading Z-Image transformer (single-file, {dq} ComfyUI -> "
+                     f"dequantized to bf16): {ZIMAGE_TRANSFORMER} ...")
+                sd = _load_dequant_state_dict(ZIMAGE_TRANSFORMER)
+                return _load_monitor(
+                    f"transformer {os.path.basename(ZIMAGE_TRANSFORMER)} ({dq})",
+                    lambda: ZImageTransformer2DModel.from_single_file(
+                        sd, config=BASE_REPO, subfolder="transformer",
+                        torch_dtype=DTYPE))
             _log(f"loading Z-Image transformer (single-file): {ZIMAGE_TRANSFORMER} ...")
             # config/subfolder = structure du transformer depuis le repo de base (cache):
             # sans ca, un checkpoint non reconnu fait retomber from_single_file sur son
@@ -844,6 +1071,17 @@ def _load_transformer():
             BASE_REPO, subfolder="transformer", torch_dtype=DTYPE))
 
 
+def _effective_offload(tpath=None):
+    """Offload REELLEMENT applique. Un transformer GGUF quantifie ne se deplace pas sur le
+    GPU via .to(cuda) ni en sequential -> seul enable_model_cpu_offload le pose sur le GPU
+    pendant le forward. On force donc 'model' pour un base GGUF, quel que soit le reglage."""
+    off = OFFLOAD_MODE
+    t = ZIMAGE_TRANSFORMER if tpath is None else tpath
+    if DEVICE == "cuda" and _is_gguf_path(t) and off != "model":
+        off = "model"
+    return off
+
+
 def _swap_transformer(pipe):
     """Remplace SEULEMENT le transformer du pipeline deja en cache: le VAE, l'encodeur
     de texte Qwen3-4B, le tokenizer et le scheduler restent en VRAM (c'est eux le gros
@@ -852,14 +1090,21 @@ def _swap_transformer(pipe):
     Renvoie True si l'echange a reussi, False -> le caller fait un reload complet."""
     global _APPLIED_LORAS, _DERIVED
     t0 = time.time()
+    old_path = _LOADED_KEY[1] if _LOADED_KEY else None
+    # Passer de/vers un GGUF change l'offload EFFECTIF (un GGUF impose 'model') -> les
+    # hooks accelerate et le placement different: on ne bricole pas, on recharge.
+    if _effective_offload(old_path) != _effective_offload(ZIMAGE_TRANSFORMER):
+        _log("transformer swap skipped (GGUF changes the effective offload) -> full reload")
+        return False
     try:
         _log(f"switching Z-Image transformer -> {ZIMAGE_TRANSFORMER or BASE_REPO} "
              "(keeping VAE + text encoder in VRAM)")
         new_t = _load_transformer()
         old = getattr(pipe, "transformer", None)
+        off = _effective_offload()
         # Offload: les hooks accelerate sont poses sur les composants. Il faut les retirer
         # avant l'echange, sinon le nouveau transformer n'en a pas et l'ancien garde les siens.
-        if DEVICE == "cuda" and OFFLOAD_MODE in ("model", "sequential"):
+        if DEVICE == "cuda" and off in ("model", "sequential"):
             try:
                 pipe.remove_all_hooks()
             except Exception as e:
@@ -869,9 +1114,9 @@ def _swap_transformer(pipe):
         except Exception:
             pipe.transformer = new_t
         if DEVICE == "cuda":
-            if OFFLOAD_MODE == "model":
+            if off == "model":
                 pipe.enable_model_cpu_offload()
-            elif OFFLOAD_MODE == "sequential":
+            elif off == "sequential":
                 pipe.enable_sequential_cpu_offload()
             else:
                 new_t.to(DEVICE)
@@ -946,9 +1191,17 @@ def _ensure_base():
     # PAS au chargement. En tuile/1024 -> slicing OFF = attention SDPA native, rapide
     # (comme ComfyUI). Whole-image 2K+ -> slicing ON pour eviter le spill VRAM 32 Go.
     # enable_*_cpu_offload gere lui-meme le device -> ne PAS faire .to(cuda) alors.
-    if DEVICE == "cuda" and OFFLOAD_MODE == "model":
+    # IMPORTANT: un transformer GGUF quantifie ne se deplace PAS sur le GPU via .to(cuda)
+    # (offload=none) ni en sequential -> il reste sur CPU = ULTRA lent (VRAM vide,
+    # ~500s/step). Seul enable_model_cpu_offload (accelerate) le pose correctement sur le
+    # GPU pendant le forward -> _effective_offload force 'model' pour un base GGUF.
+    _off = _effective_offload()
+    if _off != OFFLOAD_MODE:
+        _log(f"GGUF base: offload '{OFFLOAD_MODE}' forced to '{_off}' (a GGUF does not "
+             f"run on GPU with none/sequential -> would stay on CPU, ~500s/step)")
+    if DEVICE == "cuda" and _off == "model":
         pipe.enable_model_cpu_offload()
-    elif DEVICE == "cuda" and OFFLOAD_MODE == "sequential":
+    elif DEVICE == "cuda" and _off == "sequential":
         pipe.enable_sequential_cpu_offload()
     else:
         pipe = pipe.to(DEVICE)
@@ -993,12 +1246,17 @@ def get_pipe(kind="img2img"):
     # 100-300x plus lent que txt2img (transformer 0.5s -> 108s, mesure). On force bf16 a la
     # derivation, on recaste (composants partages avec le base), on coupe le re-upcast fp32
     # du VAE, et on vide le cache (les copies fp32 transitoires reservaient ~49 Go -> spill).
+    # Un transformer GGUF est QUANTIFIE: pas de recast dtype (.to(DTYPE) leve "Casting a
+    # quantized model is unsupported") -> torch_dtype=None explicite et pas de p.to(DTYPE)
+    # (le compute_dtype est deja bf16).
+    quantized = _is_gguf_path(ZIMAGE_TRANSFORMER)
     try:
-        p = cls.from_pipe(base, torch_dtype=DTYPE)
+        p = cls.from_pipe(base, torch_dtype=None) if quantized else cls.from_pipe(base, torch_dtype=DTYPE)
     except TypeError:
         p = cls.from_pipe(base)
     try:
-        p = p.to(DTYPE)
+        if not quantized:
+            p = p.to(DTYPE)
         p.vae.config.force_upcast = False
         if DEVICE == "cuda":
             torch.cuda.empty_cache()
@@ -1007,9 +1265,11 @@ def get_pipe(kind="img2img"):
     _apply_sampler(p)   # meme sampler que le base (au cas ou from_pipe recree le scheduler)
     # Diagnostic vitesse: si le pipe derive n'est PAS sur cuda -> img2img/refine tourne
     # sur CPU = ultra lent. On le force sur DEVICE en mode plein VRAM (offload gere seul).
+    # NB: offload EFFECTIF (un base GGUF force 'model' meme si l'UI dit 'none'): en
+    # offload, un transformer "sur CPU" est normal -> un .to(cuda) casserait les hooks.
     try:
         tdev = next(p.transformer.parameters()).device
-        if DEVICE == "cuda" and OFFLOAD_MODE == "none" and tdev.type != "cuda":
+        if DEVICE == "cuda" and _effective_offload() == "none" and tdev.type != "cuda":
             _log(f"{kind} pipeline was on {tdev} -> moving to {DEVICE}")
             p = p.to(DEVICE)
             tdev = next(p.transformer.parameters()).device

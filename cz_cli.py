@@ -419,10 +419,11 @@ def cli_main(argv=None):
     parser.add_argument("--esrgan-dir", help="Override ESRGAN_DIR for this run")
     parser.add_argument("--zimage-model",
                         help="Override Z-Image: HF repo, diffusers folder, OR a single-file "
-                             ".safetensors (Civitai) used as the transformer (VAE+encoder from base).")
+                             ".safetensors / .gguf (Civitai, incl. FP8/INT8 'scaled' builds, "
+                             "dequantized at load) used as the transformer (VAE+encoder from base).")
     parser.add_argument("--zimage-transformer",
-                        help="Single-file .safetensors transformer override (Civitai), keeping "
-                             "the VAE + Qwen3 encoder from --zimage-model / the base repo.")
+                        help="Single-file .safetensors / .gguf transformer override (Civitai), "
+                             "keeping the VAE + Qwen3 encoder from --zimage-model / the base repo.")
     parser.add_argument("--save-paths", action="store_true",
                         help="Save --esrgan-dir and --zimage-model to preferences.json")
     # Reports
