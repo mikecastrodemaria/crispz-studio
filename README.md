@@ -16,6 +16,13 @@ SwarmUI. On top of crispz's upscaler it adds:
 - **Image → Upscale** (the crispz pipeline): Real-ESRGAN + Z-Image refine, 4K tiling —
   plus one-click **🎲 Vary (subtle / strong)** (pure img2img re-roll of an input image,
   denoise 0.25 / 0.6, Fooocus-style).
+- **Force aspect ratio on Upscale/img2img** (Settings > Aspect ratio): a 3-way radio.
+  **Off** keeps the input's native ratio; **Crop to fit** centre-crops the input to the
+  Aspect-ratio dropdown before processing (Fooocus-style, edges lost); **Extend
+  (outpaint)** reaches the ratio by **generating the missing bands** instead — nothing
+  is cropped, the centre stays pixel-for-pixel intact, and a light seam-blend img2img
+  pass (config `force_ratio_extend_denoise`, default 0.22) fuses the band junctions.
+  Config: `force_upscale_ratio`, `force_ratio_mode` (`crop`/`extend`).
 - **Job queue**: `+ Queue` snapshots ALL current settings (incl. model, LoRAs, sampler)
   into a labeled job list; `Run queue` chains them unattended (overnight batches with
   different models/settings). **Stop pauses the queue** — remaining jobs are kept. VRAM
@@ -43,18 +50,23 @@ SwarmUI. On top of crispz's upscaler it adds:
   (enlarged crop → Z-Image img2img → feathered paste). Denoise slider in Advanced;
   `face_detailer*` config keys.
 - **Models**: one **Z-Image checkpoint** dropdown merging the official base repos
-  (Turbo / Z-Image) with single-file `.safetensors` from a main **and** an optional
-  extra folder, a **Transformer override** (diffusers repo/folder, e.g. Juggernaut-Z),
-  and **multi-LoRA** (configurable **1–10 slots** + trigger words). Picking a model also
-  auto-syncs the Performance preset. FP8 and INT8/INT4-quantized checkpoints are skipped
-  (diffusers can't load them) - use the BF16/FP16 build.
+  (Turbo / Z-Image) with single-file `.safetensors` **and `.gguf`** from a main **and**
+  an optional extra folder, a **Transformer override** (diffusers repo/folder, e.g.
+  Juggernaut-Z), and **multi-LoRA** (configurable **1–10 slots** + trigger words).
+  Picking a model also auto-syncs the Performance preset. Supported formats: BF16/FP16,
+  **GGUF quants** (Q3..Q8, stay quantized in VRAM), and ComfyUI **FP8 / FP8-scaled /
+  INT8-scaled** builds (dequantized to bf16 at load — bf16 memory footprint, the saving
+  is disk/download only). AIO bundles (transformer + text encoder + VAE in one file) are
+  filtered to the transformer. Still skipped, with a clear console message: misfiled
+  LoRAs, SVDQuant/Nunchaku INT4 (needs the nunchaku runtime), foreign-architecture or
+  sd.cpp-layout GGUFs.
 - **Presets (Fooocus-style)** (Settings > ⭐ Presets): **save / load / update / delete**
   presets — a preset bundles prompt, styles, size, steps/CFG, sampler, checkpoint,
   transformer + LoRAs, and **Load** switches the model/LoRAs too. Stored in `presets/*.json`.
   A **basic preset is auto-created for every loadable model** (on startup and when you
   Refresh the checkpoint list) if it doesn't already exist yet — named after the model,
   with steps/CFG from its profile. Existing presets are never overwritten; skipped
-  FP8/INT8-INT4 models get none.
+  models (LoRA/SVDQuant files, foreign GGUFs) get none.
 - **Seed**: **♻️ Reuse last seed** (refills the real seed of the previous render) + **Fix
   seed** (no +1 per image). A random `-1` seed is resolved to a concrete value so it is
   actually saved in the metadata.
@@ -398,8 +410,19 @@ python app.py --zimage-transformer "D:/models/zimage_civitai.safetensors" ...
 ```
 
 The single-file is loaded as the **transformer**; the **VAE + Qwen3 text encoder**
-still come from the base repo (`Tongyi-MAI/Z-Image-Turbo` by default). Use a
-**BF16/FP16** checkpoint - FP8/GGUF ComfyUI variants do not load cleanly in diffusers.
+still come from the base repo (`Tongyi-MAI/Z-Image-Turbo` by default). Supported
+formats:
+
+| Format | How it loads | Memory |
+|---|---|---|
+| **BF16/FP16** `.safetensors` | direct (`from_single_file`) | full bf16 |
+| **GGUF** (Q3..Q8, ComfyUI-GGUF export, arch `lumina2`) | `GGUFQuantizationConfig`, **stays quantized in VRAM** (offload forced to `model`) | real saving |
+| **FP8 / FP8-scaled / INT8-scaled** (ComfyUI) | **dequantized to bf16 in RAM** at load | bf16 footprint (saving is disk-only) |
+| **AIO bundle** (transformer + text encoder + VAE) | transformer keys extracted, base VAE/encoder reused | as per transformer dtype |
+
+Still refused with a clear message: misfiled **LoRA** files, **SVDQuant/Nunchaku INT4**
+(needs the nunchaku runtime), GGUFs of another architecture or with sd.cpp compact
+tensor names, quantized checkpoints of a non-Z-Image architecture.
 
 ### Turbo vs Base (`--guidance`)
 
@@ -449,8 +472,9 @@ in one list:
 
 - the official base repos **`Tongyi-MAI/Z-Image-Turbo`** and **`Tongyi-MAI/Z-Image`**
   (pulled from Hugging Face on first use), then
-- every single-file `.safetensors` found in your **Checkpoints folder** **and** the
-  optional **Extra checkpoints folder** (both merged into the same list).
+- every single-file `.safetensors` **and `.gguf`** found in your **Checkpoints folder**
+  **and** the optional **Extra checkpoints folder** (both merged into the same list) —
+  including FP8/INT8 "scaled" builds (dequantized at load, see above).
 
 What each choice does:
 
@@ -458,7 +482,7 @@ What each choice does:
 |---|---|---|
 | **Tongyi-MAI/Z-Image-Turbo** | full base repo (distilled) | **Turbo (8 steps)** |
 | **Tongyi-MAI/Z-Image** | full base repo (needs real CFG) | **Base CFG (28 steps)** |
-| a local `.safetensors` | used as the **transformer** (VAE + Qwen3 encoder kept from the current base repo) | from the model profile |
+| a local `.safetensors` / `.gguf` | used as the **transformer** (VAE + Qwen3 encoder kept from the current base repo; FP8/INT8 dequantized, GGUF kept quantized) | from the model profile |
 
 Switching the dropdown automatically syncs **steps, guidance and the Performance
 radio**. The change is applied on the next **Generate**.

@@ -212,6 +212,21 @@ asset_browser.cache_dir Where the Asset Browser caches thumbnails. Empty (defaul
                         output folder). Also settable in the UI (Save > Asset Browser,
                         'Thumbnail cache folder' — restart to SERVE from a new path).
                         Safe to delete any time (rebuilt on demand).
+force_upscale_ratio     Force a ratio on Upscale/img2img inputs ('W:H' or 'WxH', e.g.
+                        '13:19' or '832x1216'). Empty (default) = keep the input's
+                        native ratio. Also toggled per-run by the 'Force aspect ratio'
+                        radio in the UI (which uses the Aspect ratio dropdown value).
+force_ratio_mode        How the forced ratio is reached: "crop" (default) = centre-crop
+                        the input to fit, Fooocus-style - the edges are lost. "extend" =
+                        OUTPAINT the missing bands with Z-Image instead - nothing is
+                        cropped, the added bands are generated, the original centre is
+                        kept pixel-for-pixel.
+force_ratio_extend_denoise
+                        Extend mode only. After outpainting the bands, one LIGHT
+                        img2img pass runs over the extended image and ONLY the bands +
+                        a feathered transition margin are composited from it - this
+                        removes the exposure/texture junction lines of a raw outpaint.
+                        Default 0.22; 0 disables; 0.15-0.30 sensible.
 gguf_arch               Architecture accepted for .gguf checkpoints ("lumina2" by
                         default = Z-Image, as declared by ComfyUI-GGUF conversions:
                         unsloth, jayn7, QuantStack...). A .gguf in the checkpoints
