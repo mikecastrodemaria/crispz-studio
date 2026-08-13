@@ -66,15 +66,29 @@ def test_parallel_and_serial_give_the_same_result():
 
 
 def test_model_jobs_need_a_preview():
+    # Hermetique: le layout des miniatures depend du cache configure (prefs machine).
+    # On force les deux modes explicitement au lieu de subir preferences.json.
     out = tempfile.mkdtemp()
     md = _models_dir(4, previews=True)
-    jobs = AB._thumb_jobs_for("loras", out, loras_dir=md)
-    assert len(jobs) == 4
-    assert all(s.endswith(".preview.png") for s, _t in jobs)
-    assert all("/thumbs/loras/" in t.replace("\\", "/") for _s, t in jobs)
-    # sans preview -> rien a miniaturiser (pas d'erreur)
-    md2 = _models_dir(3, previews=False)
-    assert AB._thumb_jobs_for("models", out, checkpoints_dir=md2) == []
+    old = AB._prefs.get("ab_cache_dir")
+    try:
+        AB._prefs["ab_cache_dir"] = "output"          # ancien layout a cote des images
+        jobs = AB._thumb_jobs_for("loras", out, loras_dir=md)
+        assert len(jobs) == 4
+        assert all(s.endswith(".preview.png") for s, _t in jobs)
+        assert all("/thumbs/loras/" in t.replace("\\", "/") for _s, t in jobs)
+        AB._prefs["ab_cache_dir"] = tempfile.mkdtemp()  # cache dedie (defaut app-folder)
+        jobs = AB._thumb_jobs_for("loras", out, loras_dir=md)
+        assert all("/crispz-thumbs/" in t.replace("\\", "/") and "/loras/" in t.replace("\\", "/")
+                   for _s, t in jobs)
+        # sans preview -> rien a miniaturiser (pas d'erreur)
+        md2 = _models_dir(3, previews=False)
+        assert AB._thumb_jobs_for("models", out, checkpoints_dir=md2) == []
+    finally:
+        if old is None:
+            AB._prefs.pop("ab_cache_dir", None)
+        else:
+            AB._prefs["ab_cache_dir"] = old
 
 
 def test_missing_dir_is_not_an_error():

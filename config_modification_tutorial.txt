@@ -212,6 +212,13 @@ asset_browser.cache_dir Where the Asset Browser caches thumbnails. Empty (defaul
                         output folder). Also settable in the UI (Save > Asset Browser,
                         'Thumbnail cache folder' — restart to SERVE from a new path).
                         Safe to delete any time (rebuilt on demand).
+gguf_arch               Architecture accepted for .gguf checkpoints ("lumina2" by
+                        default = Z-Image, as declared by ComfyUI-GGUF conversions:
+                        unsloth, jayn7, QuantStack...). A .gguf in the checkpoints
+                        folder declaring another architecture (flux, qwen_image,
+                        llama...) is skipped from the model list: it would need its
+                        own pipeline and text encoder/VAE. Only change this if a
+                        valid Z-Image GGUF ever declares a different string.
 auth                    Login page for the Gradio UI. Empty (default) = no login, fine
                         for localhost. "user:password" (several: "a:pw1,b:pw2") shows a
                         login page before anything else - REQUIRED before exposing the

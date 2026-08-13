@@ -25,6 +25,10 @@ spandrel
 # Without it: "PEFT backend is required for this method" -> LoRA silently skipped.
 peft
 
+# Checkpoints Z-Image .gguf (quantifies Q3..Q8, restent quantifies en VRAM):
+# lecteur GGUF utilise par diffusers (GGUFQuantizationConfig) + garde de layout.
+gguf
+
 # Comparateur avant/apres = composant HTML+JS interne (voir _make_compare_html dans app.py).
 # Pas de dep externe -> stack stable.
 # Borne <6: Gradio 6 a un middleware Brotli buggé avec h11 ("Too little data for

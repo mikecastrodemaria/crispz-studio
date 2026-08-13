@@ -3,6 +3,41 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Load (almost) every CivitAI Z-Image build: GGUF + FP8/INT8 "scaled" checkpoints
+
+**Why.** Most Z-Image fine-tunes on CivitAI ship as ComfyUI **FP8/INT8 "scaled"**
+safetensors (half the size of BF16) or as **GGUF** quants — both were skipped from the
+model list with "not loadable by diffusers", leaving only the ~12 GB BF16 builds usable.
+
+**What.**
+- **GGUF checkpoints** (`.gguf`, Q3..Q8): listed from the checkpoints folders and loaded
+  via `from_single_file` + `GGUFQuantizationConfig` — the transformer **stays quantized
+  in VRAM** (real memory saving). Guards ported from the Qwen fork: architecture check
+  (`general.architecture` must be **`lumina2`**, what ComfyUI-GGUF conversions of Z-Image
+  declare — configurable via `gguf_arch`), tensor-layout check (stable-diffusion.cpp
+  compact renames are refused with a clear message), and `_effective_offload` forces
+  offload `model` for a GGUF base (a quantized transformer doesn't reach the GPU via
+  `.to(cuda)`/sequential — it would silently run on CPU). Derived img2img/inpaint pipes
+  skip the bf16 recast ("Casting a quantized model is unsupported"), and hot-swapping
+  from/to a GGUF falls back to a full reload (the effective offload changes).
+- **FP8 / FP8-scaled / INT8-scaled safetensors** (ComfyUI format: `X.weight` F8/I8 +
+  `X.weight_scale` scalar-or-per-row + `X.comfy_quant` blob): dequantized **in RAM to
+  BF16** at load (`w × scale`), then fed to `from_single_file` as a state dict — the
+  diffusers key conversion (ComfyUI prefix, fused-QKV split) still applies. Tensors are
+  read in **file-offset order** (an HDD collapses on random access). Note: dequantized
+  FP8 has the memory footprint of a full BF16 — the saving is on disk/download only.
+- **AIO bundles** (transformer + text encoder + VAE in one file): only the
+  `model.diffusion_model.*` keys are kept — a 16.9 GB bundle whose FP8 lives only in the
+  bundled text encoder loads as a plain BF16 transformer (base VAE/encoder are reused).
+- **Still refused, clearly**: misfiled LoRAs, SVDQuant/Nunchaku INT4 (needs the nunchaku
+  runtime), quantized checkpoints of a different architecture ("does not look like a
+  Z-Image transformer"), foreign-architecture or sd.cpp-layout GGUFs.
+
+Validated on real CivitAI files: pure-FP8 5.7 GB (intorealism V80) and INT8-per-row
+6.7 GB (redzit) both load to 6.15 B bf16 params with zero meta tensors; the 16.9 GB AIO
+loads in ~5 s (no dequant needed); a quantized non-Z-Image checkpoint (ernieRedmix) is
+rejected with the clear architecture message; Z-Image Turbo Q4_K_M GGUF loads and lists.
+
 ## Unreleased — Fix: a LoRA picked as checkpoint no longer hunts for an SD1.5 config
 
 **Why.** A LoRA file misfiled in a checkpoints folder (e.g. `ZITnsfwLoRAv3.safetensors`)

@@ -68,6 +68,7 @@
     "refine_tile_prompt": "",
 
     "checkpoints_dir": "",
+    "gguf_arch": "lumina2",
     "loras_dir": "",
     "wildcards_dir": "",
     "default_lora_weight": 1.0,
