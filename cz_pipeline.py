@@ -983,8 +983,10 @@ def _load_dequant_state_dict(path):
     sd = {}
     n_dq = 0
     for k in list(raw.keys()):
-        if k.endswith((".weight_scale", ".scale_weight")) or k.endswith("scaled_fp8"):
-            continue                         # consommees via lookup ci-dessous
+        if (k.endswith((".weight_scale", ".scale_weight", ".scale_input", ".input_scale"))
+                or k.endswith("scaled_fp8")):
+            continue                         # consommees via lookup / jetees (scale_input
+                                             # = echelle d'ACTIVATION, pas de poids)
         t = raw.pop(k)
         if t.dtype in (torch.float8_e4m3fn, torch.float8_e5m2,
                        torch.int8, torch.uint8):
