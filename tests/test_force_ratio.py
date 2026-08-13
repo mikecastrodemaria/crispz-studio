@@ -33,6 +33,8 @@ def _stub_outpaint(image, mask, directions, prompt, steps, seed, strength=1.0, e
 def test_extend_reaches_target_ratio():
     old = czp.outpaint_directions
     czp.outpaint_directions = _stub_outpaint
+    old_dn = czp.EXTEND_DENOISE
+    czp.EXTEND_DENOISE = 0.0        # pas de passe d'harmonisation GPU dans le test
     try:
         # portrait 512x768 -> 16:9 : elargit, ne coupe rien
         out = czp._extend_to_ratio(Image.new("RGB", (512, 768)), 16, 9, "", 6, 1)
@@ -47,6 +49,7 @@ def test_extend_reaches_target_ratio():
         assert out.size == (1024, 1024)
     finally:
         czp.outpaint_directions = old
+        czp.EXTEND_DENOISE = old_dn
 
 
 def test_crop_still_crops():

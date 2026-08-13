@@ -119,6 +119,13 @@ FORCE_RATIO = (os.environ.get("CZ_FORCE_RATIO") or CONFIG.get("force_upscale_rat
 # generees par Z-Image). UI (radio) via set_force_ratio_mode, config 'force_ratio_mode'.
 FORCE_RATIO_MODE = (os.environ.get("CZ_FORCE_RATIO_MODE")
                     or CONFIG.get("force_ratio_mode") or "crop").strip().lower()
+# Passe d'harmonisation du mode extend: apres l'outpaint des bandes, une passe img2img
+# LEGERE sur l'image etendue ENTIERE fond les raccords (exposition/texture au niveau
+# des jointures, sans re-composer l'image a ce denoise). 0 = desactive.
+try:
+    EXTEND_DENOISE = float(CONFIG.get("force_ratio_extend_denoise", 0.22) or 0.0)
+except Exception:
+    EXTEND_DENOISE = 0.22
 
 # Sampler / scheduler. Le pipeline Z-Image impose un schedule `sigmas` custom: seuls
 # les schedulers dont set_timesteps accepte `sigmas` fonctionnent. En pratique -> Euler
@@ -1440,7 +1447,9 @@ def _extend_to_ratio(image, ratio_w, ratio_h, prompt, steps, seed):
     """Amene l'image au ratio cible en l'ETENDANT (outpaint) au lieu de recadrer:
     bandes symetriques ajoutees sur l'axe manquant et remplies par Z-Image via
     outpaint_directions -- le centre garde sa pleine resolution (seules les bandes
-    sont generees, diffusion bornee a ~1 MP puis recomposition)."""
+    sont generees, diffusion bornee a ~1 MP puis recomposition). Une passe img2img
+    legere (EXTEND_DENOISE) sur l'image etendue ENTIERE fond ensuite les raccords
+    de bandes (l'effet 'bande' d'exposition/texture aux jointures)."""
     image = image.convert("RGB")
     w, h = image.size
     target = float(ratio_w) / float(ratio_h)
@@ -1449,11 +1458,16 @@ def _extend_to_ratio(image, ratio_w, ratio_h, prompt, steps, seed):
         return image
     if cur < target:                       # trop etroit -> elargir gauche + droite
         pad = target * h - w
-        return outpaint_directions(image, None, ["left", "right"], prompt, steps, seed,
-                                   expand=pad / (2.0 * w))
-    pad = w / target - h                   # trop large -> etendre haut + bas
-    return outpaint_directions(image, None, ["top", "bottom"], prompt, steps, seed,
-                               expand=pad / (2.0 * h))
+        out = outpaint_directions(image, None, ["left", "right"], prompt, steps, seed,
+                                  expand=pad / (2.0 * w))
+    else:                                  # trop large -> etendre haut + bas
+        pad = w / target - h
+        out = outpaint_directions(image, None, ["top", "bottom"], prompt, steps, seed,
+                                  expand=pad / (2.0 * h))
+    if EXTEND_DENOISE > 0.001:
+        _log(f"extend: harmonize pass (img2img denoise {EXTEND_DENOISE:.2f})")
+        out = _refine_whole(get_pipe("img2img"), out, EXTEND_DENOISE, steps, prompt, seed)
+    return out
 
 
 def _reframe_canvas(image, ratio_w, ratio_h, overlap=8):
