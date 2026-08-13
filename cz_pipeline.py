@@ -1447,9 +1447,13 @@ def _extend_to_ratio(image, ratio_w, ratio_h, prompt, steps, seed):
     """Amene l'image au ratio cible en l'ETENDANT (outpaint) au lieu de recadrer:
     bandes symetriques ajoutees sur l'axe manquant et remplies par Z-Image via
     outpaint_directions -- le centre garde sa pleine resolution (seules les bandes
-    sont generees, diffusion bornee a ~1 MP puis recomposition). Une passe img2img
-    legere (EXTEND_DENOISE) sur l'image etendue ENTIERE fond ensuite les raccords
-    de bandes (l'effet 'bande' d'exposition/texture aux jointures)."""
+    sont generees, diffusion bornee a ~1 MP puis recomposition).
+
+    Anti 'effet bande': une passe img2img legere (EXTEND_DENOISE) tourne sur l'image
+    etendue, mais SEULES les bandes + une marge de transition feather sont recollees
+    depuis cette passe -- le centre original reste PIXEL POUR PIXEL intact (la passe
+    harmonise l'exposition/texture aux jointures sans jamais retoucher l'image)."""
+    from PIL import ImageDraw, ImageFilter
     image = image.convert("RGB")
     w, h = image.size
     target = float(ratio_w) / float(ratio_h)
@@ -1465,8 +1469,21 @@ def _extend_to_ratio(image, ratio_w, ratio_h, prompt, steps, seed):
         out = outpaint_directions(image, None, ["top", "bottom"], prompt, steps, seed,
                                   expand=pad / (2.0 * h))
     if EXTEND_DENOISE > 0.001:
-        _log(f"extend: harmonize pass (img2img denoise {EXTEND_DENOISE:.2f})")
-        out = _refine_whole(get_pipe("img2img"), out, EXTEND_DENOISE, steps, prompt, seed)
+        _log(f"extend: seam-blend pass (img2img denoise {EXTEND_DENOISE:.2f}, "
+             "original centre kept)")
+        refined = _refine_whole(get_pipe("img2img"), out, EXTEND_DENOISE,
+                                steps, prompt, seed)
+        # Masque de recollage: blanc = prendre la passe harmonisee (bandes + marge de
+        # transition A CHEVAL sur la jointure), noir = garder l'original. La marge
+        # penetre dans l'image d'origine puis est feather -> raccord fondu, centre intact.
+        ox, oy = (out.width - w) // 2, (out.height - h) // 2
+        m = max(24, int(0.05 * min(out.size)))       # transition ~5% du petit cote
+        mx, my = (m if ox > 0 else 0), (m if oy > 0 else 0)   # marge cote jointure SEULEMENT
+        mask = Image.new("L", out.size, 255)
+        ImageDraw.Draw(mask).rectangle(
+            [ox + mx, oy + my, ox + w - mx, oy + h - my], fill=0)
+        mask = mask.filter(ImageFilter.GaussianBlur(max(8, m // 3)))
+        out = Image.composite(refined, out, mask)
     return out
 
 
