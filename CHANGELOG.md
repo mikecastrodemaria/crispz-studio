@@ -3,6 +3,26 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Fix: ConvRot INT8 checkpoints rendered pure noise
+
+**Why.** `redcraft22INT8INT4_redzit222026HD` loaded structurally but rendered a pixel
+mosaic: its `comfy_quant` blobs declare
+`{"format":"int8_tensorwise","convrot":true,"convrot_groupsize":256}` — the ComfyUI
+**ConvRot** scheme stores weights ROTATED (grouped Hadamard on the input dim,
+anti-outlier) and un-rotates activations at runtime. Plain `int8 × scale` dequant
+yields rotated weights = total noise.
+
+**What.** The dequant loader now parses the `comfy_quant` JSON blobs and, when
+`convrot` is declared, **applies the inverse rotation** after descaling
+(`(w.view(out, in/g, g) @ H).reshape(...)`). Crucial detail: comfy-quants'
+`regular_hadamard` is **not** the Sylvester construction — it is a specific **H4 base
+extended by Kronecker products** (hence "groupsize is a power of 4"), orthonormal and
+symmetric; with a Sylvester matrix the correlation to the base weights stays ~0.
+Validated three ways: synthetic roundtrip (export recipe reproduced, max error < 2 %),
+**correlation 1.00** between the dequantized redzit layer and the base Z-Image-Turbo
+weights (0.004 before the fix), and a clean GPU render from the previously-broken
+checkpoint. Ported to the qwen-edit and krea loaders.
+
 ## Unreleased — CLI parity: expand / inpaint-mask / reframe-fit / force-ratio flags
 
 **Why.** The Inpaint/Outpaint tab features and the forced-ratio radio had no CLI
