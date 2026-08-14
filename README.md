@@ -28,9 +28,12 @@ SwarmUI. On top of crispz's upscaler it adds:
   different models/settings). **Stop pauses the queue** — remaining jobs are kept. VRAM
   is purged automatically only when the model changes between jobs.
 - **X/Y/Z grid**: vary 1–3 parameters (checkpoint, sampler, steps, guidance, denoise,
-  ESRGAN model, LoRA file, LoRA weight, Performance preset, Prompt S/R…) — every combo becomes a
-  queued job and the run ends with an **annotated contact sheet** per Z value (X columns ×
-  Y rows) saved in the output folder and shown in the gallery.
+  ESRGAN model, LoRA file, LoRA weight, Performance preset, **full Prompt (A/B test)**,
+  Prompt S/R…) — every combo becomes a queued job and the run ends with an **annotated
+  contact sheet** per Z value (X columns × Y rows) saved in the output folder and shown
+  in the gallery. The values fields **autosuggest after 3 typed characters** (checkpoints
+  and LoRAs validated at startup for those axes; `__wildcards__` on the Prompt axes),
+  ↑/↓ + Tab/Enter, comma-separated segments respected.
 - **Tag autocomplete** in the prompt/negative fields: suggestions as you type from tag
   CSVs (downloaded once into `tags/`; drop any `.csv` there to add a source) merged with
   your local `__wildcards__`. Dropdown under the caret, ↑/↓ + Tab/Enter, Escape;

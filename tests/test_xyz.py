@@ -180,9 +180,32 @@ def test_cli_axis_name_resolution():
     ax = [k for k in cz_ui._XYZ_AXES if k != "(none)"]
     assert cz_ui._xyz_match("step", ax) == ("Steps", None)          # partiel unique
     assert cz_ui._xyz_match("GUIDANCE", ax) == ("Guidance", None)   # casse ignoree
-    assert cz_ui._xyz_match("prompt", ax) == ("Prompt S/R", None)
+    # "prompt" = match EXACT du nouvel axe Prompt (l'exact gagne sur le partiel);
+    # "prompt s" reste le raccourci de Prompt S/R.
+    assert cz_ui._xyz_match("prompt", ax) == ("Prompt", None)
+    assert cz_ui._xyz_match("prompt s", ax) == ("Prompt S/R", None)
     assert cz_ui._xyz_match("ile", ax)[0] is None                   # ambigu (Tile/Refine tile)
     assert cz_ui._xyz_match("tile", ax) == ("Tile", None)           # exact (casse ignoree) gagne
+
+
+def test_prompt_axis():
+    # validation: valeurs telles quelles (prompts complets)
+    vals, err = cz_ui._xyz_validate_axis(
+        "Prompt", ["a cat", "a dog, fluffy", "a fox"], _base_vals(), {})
+    assert err is None and len(vals) == 3 and vals[1] == "a dog, fluffy"
+    # apply UI: remplace TOUT le prompt du snapshot
+    fv = _base_vals()
+    cz_ui._xyz_apply("Prompt", "a dog, fluffy", fv, {})
+    assert fv[cz_ui._Q_IDX["prompt"]] == "a dog, fluffy"
+    # apply CLI
+    import cz_cli
+    p = {"prompt": "base"}
+    cz_cli._xyz_cli_apply("Prompt", "a fox", p, {})
+    assert p["prompt"] == "a fox"
+    # etiquette de planche: tronquee, jamais le prompt entier
+    lbl = cz_ui._xyz_fmt_value("Prompt", "a very long prompt " * 10)
+    assert len(lbl) <= 28 and lbl.endswith("...")
+    assert cz_ui._xyz_fmt_value("Prompt", "short") == "short"
 
 
 def _with_fake_loras(names):
@@ -316,7 +339,7 @@ if __name__ == "__main__":
                test_build_jobs,
                test_build_jobs_sr, test_assemble, test_csv_join_roundtrip,
                test_suggestions, test_fill_preserves_user_input,
-               test_cli_apply, test_cli_axis_name_resolution,
+               test_cli_apply, test_cli_axis_name_resolution, test_prompt_axis,
                test_lora_name_validate, test_lora_name_weight_validate,
                test_lora_name_apply_and_labels, test_lora_name_weight_apply,
                test_lora_label_truncates_left, test_lora_suggestions):

@@ -1967,6 +1967,10 @@ _XYZ_AXES = {
     "LoRA":         {"kind": "lora_name"},
     "LoRA + weight": {"kind": "lora_name_weight"},
     "Performance":  {"kind": "performance"},
+    # A/B test de prompts COMPLETS: chaque valeur remplace tout le prompt (les
+    # guillemets protegent les virgules internes). Different de Prompt S/R qui ne
+    # remplace qu'un terme.
+    "Prompt":       {"kind": "prompt"},
     "Prompt S/R":   {"kind": "sr"},
 }
 
@@ -2018,6 +2022,8 @@ def _xyz_suggestions(axis):
     if not spec:
         return "", "pick an axis first"
     kind = spec.get("kind")
+    if kind == "prompt":
+        return "", 'prompt A, "prompt B, with a comma", prompt C  (__wildcards__ ok)'
     if kind == "sr":
         return "", 'search term, replacement1, "replacement, with comma", ...'
     if kind == "checkpoint":
@@ -2095,6 +2101,9 @@ def _xyz_validate_axis(name, raw_values, base_vals, base_ms):
     if not raw_values:
         return None, f"{name}: no values"
     kind = spec.get("kind")
+    if kind == "prompt":
+        # prompts complets, tels quels (les guillemets ont deja protege les virgules)
+        return [str(v) for v in raw_values], None
     if kind == "sr":
         term = raw_values[0]
         if len(raw_values) < 2:
@@ -2197,6 +2206,8 @@ def _xyz_apply(name, value, vals, ms):
     elif kind == "performance":
         st, g = PERFORMANCE[value]
         vals[_Q_IDX["gen_steps"]], vals[18] = int(st), float(g)
+    elif kind == "prompt":
+        vals[_Q_IDX["prompt"]] = str(value)
     elif kind == "sr":
         term = spec["_term"]
         if str(value) != term:
@@ -2211,6 +2222,10 @@ def _xyz_fmt_value(axis, value, maxlen=28):
     (..._e000010 / ..._e000020), couper la fin rendrait toutes les colonnes
     identiques."""
     kind = (_XYZ_AXES.get(axis) or {}).get("kind")
+    if kind == "prompt":
+        # prompts longs -> debut du prompt (c'est la qu'on met ce qui varie en A/B)
+        s = " ".join(str(value).split())
+        return s if len(s) <= maxlen else s[:maxlen - 3] + "..."
     if kind not in ("lora_name", "lora_name_weight"):
         return str(value)
     name, weight = value if isinstance(value, tuple) else (value, None)
@@ -2399,6 +2414,36 @@ def _tagac_head():
     except Exception as e:
         _log(f"init failed ({e}); autocomplete disabled", mod="tagac")
         return None
+
+
+def _xyz_ac_head():
+    """<script> d'autosuggest des champs de valeurs X/Y/Z (ou None): apres 3 caracteres,
+    propose les checkpoints/LoRA VALIDES a l'ouverture selon l'axe choisi, et les
+    __wildcards__ sur les axes Prompt / Prompt S/R. Echec -> feature absente, boot ok."""
+    if not (XYZ_ENABLED and XYZ_SUGGEST):
+        return None
+    try:
+        from cz_assets import XYZ_AC_JS
+        sources = {
+            "ckpt": ZIMAGE_BASE_REPOS + list_checkpoints(),
+            "lora": list_loras(),
+            "wc": [f"__{w}__" for w in list_wildcards()],
+        }
+        rows = [[f"cz_xyz_{a}_axis", f"cz_xyz_{a}_vals"] for a in ("x", "y", "z")]
+        js = (XYZ_AC_JS.replace("__ROWS__", json.dumps(rows))
+              .replace("__SOURCES__", json.dumps(sources)))
+        _log(f"xyz suggest: {len(sources['ckpt'])} checkpoint(s), "
+             f"{len(sources['lora'])} LoRA, {len(sources['wc'])} wildcard(s)", mod="xyz")
+        return "<script>" + js + "</script>"
+    except Exception as e:
+        _log(f"xyz suggest init failed ({e}); disabled", mod="xyz")
+        return None
+
+
+def _ui_head():
+    """Concatene les <script> injectes au <head> (tag autocomplete + suggest XYZ)."""
+    parts = [h for h in (_tagac_head(), _xyz_ac_head()) if h]
+    return "".join(parts) or None
 
 
 # JS injecte au chargement: force le theme sombre, preview de style au survol,
@@ -2694,7 +2739,7 @@ def build_ui():
     omni_on = bool((cz_pipeline.OMNI_MODEL or "").strip())
 
     with gr.Blocks(title=f"crispz-studio {APP_VERSION}", theme=gr.themes.Default(), css=FOOOCUS_CSS,
-                   js=js_full, head=_tagac_head()) as demo:
+                   js=js_full, head=_ui_head()) as demo:
         # La galerie du dossier de sortie s'ouvre dans un nouvel onglet (Asset Browser),
         # via le bouton sous l'apercu. Pas de panneau galerie inline.
         gallery_url = gr.Textbox(visible=False)
@@ -2797,16 +2842,20 @@ def build_ui():
                         gr.Markdown("*Vary 1–3 parameters (comma-separated values; use quotes to "
                                     "protect commas). Each combo becomes a queued job; when it has "
                                     "run, an annotated contact sheet is saved (one per Z value) and "
-                                    "shown in the gallery. Prompt S/R: first value = search term, "
-                                    "then its replacements.*")
+                                    "shown in the gallery. Prompt = A/B test of FULL prompts; "
+                                    "Prompt S/R: first value = search term, then its replacements. "
+                                    "Type 3+ characters for suggestions (checkpoints/LoRAs; "
+                                    "__wildcards__ on the Prompt axes).*")
                         _ax = [k for k in _XYZ_AXES]
                         _xyz_rows = []
                         for _axis_lbl, _default in (("X", "Steps"), ("Y", "(none)"), ("Z", "(none)")):
                             with gr.Row():
                                 _dd = gr.Dropdown(_ax, value=_default, label=f"{_axis_lbl} axis",
-                                                  scale=1)
+                                                  scale=1,
+                                                  elem_id=f"cz_xyz_{_axis_lbl.lower()}_axis")
                                 _tb = gr.Textbox(label=f"{_axis_lbl} values", scale=3,
-                                                 placeholder=_xyz_suggestions(_default)[1])
+                                                 placeholder=_xyz_suggestions(_default)[1],
+                                                 elem_id=f"cz_xyz_{_axis_lbl.lower()}_vals")
                                 _sg = (gr.Button("⤵ suggest", size="sm", scale=0, min_width=90)
                                        if XYZ_SUGGEST else None)
                                 _xyz_rows.append((_dd, _tb, _sg))

@@ -694,3 +694,125 @@ TAG_AC_JS = r"""
     .catch(e => console.warn('[tagac] init failed:', e));
 })();
 """
+
+
+# Autosuggest des champs de valeurs X/Y/Z: apres 3 caracteres tapes, propose les
+# checkpoints / LoRA VALIDES a l ouverture (listes injectees au build) selon l axe
+# choisi; sur les axes Prompt / Prompt S/R, propose les __wildcards__ quand le token
+# courant commence par __. Segments CSV respectes (guillemets proteges).
+XYZ_AC_JS = r"""
+(() => {
+  const ROWS = __ROWS__;      // [[id dropdown axe, id textbox valeurs], ...]
+  const SRC = __SOURCES__;    // {ckpt: [...], lora: [...], wc: ["__nom__", ...]}
+  const MIN = 3, MAXR = 8;
+  const AXMAP = {"Checkpoint": "ckpt", "LoRA": "lora", "LoRA + weight": "lora_w",
+                 "Prompt": "wc", "Prompt S/R": "wc"};
+  let box = null, items = [], sel = -1, cur = null;
+
+  function ensureBox() {
+    if (box) return box;
+    box = document.createElement('div');
+    box.style.cssText = 'position:fixed;z-index:10000;background:#1f2937;color:#e5e7eb;' +
+      'border:1px solid #4b5563;border-radius:6px;font-size:13px;max-height:220px;' +
+      'overflow-y:auto;box-shadow:0 4px 14px rgba(0,0,0,.45);display:none;min-width:220px';
+    document.body.appendChild(box);
+    return box;
+  }
+  function hide() { if (box) box.style.display = 'none'; items = []; sel = -1; cur = null; }
+  function fieldOf(id) { const r = document.getElementById(id); return r ? r.querySelector('textarea, input') : null; }
+  function axisOf(id) { const r = document.getElementById(id); const i = r && r.querySelector('input'); return i ? (i.value || '') : ''; }
+
+  function segStart(v, pos) {
+    let start = 0, inq = false;
+    for (let i = 0; i < pos; i++) {
+      const c = v[i];
+      if (c === '"') inq = !inq;
+      else if (c === ',' && !inq) start = i + 1;
+    }
+    return start;
+  }
+
+  function render() {
+    const b = ensureBox();
+    b.innerHTML = '';
+    items.forEach((n, i) => {
+      const d = document.createElement('div');
+      d.textContent = n;
+      d.style.cssText = 'padding:4px 10px;cursor:pointer;white-space:nowrap;overflow:hidden;' +
+        'text-overflow:ellipsis;max-width:520px' + (i === sel ? ';background:#374151' : '');
+      d.addEventListener('mousedown', ev => { ev.preventDefault(); accept(i); });
+      b.appendChild(d);
+    });
+    const r = cur.el.getBoundingClientRect();
+    b.style.left = r.left + 'px';
+    b.style.top = (r.bottom + 2) + 'px';
+    b.style.display = 'block';
+  }
+
+  function accept(i) {
+    if (!cur || i < 0 || i >= items.length) return hide();
+    const el = cur.el, v = el.value, pos = el.selectionStart;
+    let insert = items[i], from = cur.from;
+    if (cur.mode === 'lora_w') insert += ':1';
+    const next = v.slice(0, from) + insert + v.slice(pos);
+    el.value = next;
+    const np = from + insert.length;
+    el.setSelectionRange(np, np);
+    el.dispatchEvent(new Event('input', {bubbles: true}));   // sync l etat Gradio
+    hide();
+  }
+
+  function onInput(el, axisId) {
+    const mode = AXMAP[axisOf(axisId)];
+    if (!mode) return hide();
+    const v = el.value, pos = el.selectionStart;
+    const start = segStart(v, pos);
+    const seg = v.slice(start, pos);
+    let q, from;
+    if (mode === 'wc') {
+      const m = seg.match(/(__[A-Za-z0-9_\-]*)$/);
+      if (!m || m[1].length < 2 + MIN) return hide();
+      q = m[1].toLowerCase(); from = pos - m[1].length;
+    } else {
+      const lead = seg.length - seg.replace(/^\s+/, '').length;
+      q = seg.trim().toLowerCase(); from = start + lead;
+      if (q.length < MIN) return hide();
+    }
+    const list = SRC[mode === 'lora_w' ? 'lora' : mode] || [];
+    const starts = [], contains = [];
+    for (const n of list) {
+      const nl = n.toLowerCase();
+      if (nl.startsWith(q)) starts.push(n);
+      else if (nl.includes(q)) contains.push(n);
+    }
+    items = starts.concat(contains).slice(0, MAXR);
+    if (!items.length) return hide();
+    sel = 0; cur = {el, from, mode};
+    render();
+  }
+
+  function attach() {
+    let ok = 0;
+    for (const [axId, tbId] of ROWS) {
+      const el = fieldOf(tbId);
+      if (!el || el.dataset.czXyzAc) { if (el) ok++; continue; }
+      el.dataset.czXyzAc = '1'; ok++;
+      el.addEventListener('input', () => onInput(el, axId));
+      el.addEventListener('blur', () => setTimeout(hide, 150));
+      el.addEventListener('keydown', ev => {
+        if (!box || box.style.display === 'none') return;
+        if (ev.key === 'ArrowDown') sel = Math.min(sel + 1, items.length - 1);
+        else if (ev.key === 'ArrowUp') sel = Math.max(sel - 1, 0);
+        else if (ev.key === 'Tab' || ev.key === 'Enter') { accept(sel); ev.preventDefault(); ev.stopPropagation(); return; }
+        else if (ev.key === 'Escape') { hide(); ev.preventDefault(); return; }
+        else return;
+        ev.preventDefault(); render();
+      }, true);
+    }
+    return ok === ROWS.length;
+  }
+  const t = setInterval(() => { if (attach()) clearInterval(t); }, 800);
+  window.addEventListener('resize', hide);
+  document.addEventListener('scroll', hide, true);
+})();
+"""

@@ -3,6 +3,27 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — XYZ grid: full-Prompt A/B axis + type-ahead suggestions
+
+**Why.** Comparing whole prompts needed Prompt S/R gymnastics, and filling the
+Checkpoint/LoRA value fields meant copy-pasting long file names by hand.
+
+**What.**
+- **New `Prompt` axis**: each value is a **complete prompt** (quotes protect embedded
+  commas) — true A/B/C testing, combinable with any other axis (e.g. Prompt ×
+  Checkpoint). CLI too: `--xyz "Prompt=a, \"b, with comma\", c"`, and `--prompt`
+  becomes optional when a Prompt axis is given. Sheet/job labels truncate long prompts.
+  NB: the case-insensitive shorthand `prompt` now resolves to this axis (exact match
+  wins); `prompt s` still reaches `Prompt S/R`.
+- **Type-ahead in the X/Y/Z value fields** (after 3 typed characters, ↑/↓ + Tab/Enter,
+  Escape, click): suggests from the **checkpoint/LoRA lists validated at startup** on
+  the `Checkpoint` / `LoRA` / `LoRA + weight` axes (`:1` auto-appended for the latter),
+  and from the local **`__wildcards__`** on the `Prompt` / `Prompt S/R` axes when the
+  current token starts with `__`. CSV segments are respected (completion only touches
+  the segment being typed). Disable with `xyz_grid.suggest: false` (same key as the
+  ⤵ suggest button). Validated live in the browser: checkpoint filter + insert, second
+  segment after a comma, wildcard expansion inside a prompt, `:1` suffix.
+
 ## Unreleased — Fix: ConvRot INT8 checkpoints rendered pure noise
 
 **Why.** `redcraft22INT8INT4_redzit222026HD` loaded structurally but rendered a pixel
