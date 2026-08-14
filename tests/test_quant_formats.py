@@ -70,6 +70,30 @@ def test_int8_per_row_scale():
     assert torch.allclose(sd[_W].float(), want.float())
 
 
+def test_int8_convrot_roundtrip():
+    # Format int8_tensorwise + ConvRot de comfy-quants: les poids sont TOURNES
+    # (Hadamard par groupes de 256) avant quantification. On reproduit l'export
+    # exact puis on verifie que le loader retrouve les poids d'ORIGINE (sans la
+    # rotation inverse, c'est du bruit -- observe en vrai sur redzit222026HD).
+    torch.manual_seed(0)
+    W = torch.randn(8, 512)                      # in=512 -> 2 groupes de 256
+    H = cz_pipeline._hadamard_ortho(256)
+    wr = (W.view(8, 2, 256) @ H.T).reshape(8, 512)
+    scale = (wr.abs().amax(dim=-1, keepdim=True) / 127).clamp(min=1e-30)
+    q = (wr / scale).round().clamp(-128, 127).to(torch.int8)
+    blob = torch.tensor(
+        list(b'{"format":"int8_tensorwise","convrot":true,"convrot_groupsize":256}'),
+        dtype=torch.uint8)
+    p = _st("convrot.safetensors", {
+        _W: q, _W + "_scale": scale.float(),
+        _W.replace(".weight", ".comfy_quant"): blob,
+    })
+    assert cz_pipeline._safetensors_dequant(p) == "INT8 scaled"
+    sd = cz_pipeline._load_dequant_state_dict(p)
+    err = float((sd[_W].float() - W).abs().max() / W.abs().max())
+    assert err < 0.02, f"convrot roundtrip error too high: {err}"
+
+
 def test_aio_bundle_filtered():
     # bundle: transformer BF16 + "encodeur texte" FP8 -> seul le transformer reste
     p = _st("aio.safetensors", {
@@ -144,9 +168,9 @@ def test_gguf_listing_filter():
 if __name__ == "__main__":
     for fn in (test_bf16_passthrough, test_fp8_pure_detect_and_dequant,
                test_fp8_scaled_dequant_math, test_int8_per_row_scale,
-               test_aio_bundle_filtered, test_foreign_arch_rejected,
-               test_lora_and_svdq_still_unsupported, test_gguf_arch_and_layout,
-               test_gguf_listing_filter):
+               test_int8_convrot_roundtrip, test_aio_bundle_filtered,
+               test_foreign_arch_rejected, test_lora_and_svdq_still_unsupported,
+               test_gguf_arch_and_layout, test_gguf_listing_filter):
         fn()
         print(f"OK {fn.__name__}")
     print("All quant-format tests passed.")

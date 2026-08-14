@@ -941,12 +941,32 @@ def _apply_loras(pipe, force=False):
         return False
 
 
+def _hadamard_ortho(n):
+    """Matrice 'regular hadamard' du ConvRot comfy-quants -- ATTENTION, ce n'est PAS
+    la construction de Sylvester: la base est ce H4 precis, etendu par produits de
+    Kronecker jusqu'a n (puissance de 4), puis normalise 1/sqrt(n). Orthonormee ET
+    symetrique -> la reconstruction re-multiplie simplement par la meme matrice.
+    (Verifie contre src/comfy_quants/formats/convrot.py; avec un Sylvester la
+    correlation aux poids de base tombe a ~0 -> bruit total.)"""
+    h4 = torch.tensor([[1., 1., 1., -1.], [1., 1., -1., 1.],
+                       [1., -1., 1., 1.], [-1., 1., 1., 1.]])
+    H = h4
+    while H.shape[0] < n:
+        H = torch.kron(H, h4)
+    if H.shape[0] != n:
+        raise ValueError(f"convrot groupsize {n} is not a power of 4")
+    return H / (float(n) ** 0.5)
+
+
 def _load_dequant_state_dict(path):
     """Charge en RAM un checkpoint 'scaled' ComfyUI (FP8/INT8) et le dequantifie en
     DTYPE (bf16), tenseur par tenseur:
       - bundle AIO (transformer + encodeur texte + VAE): seules les cles
         'model.diffusion_model.*' sont gardees (VAE + encodeur Qwen3 = repo de base);
       - X.weight (F8/I8) * X.weight_scale (scalaire ou par ligne) -> bf16;
+      - blob X.comfy_quant: si 'convrot' est declare (int8_tensorwise ComfyUI), la
+        rotation de Hadamard par groupes (defaut 256) est DEFAITE apres le descale --
+        sans ca les poids sont un bruit total (observe sur redzit222026HD);
       - les cles de quantification (weight_scale/scale_weight, comfy_quant, marqueur
         scaled_fp8) sont consommees/jetees.
     Le dict resultant part dans from_single_file (conversion de cles diffusers comprise).
@@ -975,13 +995,20 @@ def _load_dequant_state_dict(path):
     # (mesure sur un FP8 de 5.7 Go: 349s en ordre de cles -> lie au debit disque ainsi).
     entries.sort(key=lambda kv: kv[1].get("data_offsets", [0])[0])
     raw = {}
+    qcfg = {}
     with safe_open(path, framework="pt", device="cpu") as f:
         for k, _ in entries:
-            if k.endswith(".comfy_quant"):   # blob descripteur, jamais utilise
+            if k.endswith(".comfy_quant"):   # blob JSON: format + convrot eventuels
+                try:
+                    qcfg[k[:-len(".comfy_quant")]] = json.loads(
+                        bytes(f.get_tensor(k).tolist()).decode("utf-8"))
+                except Exception as e:
+                    _dbg(f"comfy_quant blob unreadable {k}: {e}")
                 continue
             raw[k] = f.get_tensor(k)
+    _had = {}                                # cache Hadamard par taille de groupe
     sd = {}
-    n_dq = 0
+    n_dq = n_rot = 0
     for k in list(raw.keys()):
         if (k.endswith((".weight_scale", ".scale_weight", ".scale_input", ".input_scale"))
                 or k.endswith("scaled_fp8")):
@@ -1000,14 +1027,26 @@ def _load_dequant_state_dict(path):
             t = t.to(torch.float32)
             if s is not None:                # scalaire ou [out,1] -> broadcast
                 t = t * s.to(torch.float32)
+            # ConvRot (int8_tensorwise comfy-quants): les poids stockes ont ete tournes
+            # W_rot = (W.view(out, in/g, g) @ H.T).reshape(...) AVANT quantification ->
+            # reconstruction = re-multiplier par H (orthonormee, symetrique) par groupe.
+            cfg = qcfg.get(k[:-len(".weight")]) if k.endswith(".weight") else None
+            if cfg and cfg.get("convrot"):
+                g = int(cfg.get("convrot_groupsize", 256) or 256)
+                if t.dim() == 2 and g > 1 and t.shape[1] % g == 0:
+                    if g not in _had:
+                        _had[g] = _hadamard_ortho(g)
+                    t = (t.view(t.shape[0], -1, g) @ _had[g]).reshape(t.shape[0], -1)
+                    n_rot += 1
             t = t.to(DTYPE)
             n_dq += 1
         elif t.is_floating_point() and t.dtype != DTYPE:
             t = t.to(DTYPE)
         sd[k] = t
     raw.clear()
-    _log(f"dequantized {n_dq} tensors ({len(sd)} kept) to bf16 in "
-         f"{time.time() - t0:.1f}s")
+    _log(f"dequantized {n_dq} tensors ({len(sd)} kept"
+         + (f", {n_rot} un-rotated (ConvRot)" if n_rot else "")
+         + f") to bf16 in {time.time() - t0:.1f}s")
     return sd
 
 
