@@ -178,11 +178,48 @@ python app.py --remove-bg -i photo.jpg --save-mode local --output-dir out
 # -> out/<name>_nobg_*.png (transparent)
 ```
 
-## Reframe / Outpaint  — `--reframe W:H`
+## Reframe  — `--reframe W:H` (+ `--reframe-fit contain|cover`)
 
 ```bash
+# contain (default): keep the whole image, OUTPAINT the borders to the ratio
 python app.py --reframe 16:9 -i square.png --prompt "extend the scenery" \
     --gen-steps 12 --guidance 6 --save-mode local --output-dir out
+
+# cover: fill the ratio then centre-crop — no generation, instant
+python app.py --reframe 16:9 --reframe-fit cover -i square.png -o out/wide.png
+```
+
+## Directional outpaint  — `--expand left,right,top,bottom` (the UI's "Expand sides")
+
+```bash
+# grow the right and bottom sides by 30% each, Z-Image fills the bands
+python app.py --expand right,bottom -i photo.png --prompt "landscape, nature" \
+    --gen-steps 8 --save-mode local --output-dir out
+
+# all four sides ('all' = left,right,top,bottom), custom growth per side
+python app.py --expand all --expand-ratio 0.2 -i photo.png --save-mode local --output-dir out
+```
+
+## Inpaint with a mask file  — `--inpaint-mask mask.png`
+
+```bash
+# repaint the WHITE area of mask.png (same size as the input), guided by the prompt
+python app.py -i photo.png --inpaint-mask mask.png --prompt "a red rose" \
+    --gen-steps 8 --save-mode local --output-dir out
+# --inpaint-denoise 1.0 (default) = full repaint; lower keeps more of the original
+```
+
+## Force aspect ratio on Upscale/img2img  — `--force-ratio W:H` (+ `--force-ratio-mode`)
+
+Same behaviour as the UI radio: applied to the INPUT before the ESRGAN/refine pipeline.
+
+```bash
+# crop (default): centre-crop the input to 2:3 before upscaling
+python app.py -i in.png --force-ratio 2:3 --factor 2 --save-mode local --output-dir out
+
+# extend: OUTPAINT the missing bands instead (nothing lost, seams blended), then upscale
+python app.py -i in.png --force-ratio 16:9 --force-ratio-mode extend \
+    --prompt "extend the scenery" --factor 2 --save-mode local --output-dir out
 ```
 
 ## Face swap (post-process)  — `--faceswap-src` (needs insightface + inswapper)

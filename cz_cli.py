@@ -385,8 +385,34 @@ def cli_main(argv=None):
     parser.add_argument("--remove-bg", action="store_true",
                         help="Remove the background of -i (rembg) -> transparent PNG, then exit.")
     parser.add_argument("--reframe", metavar="W:H",
-                        help="Outpaint -i to a target aspect ratio (e.g. 16:9 / 9:16), then exit. "
+                        help="Reframe -i to a target aspect ratio (e.g. 16:9 / 9:16), then exit. "
                              "--prompt guides the fill; --gen-steps sets the steps.")
+    parser.add_argument("--reframe-fit", choices=["contain", "cover"], default="contain",
+                        help="--reframe mode: contain = keep the whole image and OUTPAINT the "
+                             "borders (default); cover = fill the ratio then centre-crop "
+                             "(no generation).")
+    parser.add_argument("--expand", metavar="SIDES",
+                        help="Directional outpaint of -i then exit (the UI's 'Expand sides', "
+                             "Fooocus-style): comma list among left,right,top,bottom, or 'all'. "
+                             "Each side grows by --expand-ratio. --prompt guides the fill; "
+                             "--gen-steps sets the steps.")
+    parser.add_argument("--expand-ratio", type=float, default=0.3, metavar="0.3",
+                        help="Growth per side for --expand (fraction of the source size)")
+    parser.add_argument("--inpaint-mask", metavar="PATH",
+                        help="Inpaint: repaint the WHITE area of this mask (L/RGB image, same "
+                             "size as -i) guided by --prompt, then exit. --gen-steps sets the "
+                             "steps, --inpaint-denoise the strength.")
+    parser.add_argument("--inpaint-denoise", type=float, default=1.0, metavar="1.0",
+                        help="Inpaint strength for --inpaint-mask (1.0 = full repaint of the "
+                             "masked area; lower keeps more of the original).")
+    parser.add_argument("--force-ratio", metavar="W:H",
+                        help="Force an aspect ratio on the Upscale/img2img INPUT before "
+                             "processing (same as the UI radio). Also via config "
+                             "'force_upscale_ratio' or env CZ_FORCE_RATIO.")
+    parser.add_argument("--force-ratio-mode", choices=["crop", "extend"], default=None,
+                        help="How the forced ratio is reached: crop = centre-crop (Fooocus-"
+                             "style, default), extend = OUTPAINT the missing bands (nothing "
+                             "is lost, seams blended). Also config 'force_ratio_mode'.")
     parser.add_argument("--faceswap-src", metavar="PATH",
                         help="Post-process: swap the face in the (txt2img/reframe) result with this "
                              "source face. Needs insightface + an inswapper model.")
@@ -469,6 +495,12 @@ def cli_main(argv=None):
         set_sampler(args.sampler)
     if args.schedule:
         set_schedule(args.schedule)
+    # Ratio force sur l'entree Upscale/img2img (comme le radio UI). Le mode peut aussi
+    # venir de la config; le flag explicite gagne.
+    if args.force_ratio:
+        cz_pipeline.set_force_ratio(args.force_ratio)
+    if args.force_ratio_mode:
+        cz_pipeline.set_force_ratio_mode(args.force_ratio_mode)
 
     # LoRA(s) en CLI: --lora NAME[:WEIGHT] (repetable)
     if args.loras_dir:
@@ -504,7 +536,7 @@ def cli_main(argv=None):
         print(os.path.abspath(dst))
         return 0
 
-    # --reframe W:H : outpaint -i puis termine
+    # --reframe W:H : reframe -i (contain = outpaint / cover = crop) puis termine
     if args.reframe:
         if not args.input or not os.path.isfile(args.input):
             parser.error("--reframe requires -i <image>")
@@ -512,13 +544,54 @@ def cli_main(argv=None):
             rw, rh = [int(x) for x in str(args.reframe).split(":")]
         except Exception:
             parser.error("--reframe expects W:H, e.g. 16:9")
-        res = _maybe_faceswap(outpaint(Image.open(args.input), rw, rh, args.prompt,
-                                       args.gen_steps, args.seed))
+        res = _maybe_faceswap(cz_pipeline.reframe(
+            Image.open(args.input), rw, rh, args.reframe_fit, args.prompt,
+            args.gen_steps, args.seed))
         sm = args.save_mode if args.save_mode != "display" else "local"
         base = os.path.splitext(os.path.basename(args.input))[0]
         dst = args.output if (args.output and not os.path.isdir(args.output)) else \
             build_output_path(args.input, sm, args.output_dir, args.output_format,
                               tag=f"{base}_reframe", seed=args.seed, size=res.size)
+        save_image(res, dst, args.output_format)
+        print(os.path.abspath(dst))
+        return 0
+
+    # --expand left,right,... : outpaint directionnel de -i (Expand sides) puis termine
+    if args.expand:
+        if not args.input or not os.path.isfile(args.input):
+            parser.error("--expand requires -i <image>")
+        sides = [s.strip().lower() for s in str(args.expand).split(",") if s.strip()]
+        if sides in (["all"], ["center"]):
+            sides = ["left", "right", "top", "bottom"]
+        if not sides or any(s not in ("left", "right", "top", "bottom") for s in sides):
+            parser.error("--expand expects a comma list among left,right,top,bottom (or 'all')")
+        res = _maybe_faceswap(cz_pipeline.outpaint_directions(
+            Image.open(args.input), None, sides, args.prompt, args.gen_steps, args.seed,
+            expand=args.expand_ratio))
+        sm = args.save_mode if args.save_mode != "display" else "local"
+        base = os.path.splitext(os.path.basename(args.input))[0]
+        dst = args.output if (args.output and not os.path.isdir(args.output)) else \
+            build_output_path(args.input, sm, args.output_dir, args.output_format,
+                              tag=f"{base}_expand", seed=args.seed, size=res.size)
+        save_image(res, dst, args.output_format)
+        print(os.path.abspath(dst))
+        return 0
+
+    # --inpaint-mask fichier.png : inpaint de la zone blanche du masque puis termine
+    if args.inpaint_mask:
+        if not args.input or not os.path.isfile(args.input):
+            parser.error("--inpaint-mask requires -i <image>")
+        if not os.path.isfile(args.inpaint_mask):
+            parser.error(f"--inpaint-mask: mask not found: {args.inpaint_mask}")
+        mask = Image.open(args.inpaint_mask).convert("L")
+        res = _maybe_faceswap(cz_pipeline.inpaint_run(
+            Image.open(args.input), mask, args.prompt, args.gen_steps,
+            args.inpaint_denoise, args.seed))
+        sm = args.save_mode if args.save_mode != "display" else "local"
+        base = os.path.splitext(os.path.basename(args.input))[0]
+        dst = args.output if (args.output and not os.path.isdir(args.output)) else \
+            build_output_path(args.input, sm, args.output_dir, args.output_format,
+                              tag=f"{base}_inpaint", seed=args.seed, size=res.size)
         save_image(res, dst, args.output_format)
         print(os.path.abspath(dst))
         return 0
@@ -711,10 +784,13 @@ def cli_main(argv=None):
         img = Image.open(p)
         # explicit_output_file ne s'applique qu'au premier fichier
         if explicit_output_file and len(paths) == 1:
+            # apply_force_ratio=True: meme semantique que run() (le chemin standard) --
+            # sans FORCE_RATIO defini c'est un no-op.
             result, t = process_one(img, model_name, args.factor, args.denoise, args.steps,
                                     args.prompt, args.seed, args.tile, args.overlap,
                                     refine_tile=args.refine_tile, refine_overlap=args.refine_overlap,
-                                    do_esrgan=not args.no_esrgan, refine_first=args.refine_first)
+                                    do_esrgan=not args.no_esrgan, refine_first=args.refine_first,
+                                    apply_force_ratio=True)
             os.makedirs(os.path.dirname(os.path.abspath(explicit_output_file)) or ".", exist_ok=True)
             save_image(result, explicit_output_file, args.output_format)
             if args.print_output:

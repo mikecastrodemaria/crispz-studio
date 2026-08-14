@@ -3,6 +3,25 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — CLI parity: expand / inpaint-mask / reframe-fit / force-ratio flags
+
+**Why.** The Inpaint/Outpaint tab features and the forced-ratio radio had no CLI
+equivalents — batch/headless users couldn't reach them.
+
+**What.** New flags, same behaviour as the UI:
+- **`--expand left,right,top,bottom`** (or `all`) + `--expand-ratio` (default 0.3): the
+  "Expand sides" directional outpaint on `-i`, then exit.
+- **`--inpaint-mask mask.png`** + `--inpaint-denoise` (default 1.0): repaint the WHITE
+  area of the mask on `-i`, guided by `--prompt`.
+- **`--reframe-fit contain|cover`**: `--reframe` now exposes both modes (contain =
+  outpaint to the ratio, default; cover = fill + centre-crop, no generation).
+- **`--force-ratio W:H`** + **`--force-ratio-mode crop|extend`**: the forced-ratio
+  radio for Upscale/img2img runs; the `-o` single-file path now honours it too (it
+  ignored `FORCE_RATIO` while the standard path applied it).
+Validated end-to-end: crop 1024² → 1024×576, cover 1376×768 (no fill), expand
+right+bottom 1024² → 1331² (GPU), inpaint-mask renders the prompt exactly in the
+masked circle (GPU). Documented in README_CLI.md.
+
 ## Unreleased — Force aspect ratio: new "Extend (outpaint)" mode next to crop
 
 **Why.** "Force aspect ratio on Upscale/img2img" could only centre-crop the input to the
