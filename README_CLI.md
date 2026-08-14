@@ -53,9 +53,14 @@ python app.py --txt2img --prompt "a red cat" \
 python app.py --txt2img --prompt "..." \
     --xyz "Checkpoint=Z-Image-Turbo, intoreal" --xyz "Seed=42, 1234"
 
+# Full-prompt A/B test (each value = a COMPLETE prompt; quotes protect commas).
+# --prompt becomes optional when a Prompt axis is given.
+python app.py --txt2img \
+    --xyz "Prompt=a red fox in snow, \"portrait of a woman, 85mm\", a neon city at night"
+
 # Prompt S/R (first value = search term) + an upscale axis (needs --upscale)
 python app.py --txt2img --prompt "a red cat" --upscale \
-    --xyz "prompt=cat, dog, fox" --xyz "Denoise=0.2, 0.4"
+    --xyz "Prompt S/R=cat, dog, fox" --xyz "Denoise=0.2, 0.4"
 
 # Compare LoRA epochs (partial names resolve; None = control cell without LoRA)
 python app.py --txt2img --prompt "..." \
@@ -68,9 +73,12 @@ python app.py --txt2img --prompt "..." \
 
 Axes: `Checkpoint`, `Sampler`, `Schedule`, `Steps`, `Guidance`, `Seed`, `ESRGAN model`,
 `Factor`, `Denoise`, `Tile`, `Refine tile`, `LoRA` (file in slot 1), `LoRA + weight`
-(`name:weight`), `LoRA weight`, `Performance`, `Prompt S/R`.
+(`name:weight`), `LoRA weight`, `Performance`, `Prompt` (full-prompt A/B), `Prompt S/R`.
 Axis names and closed-list values resolve case-insensitively (`step` → `Steps`,
-`uni` → `unipc`); quotes protect commas; upscale-only axes require `--upscale`.
+`uni` → `unipc`; note `prompt` = the full-Prompt axis, `prompt s` = Prompt S/R);
+quotes protect commas; upscale-only axes require `--upscale`.
+In the UI, the values fields autosuggest after 3 typed characters (checkpoints/LoRAs
+on those axes, `__wildcards__` on the Prompt axes).
 **Ctrl+C assembles a partial sheet** with the cells rendered so far.
 
 ## Choose / switch the Z-Image model

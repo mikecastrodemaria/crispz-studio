@@ -193,6 +193,8 @@ def _xyz_cli_apply(name, value, p, base_ms):
     elif kind == "performance":
         st, g = PERFORMANCE[value]
         p["gen_steps"], p["guidance"] = int(st), float(g)
+    elif kind == "prompt":
+        p["prompt"] = str(value)
     elif kind == "sr":
         term = spec["_term"]
         if str(value) != term:
@@ -615,7 +617,10 @@ def cli_main(argv=None):
 
     # Mode txt2img (Text -> Image, + upscale optionnel)
     if args.txt2img:
-        if not args.prompt:
+        # Un axe XYZ "Prompt=..." fournit les prompts lui-meme -> --prompt optionnel.
+        _xyz_has_prompt = any(s.partition("=")[0].strip().lower() == "prompt"
+                              for s in (args.xyz or []))
+        if not args.prompt and not _xyz_has_prompt:
             parser.error("--txt2img requires --prompt")
         os.makedirs(cz_esrgan.ESRGAN_DIR, exist_ok=True)
         model_name = None
