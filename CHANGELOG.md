@@ -3,6 +3,19 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Fix: hot-swap freed the old transformer too late (VRAM spill)
+
+**Why.** On a multi-checkpoint XYZ grid, the second swap put the machine in the mud:
+the NEW transformer (12 GB) was moved to the GPU **before** the old one (12 GB) was
+freed — with the VAE + Qwen3 encoder (~7 GB) that overflows 32 GB of VRAM into shared
+system RAM, and PyTorch never recovers: renders went from 1.7 s/step to **300-600
+s/step** (68 min for 8 steps) until the process died mid-grid.
+
+**What.** `_swap_transformer` now purges the derived pipes and deletes the old
+transformer (+ `empty_cache`) **before** placing the new one on the GPU — peak VRAM
+during a swap is one transformer, not two. Ported to the whole family. Model-swap
+tests green.
+
 ## Unreleased — XYZ grid: full-Prompt A/B axis + type-ahead suggestions
 
 **Why.** Comparing whole prompts needed Prompt S/R gymnastics, and filling the

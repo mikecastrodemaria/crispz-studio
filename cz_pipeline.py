@@ -1166,6 +1166,17 @@ def _swap_transformer(pipe):
             pipe.register_modules(transformer=new_t)   # API diffusers (met a jour le config)
         except Exception:
             pipe.transformer = new_t
+        # Liberer l'ANCIEN transformer AVANT de poser le nouveau sur le GPU: sinon
+        # ancien (12 Go) + nouveau (12 Go) + VAE/encodeur (~7 Go) depassent la VRAM
+        # -> spill en RAM partagee qui ne se resorbe pas (mesure sur une grille XYZ
+        # multi-checkpoints: 1.7 s/step -> 300-600 s/step, puis crash). Les pipes
+        # derives (from_pipe) pointent aussi sur l'ancien -> a purger d'abord, sinon
+        # `del old` ne libere rien (from_pipe est gratuit, il sera reconstruit).
+        _DERIVED = {}
+        del old
+        gc.collect()
+        if DEVICE == "cuda":
+            torch.cuda.empty_cache()
         if DEVICE == "cuda":
             if off == "model":
                 pipe.enable_model_cpu_offload()
@@ -1173,13 +1184,6 @@ def _swap_transformer(pipe):
                 pipe.enable_sequential_cpu_offload()
             else:
                 new_t.to(DEVICE)
-        del old
-        gc.collect()
-        if DEVICE == "cuda":
-            torch.cuda.empty_cache()
-        # Les pipes derives (from_pipe) pointaient sur l'ANCIEN transformer -> a reconstruire
-        # (from_pipe est gratuit: il partage les poids, il ne recharge rien).
-        _DERIVED = {}
         # Les adaptateurs LoRA etaient poses sur l'ancien transformer -> a reposer.
         _APPLIED_LORAS = []
         if LORAS:
