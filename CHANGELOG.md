@@ -14,7 +14,9 @@ s/step** (68 min for 8 steps) until the process died mid-grid.
 **What.** `_swap_transformer` now purges the derived pipes and deletes the old
 transformer (+ `empty_cache`) **before** placing the new one on the GPU — peak VRAM
 during a swap is one transformer, not two. Ported to the whole family. Model-swap
-tests green.
+tests green, and the same 7-checkpoint grid (3× FP8, ConvRot INT8, AIO bundle, GGUF
+Q4, bf16 reference) then completed end-to-end with every render back to **3-14 s**
+and all seven portraits clean on the contact sheet.
 
 ## Unreleased — XYZ grid: full-Prompt A/B axis + type-ahead suggestions
 
