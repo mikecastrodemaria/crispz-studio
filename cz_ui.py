@@ -3024,10 +3024,10 @@ def build_ui():
                                                                   label="Refine before upscale (faster)",
                                                                   info="Refine at native res THEN ESRGAN enlarge "
                                                                        "(~4-16x faster refine; a touch less high-res detail).")
-                                    # ControlNet Tile: controles MASQUES tant que le bug
-                                    # ouvert n'est pas corrige (cf. cz_pipeline,
-                                    # CONTROLNET_TILE_AVAILABLE). Les composants restent
-                                    # crees pour ne pas casser le cablage des handlers.
+                                    # ControlNet Tile: la Row suit CONTROLNET_TILE_AVAILABLE
+                                    # (cf. cz_pipeline). Masquee quand le drapeau est a
+                                    # False, les composants restent crees pour ne pas
+                                    # casser le cablage des handlers.
                                     with gr.Row(visible=cz_pipeline.CONTROLNET_TILE_AVAILABLE):
                                         cn_tile_cb = gr.Checkbox(
                                             value=cz_pipeline.CONTROLNET_TILE,
