@@ -1715,7 +1715,8 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                             _dbg(f"saved pre-upscale: {pre_dst}")
                     except Exception as e:
                         _dbg(f"pre-upscale save failed: {e}")
-            # Detaileur auto (visages) sur l'image FINALE (apres l'upscale eventuel).
+            # Detaileur auto (visages puis mains) sur l'image FINALE (apres l'upscale
+            # eventuel). Ordre: visages d'abord (zone la plus regardee), mains ensuite.
             if cz_detailer.DETAILER_ENABLED:
                 progress((i + 0.85) / n, desc=f"Detailing faces {i + 1}/{n}")
                 try:
@@ -1724,6 +1725,14 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                         progress=lambda t: progress((i + 0.9) / n, desc=t))
                 except Exception as e:
                     _log(f"detailer failed: {e}")
+            if cz_detailer.HAND_ENABLED:
+                progress((i + 0.92) / n, desc=f"Detailing hands {i + 1}/{n}")
+                try:
+                    img, _nh = cz_detailer.detail_hands(
+                        img, fp, s, steps=int(refine_steps),
+                        progress=lambda t: progress((i + 0.95) / n, desc=t))
+                except Exception as e:
+                    _log(f"hand detailer failed: {e}")
             images.append(img)
             dst = None
             if save_mode != "display":
@@ -2929,10 +2938,15 @@ def build_ui():
                         label="Upscale after generate — chain each txt2img image through the "
                               "Upscale pipeline (ESRGAN + refine), no manual step")
                     improve_btn = gr.Button("Improve prompt", scale=1, min_width=150)
-                detail_faces_cb = gr.Checkbox(
-                    value=cz_detailer.DETAILER_ENABLED,
-                    label="🔧 Detail faces — after each render (and upscale), detect faces and "
-                          "re-refine each one at high resolution (ADetailer-style)")
+                with gr.Row():
+                    detail_faces_cb = gr.Checkbox(
+                        value=cz_detailer.DETAILER_ENABLED,
+                        label="🔧 Detail faces — after each render (and upscale), detect faces and "
+                              "re-refine each one at high resolution (ADetailer-style)")
+                    detail_hands_cb = gr.Checkbox(
+                        value=cz_detailer.HAND_ENABLED,
+                        label="🖐 Detail hands — same pass on detected hands "
+                              "(needs the optional 'ultralytics' package)")
                 improve_status = gr.Markdown("")
 
                 if JOB_QUEUE_ENABLED:
@@ -3514,6 +3528,11 @@ def build_ui():
                             label="Face detailer denoise (🔧 Detail faces)",
                             info="Strength of the per-face refine pass. 0.3-0.4 sharpens "
                                  "details; higher starts changing the identity. Applied live.")
+                        hand_denoise_sl = gr.Slider(
+                            0.1, 0.7, value=cz_detailer.HAND_DENOISE, step=0.05,
+                            label="Hand detailer denoise (🖐 Detail hands)",
+                            info="Hands usually need a bit more than faces (0.4-0.5) to fix "
+                                 "fingers; too high invents a different hand. Applied live.")
 
         # Toggles facon Fooocus
         advanced_cb.change(lambda v: gr.update(visible=bool(v)), advanced_cb, advanced_col)
@@ -3561,7 +3580,9 @@ def build_ui():
         wildcards_order_cb.change(set_wildcards_in_order, [wildcards_order_cb], [wild_order_status])
         save_pre_upscale_cb.change(cz_pipeline.set_save_pre_upscale, [save_pre_upscale_cb], None)
         detail_faces_cb.change(cz_detailer.set_enabled, [detail_faces_cb], None)
+        detail_hands_cb.change(cz_detailer.set_hands_enabled, [detail_hands_cb], None)
         detailer_denoise_sl.change(cz_detailer.set_denoise, [detailer_denoise_sl], None)
+        hand_denoise_sl.change(cz_detailer.set_hand_denoise, [hand_denoise_sl], None)
         lora_slots_num.change(_ui_set_lora_slots, [lora_slots_num], lora_rows)
         refresh_btn.click(_refresh_models, [esrgan_dir_tb], [esrgan, paths_status])
         save_paths_btn.click(_save_paths_to_prefs,

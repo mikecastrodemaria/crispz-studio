@@ -1,5 +1,8 @@
 # Optional extras (local tools that don't need a Z-Image model).
 # Install:  .venv/Scripts/python -m pip install -r requirements-extra.txt
 rembg                  # Remove BG tab (downloads the u2net model on first use)
+ultralytics            # 🖐 Detail hands (YOLOv8 hand detector; the ~6 MB model is
+                       # pulled once from Bingsu/adetailer on first use). Face detailer
+                       # does NOT need it (insightface handles faces).
 pillow-avif-plugin     # read .avif input images (else PIL.UnidentifiedImageError)
 # Auto-describe captioner (BLIP) needs only transformers (already installed).

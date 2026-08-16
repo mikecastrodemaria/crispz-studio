@@ -548,6 +548,13 @@ def cli_main(argv=None):
                              "high res (ADetailer-style, same as the UI '🔧 Detail faces').")
     parser.add_argument("--detailer-denoise", type=float, default=None, metavar="0.35",
                         help="Face-detailer strength (0.1-0.7; default from config).")
+    parser.add_argument("--detail-hands", action="store_true",
+                        help="txt2img: same detailer pass on detected HANDS (YOLOv8). "
+                             "Needs the optional 'ultralytics' package "
+                             "(pip install -r requirements-extra.txt).")
+    parser.add_argument("--hand-denoise", type=float, default=None, metavar="0.40",
+                        help="Hand-detailer strength (0.1-0.7; hands usually want a bit "
+                             "more than faces).")
     parser.add_argument("--metadata-scheme", choices=["crispz", "a1111"], default=None,
                         help="PNG metadata scheme for saved images ('a1111' adds the "
                              "Civitai-readable 'parameters' chunk). Default from config.")
@@ -760,13 +767,20 @@ def cli_main(argv=None):
             refine_tile=args.refine_tile, refine_overlap=args.refine_overlap,
             refine_first=args.refine_first)
         result = _maybe_faceswap(result)
-        if args.detail_faces:
+        if args.detail_faces or args.detail_hands:
             import cz_detailer
             if args.detailer_denoise is not None:
                 cz_detailer.set_denoise(args.detailer_denoise)
-            result, _nf = cz_detailer.detail_faces(result, args.prompt, args.seed,
-                                                   steps=args.steps)
-            _log(f"detailer: {_nf} face(s) refined")
+            if args.hand_denoise is not None:
+                cz_detailer.set_hand_denoise(args.hand_denoise)
+            if args.detail_faces:
+                result, _nf = cz_detailer.detail_faces(result, args.prompt, args.seed,
+                                                       steps=args.steps)
+                _log(f"detailer: {_nf} face(s) refined")
+            if args.detail_hands:
+                result, _nh = cz_detailer.detail_hands(result, args.prompt, args.seed,
+                                                       steps=args.steps)
+                _log(f"detailer: {_nh} hand(s) refined")
         # Sortie : -o fichier, sinon output_dir (sauf save-mode display)
         dst = None
         if args.output and not (os.path.isdir(args.output) or args.output.endswith(("/", "\\"))):
