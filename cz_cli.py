@@ -550,9 +550,10 @@ def cli_main(argv=None):
                         help="Face-detailer strength (0.1-0.7; default from config).")
     parser.add_argument("--controlnet-tile", action="store_true",
                         help="[DISABLED in this build] Refine with the Z-Image Tile "
-                             "ControlNet. Turned off after an open bug: once used, the "
-                             "pipeline returns images unrelated to the prompt until the "
-                             "app is restarted. The flag is accepted but ignored.")
+                             "ControlNet. Turned off because the tiled refine recopies "
+                             "the scene into every tile: the ControlNet pipeline has no "
+                             "'strength' and denoises fully, so each tile is generated "
+                             "from scratch. The flag is accepted but ignored.")
     parser.add_argument("--controlnet-scale", type=float, default=None, metavar="0.75",
                         help="ControlNet conditioning strength (0.1-1.5). High = faithful "
                              "to the source, low = more invention.")

@@ -3,33 +3,147 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
-## Unreleased — ControlNet Tile DISABLED (open bug)
+## Unreleased — ControlNet Tile: root cause found, feature stays OFF
 
-**The feature below is switched off in the code** (`CONTROLNET_TILE_AVAILABLE = False`
-in `cz_pipeline.py`): the UI controls are hidden, `--controlnet-tile` is accepted but
-ignored, and the config key does nothing. Nothing else in the app is affected.
+`CONTROLNET_TILE_AVAILABLE` remains **False**. It was flipped on to resume the
+investigation, and the investigation ended it: **the tiled ControlNet refine recopies
+the scene into every tile.**
 
-**Why.** Once the ControlNet has been used, the pipeline returns images that have
-**nothing to do with the requested prompt**, with no error, until the app is restarted.
-Confirmed twice in real use — the second time from the output metadata: prompt
-`"interior design living room with herringbone parquet…"`, image produced = the facade
-of a palace with two people. The refine itself works well (structure preserved, 4.5 s
-per 768 tile, VRAM 28.2/32 GB); the damage shows up on the *next* renders.
+Seen plainly on a 1024×1536 → 2048×3072 upscale of a living room: the parquet ends up
+littered with miniature armchairs and fireplaces, walls and armchairs get carved
+patterns, and with an empty per-tile prompt whole hands, hair and fake signage appear.
+Four configurations tried, **all bad** — empty prompt @0.75, scene prompt @0.75, @1.0
+and @1.3.
 
-**Already ruled out** (so the next session does not redo it):
-- the transformer is not structurally altered — `from_transformer` only writes *into*
-  the ControlNet (it grafts `t_embedder`, `all_x_embedder`, `cap_embedder`,
-  `rope_embedder`, `noise_refiner`, `context_refiner`, `x_pad_token`, `cap_pad_token`,
-  read from the diffusers 0.39 source);
-- the release path no longer moves anything to CPU (that was a *separate* bug, fixed:
-  `.to("cpu")` on the ControlNet dragged the transformer's shared embedders along and
-  the next generation died on `mat1 is on cuda:0, others on cpu`);
+**Why, from the diffusers 0.39 source.** `ZImageControlNetPipeline` has no `strength`
+parameter — the word does not appear once in the file, against 13 times in
+`pipeline_z_image_img2img.py` — and there is no `pipeline_z_image_controlnet_img2img`
+(only `controlnet` and `controlnet_inpaint`). So the pipeline **denoises fully from
+noise**. Applied to a *tile*, that means generating a complete image whose only anchor is
+the control image, and the model duly composes an entire scene inside each tile. Plain
+img2img cannot do this: it starts from the real tile at denoise 0.35, so it can only
+retouch. This is the approach failing under tiling, not a plumbing defect.
+
+**The control experiment confirms it.** The same pass run on the *whole* image
+(1024×1536, `refine_tile=0`, scale 0.75) comes out **clean** — no recopying, no miniature
+furniture, structure identical (fireplace, painting, both armchairs, herringbone). One
+"tile" that *is* the image, so there is nothing to recopy: the culprit is the tiling, not
+the ControlNet. But it took **559 s** (9 min 20) against 52 s for the 15 tiles —
+transformer (12 GB) + ControlNet (6.7 GB) + whole-image activations spill into shared
+RAM. So the only mode that produces a good result is unusable in practice on 32 GB.
+
+**What would unblock it**: a `ZImageControlNetImg2ImgPipeline` (ControlNet + *partial*
+denoise) — it would make tiling sound again, since each tile would restart from its real
+content instead of being generated from scratch. Worth watching in diffusers.
+
+**The guard cannot see it.** The offending tiles scored gap 20–45 and correlation
++0.21/+0.99, comfortably inside the thresholds (75 / 0.20). `_cn_structure_gap` measures
+*low-frequency* (64×64) agreement per tile, and a tile that repopulates a parquet with
+small furniture keeps the same tonal distribution and the same coarse structure.
+
+**The originally reported bug did not reproduce.** Replayed faithfully, the shared-state
+diff prints `unchanged` before and after every ControlNet pass and the following txt2img
+renders are clean. The "palace facade" image that motivated the report was most likely
+**the upscale output itself** — that is, exactly the recopying described above — rather
+than a poisoned pipeline.
+
+**Still open, unrelated to the ControlNet**: on the 2026-08-16 outputs, 7 consecutive
+txt2img (17:32:58–17:35:52) and 3 more (17:58:14–17:59:34) came out corrupted. Not
+reproduced. Lead and instrumentation below.
+
+**What the output metadata actually shows** (renders of 2026-08-16, measured with a
+high-frequency-energy ratio over every PNG of the day — normal renders sit at
+0.05–0.28, corrupted ones at 0.38–0.56):
+
+| window | checkpoint | verdict |
+|---|---|---|
+| 13:00–14:30 | `z_image_turbo-Q6_K.gguf` | clean (≈45 renders) |
+| 15:26–16:01 | `Tongyi-MAI/Z-Image-Turbo` | clean |
+| 17:19–17:32:49 | `sickOllie_v1.safetensors` | clean |
+| **17:32:58–17:35:52** | `sickOllie_v1.safetensors` | **corrupted, 7 renders in a row** |
+| 17:57:17 | `z_image_turbo-Q6_K.gguf` | clean (1st render after load) |
+| **17:58:14–17:59:34** | `z_image_turbo-Q6_K.gguf` | **corrupted, 3 renders in a row** |
+
+The 17:58–17:59 series came out *after* the commit that disables the ControlNet
+(17:42:56) — only conclusive if the app was restarted in between, which is not recorded.
+What is certain is that this second corruption is **not** the ControlNet forward pass
+mutating shared state (proof below); it is a distinct problem that happens to have
+surfaced in the same working window.
+
+**The signature**: structure stays globally plausible while local texture is destroyed
+into a mosaic, and the content drifts away from the prompt — with no error, until a full
+reload (restart, or a checkpoint switch that forces one) clears it. On 2026-08-16 it also
+*ramped in* rather than flipping on (17:32:03 → 0.17, 17:32:33 → 0.28, 17:32:49 → 0.23,
+17:32:58 → 0.52), which points at a resource margin being eaten, not a state flip.
+
+**The reported repro no longer reproduces.** Replayed faithfully on the current code
+(sickOllie, offload `none`, 19.3 GB resident → ControlNet upscale to 2048×3072, 15 tiles
+at 3.1–3.3 s → three plain txt2img): the shared-state diff prints `unchanged (31 keys)`
+before and after **every** ControlNet pass and at every txt2img entry, and the three
+following renders score 0.135 / 0.132 / 0.114 — the same range as the two before it
+(0.122 / 0.130). The fixes already committed plus the ones below appear to have closed
+the path; the instrumentation stays in so the next occurrence names its own cause.
+
+**What that run did expose — the VRAM margin.** Right after the upscale, a plain
+1024×1536 txt2img ran with `alloc 19.3 GB` but **`reserved 28.7 / 32 GB`**, and peaked at
+27.4 allocated / 28.7 reserved versus 21.7 / 23.9 for the identical render *before* the
+upscale. Under Windows/WDDM reserved VRAM is taken from the other processes on the card,
+so every render after an upscale was starting with ~3 GB of headroom on a **GPU shared
+with the user** — precisely the regime where the driver spills into shared RAM and
+latents come out corrupted with no error.
+
+**Ruled out, with proof:**
+- the ControlNet does **not** alter the transformer. `from_transformer` only grafts
+  *shared references* into the ControlNet. Verified empirically on miniature CPU models:
+  after grafting → ControlNet forward → transformer forward → release, all 185 state
+  keys of the transformer are unchanged and a reference pass is **bit-for-bit
+  identical**;
+- the prompt reaches the pipeline intact — `cz_ui` passes the same `fp` to both
+  `txt2img_run` and `_gen_meta`, so "correct metadata + unrelated image" means the model
+  received the prompt and ignored it;
+- the release path no longer moves anything to CPU (separate bug, fixed);
 - VRAM saturation (fixed by the tile cap: 31 GB / 164 s per tile → 28.2 GB / 4.5 s).
 
-**Left to investigate**: the cached derived pipes (`_DERIVED`), the shared scheduler, or
-the VAE state after a ControlNet pass. Reproduce with `--log-level debug` and read the
-`_ensure_base key=… cached=…` and `deriving … pipeline` lines to see whether a stale
-cache is being reused.
+**Main lead — the pipes derived by `from_pipe`.** `DiffusionPipeline.from_pipe` does
+`torch_dtype = kwargs.pop("torch_dtype", torch.float32)` then `new_pipeline.to(dtype)`,
+and the components are **shared with the base** — so deriving a pipe recasts the base's
+transformer. In offload `model` (forced for a GGUF) the derived pipe also lacks the
+base's accelerate hooks (`_all_hooks` empty → `maybe_free_model_hooks` does nothing),
+which leaves the base's offload chain inconsistent for the *next* generation. The face
+and hand detailers derive `img2img` **after** the first render — which matches
+"1st render clean, 2nd onwards corrupted" exactly.
+
+### Fixed along the way
+
+- **`generate()` started a render on a full allocator.** It emptied the CUDA cache
+  *after* the pass but not before, so a txt2img that followed an upscale began with
+  ~9 GB of freed-but-reserved blocks still held (28.7 / 32 GB measured). It now does the
+  same `gc.collect()` + `empty_cache()` before the pass that `_refine_tiled` has done
+  since d1761c2 — measured: the render now starts at 19.6 GB instead of 28.7 GB.
+- **`_effective_offload(None)` was ambiguous.** `None` is a *legitimate* value for
+  `tpath` (no override → the base repo's transformer), but it was also the "use the
+  current transformer" sentinel — so `_effective_offload(None)` silently evaluated
+  `ZIMAGE_TRANSFORMER`. `_swap_transformer`'s guard therefore compared the **new**
+  transformer with itself and let a base-repo → GGUF hot-swap through, even though the
+  effective offload changes (`none` → `model`) and a full reload is required. Now uses a
+  dedicated sentinel object. Regression test in `tests/test_model_swap.py`.
+- **`_swap_transformer` did not release the ControlNet.** It cleared `_DERIVED` before
+  `del old` precisely so nothing would keep the old transformer alive — but `_CN_PIPE`
+  holds it too (and `from_transformer` grafted its embedders). The old transformer
+  (12 GB) survived the swap, which is the very shared-RAM spill that block exists to
+  prevent.
+
+### New: shared-state diff (`--log-level debug`)
+
+`_shared_state_diff()` photographs everything shared between the pipelines — weights
+(sampled per module, with NaN/Inf detection), dtypes, devices, accelerate hooks,
+scheduler, VAE flags, rope state, object identities — plus a **functional probe**: a
+fixed sentinel sentence is pushed through the text encoder and its embedding
+fingerprinted. Same sentence must always give the same fingerprint; if it moves, the
+shared text encoder is damaged, which is what produces a coherent image that ignores the
+prompt. Only what changed is logged, so the first `CHANGED` line names the culprit.
+Wired into `generate()`, `get_pipe()` (right after a `from_pipe` derivation), and around
+the ControlNet pass and release.
 
 ## Unreleased — 🔒 ControlNet Tile refine (structure-locked upscale)
 
