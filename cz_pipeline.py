@@ -16,6 +16,7 @@ import sys
 import gc
 import time
 import json
+import hashlib
 import threading
 
 import numpy as np
@@ -426,13 +427,35 @@ def set_zimage_transformer(path):
              "-> transformer swap on next run (base components kept)")
 
 
+_HDR_CACHE = {}          # (chemin, taille, mtime) -> en-tete JSON deja parse
+
+
+def _file_key(path):
+    """Identite stable et pas chere d'un fichier: (chemin absolu, taille, mtime)."""
+    st = os.stat(path)
+    return (os.path.abspath(path), st.st_size, int(st.st_mtime))
+
+
 def _safetensors_header(path):
     """En-tete JSON d'un .safetensors (noms/dtypes/shapes des tenseurs, JAMAIS les
-    poids) -- lecture de quelques centaines de Ko au plus, meme sur un fichier de 12 Go."""
+    poids) -- lecture de quelques centaines de Ko au plus, meme sur un fichier de 12 Go.
+    Memoise par (chemin, taille, mtime): le listing, la detection de format et le
+    loader lisent le meme en-tete, inutile de retaper le disque (HDD) a chaque fois."""
     import struct
+    try:
+        key = _file_key(path)
+    except OSError:
+        key = None
+    if key is not None and key in _HDR_CACHE:
+        return _HDR_CACHE[key]
     with open(path, "rb") as f:
         n = struct.unpack("<Q", f.read(8))[0]
-        return json.loads(f.read(min(n, 10_000_000)).decode("utf-8", "ignore"))
+        hdr = json.loads(f.read(min(n, 10_000_000)).decode("utf-8", "ignore"))
+    if key is not None:
+        if len(_HDR_CACHE) > 512:        # borne memoire (dossiers de modeles enormes)
+            _HDR_CACHE.clear()
+        _HDR_CACHE[key] = hdr
+    return hdr
 
 
 def _safetensors_unsupported(path):
@@ -683,6 +706,36 @@ def set_loras_dir(path):
         LORAS_DIR = path
 
 
+def checkpoint_badge(name):
+    """Etiquette courte de format pour un checkpoint (dropdown UI):
+    'BF16 - 11.5 GB', 'GGUF Q6_K - 5.5 GB', 'FP8->bf16 - 5.7 GB (slow 1st load)'...
+    Renvoie '' pour un repo HF (pas un fichier) ou si l'en-tete est illisible.
+    Tout passe par l'en-tete memoise: aucun cout disque supplementaire au listing.
+    ASCII only: ce libelle finit aussi dans les logs console (cp1252 sous Windows,
+    ou une fleche unicode leve UnicodeEncodeError et tue le run)."""
+    try:
+        path = resolve_checkpoint(name)
+        if not path or not os.path.isfile(path):
+            return ""
+        gb = os.path.getsize(path) / 1024**3
+        if _is_gguf_path(path):
+            import re
+            m = re.search(r"(Q\d+[_A-Za-z0-9]*)", os.path.basename(path))
+            return f"GGUF {m.group(1)} - {gb:.1f} GB" if m else f"GGUF - {gb:.1f} GB"
+        dq = _safetensors_dequant(path)
+        if dq:
+            # 'FP8 scaled' / 'INT8 scaled' -> on garde le mot-cle court; le 1er
+            # chargement paie le dequant, les suivants relisent le cache disque.
+            short = dq.split()[0]
+            cached = _dequant_cache_path(path)
+            hint = "cached" if (cached and os.path.isfile(cached)) else "slow 1st load"
+            return f"{short}->bf16 - {gb:.1f} GB ({hint})"
+        return f"BF16 - {gb:.1f} GB"
+    except Exception as e:
+        _dbg(f"checkpoint_badge failed for {name}: {e}")
+        return ""
+
+
 def _read_safetensors_metadata(path):
     """Lit le header JSON (__metadata__) d'un .safetensors SANS charger les poids."""
     import struct
@@ -788,6 +841,51 @@ def set_offload_mode(mode):
         _log(f"offload -> {OFFLOAD_MODE}: pipeline invalidated -> will reload")
 
 
+# Seuil (Go) de VRAM occupee par d'AUTRES processus au-dela duquel on previent avant
+# de charger un modele. Deux instances qui se partagent le GPU font deborder la VRAM en
+# RAM partagee: les rendus passent de 2 s a 300+ s/step sans message d'erreur.
+# 0 = garde desactivee.
+try:
+    GPU_BUSY_WARN_GB = float(CONFIG.get("gpu_busy_warn_gb", 2.0) or 0)
+except Exception:
+    GPU_BUSY_WARN_GB = 2.0
+
+
+def gpu_foreign_vram_gb():
+    """VRAM (Go) utilisee sur le GPU par des processus AUTRES que celui-ci.
+    mem_get_info donne le libre/total reels du device; ce qu'on en occupe nous-memes
+    est `memory_reserved` (l'allocateur torch). La difference vient d'ailleurs:
+    autre instance de l'app, ComfyUI, un jeu, un navigateur en accel materielle."""
+    if DEVICE != "cuda":
+        return 0.0
+    try:
+        free, total = torch.cuda.mem_get_info()
+        ours = torch.cuda.memory_reserved()
+        return max(0.0, (total - free - ours) / 1024**3)
+    except Exception as e:
+        _dbg(f"mem_get_info unavailable: {e}")
+        return 0.0
+
+
+def gpu_busy_warning():
+    """Message d'avertissement (str) si un autre processus occupe le GPU, sinon ''.
+    Consomme par l'UI (banniere de statut) et la CLI (stderr) avant un chargement."""
+    if GPU_BUSY_WARN_GB <= 0:
+        return ""
+    used = gpu_foreign_vram_gb()
+    if used < GPU_BUSY_WARN_GB:
+        return ""
+    try:
+        total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+    except Exception:
+        total = 0.0
+    return (f"another process is using {used:.1f} GB of VRAM"
+            + (f" out of {total:.0f} GB" if total else "")
+            + " - sharing the GPU makes renders spill to shared RAM "
+              "(seconds -> minutes per step). Close the other app "
+              "(ComfyUI, a second crispz instance, a game) for full speed.")
+
+
 def free_vram():
     """Libere le pipeline de base + les pipelines derives et rend la VRAM
     (palier 3: unload sur inactivite ou endpoint /unload). Rechargement paresseux."""
@@ -837,15 +935,26 @@ def _tile_prompt(scene_prompt):
 
 
 def _set_slicing(pipe, longest_side):
-    """Active/desactive l'attention slicing selon le plus grand cote a traiter. Appele
-    avant CHAQUE passe de diffusion (txt2img/refine/tuile/inpaint/outpaint/omni)."""
+    """Regle le menagement VRAM selon le plus grand cote a traiter. Appele avant CHAQUE
+    passe de diffusion (txt2img/refine/tuile/inpaint/outpaint/omni).
+
+    ATTENTION, piege verifie: `pipe.enable_attention_slicing()` ne fait RIEN ici.
+    DiffusionPipeline.set_attention_slice ne s'applique qu'aux modules exposant
+    `set_attention_slice`, et NI ZImageTransformer2DModel NI AutoencoderKL ne le
+    definissent (verifie sur diffusers 0.39.0.dev0) -- le pipeline les filtre en
+    silence. Le vrai levier sur ce modele est le VAE: tiling/slicing plafonnent le pic
+    de l'encode/decode, qui est la partie qui deborde en 2K+ (le transformer, lui,
+    tient grace a SDPA). Le tiling VAE est deja pose au chargement; on le REAFFIRME ici
+    en haute resolution (un from_pipe / un swap de transformer peut recreer le VAE)."""
     try:
+        vae = getattr(pipe, "vae", None)
+        if vae is None:
+            return
         if int(longest_side) > _SLICE_ABOVE:
-            pipe.enable_attention_slicing()
-        else:
-            pipe.disable_attention_slicing()
-    except Exception:
-        pass
+            vae.enable_slicing()
+            vae.enable_tiling()
+    except Exception as e:
+        _dbg(f"vae slicing/tiling not applied: {e}")
 
 
 def _vram_str():
@@ -939,6 +1048,105 @@ def _apply_loras(pipe, force=False):
         _log(f"LoRA hot-swap failed ({e}); falling back to a full reload")
         _APPLIED_LORAS = []
         return False
+
+
+# Cache disque des transformers dequantifies (FP8/INT8 ComfyUI -> bf16). Un dequant
+# lit et convertit tout le fichier: ~5 min pour 5.7 Go sur un HDD. Le resultat bf16 est
+# ecrit une fois ici, et les chargements suivants deviennent un simple single-file
+# (~40 s). Vide/'auto' = <app>/cache/dequant, "off"/"none" = desactive.
+_DQ_CACHE_CFG = str(CONFIG.get("dequant_cache", "auto") or "auto").strip()
+try:
+    DEQUANT_CACHE_MAX_GB = float(CONFIG.get("dequant_cache_max_gb", 60) or 0)
+except Exception:
+    DEQUANT_CACHE_MAX_GB = 60.0
+
+
+def _dequant_cache_dir():
+    """Dossier du cache de dequant, cree a la demande. None = cache desactive."""
+    if _DQ_CACHE_CFG.lower() in ("off", "none", "0", "false"):
+        return None
+    d = (os.path.join(HERE, "cache", "dequant")
+         if _DQ_CACHE_CFG.lower() in ("auto", "") else _DQ_CACHE_CFG)
+    try:
+        os.makedirs(d, exist_ok=True)
+        return d
+    except Exception as e:
+        _dbg(f"dequant cache dir unavailable ({e})")
+        return None
+
+
+def _dequant_cache_path(src):
+    """Chemin du bf16 cache pour un checkpoint source. La cle inclut taille+mtime:
+    un fichier remplace (meme nom) ne reutilise jamais l'ancien cache."""
+    d = _dequant_cache_dir()
+    if not d:
+        return None
+    try:
+        p, size, mtime = _file_key(src)
+    except OSError:
+        return None
+    h = hashlib.sha1(f"{p.lower()}|{size}|{mtime}|bf16".encode("utf-8")).hexdigest()[:16]
+    base = os.path.splitext(os.path.basename(src))[0][:48]
+    return os.path.join(d, f"{base}.{h}.safetensors")
+
+
+def _dequant_cache_prune(keep=None):
+    """Plafonne le cache (dequant_cache_max_gb, 0 = illimite): supprime les fichiers
+    les moins recemment UTILISES (atime, sinon mtime) jusqu'a repasser sous le seuil."""
+    d = _dequant_cache_dir()
+    if not d or DEQUANT_CACHE_MAX_GB <= 0:
+        return
+    try:
+        files = []
+        for f in os.listdir(d):
+            fp = os.path.join(d, f)
+            if not f.endswith(".safetensors") or not os.path.isfile(fp):
+                continue
+            st = os.stat(fp)
+            files.append((max(st.st_atime, st.st_mtime), st.st_size, fp))
+        total = sum(s for _t, s, _p in files)
+        cap = DEQUANT_CACHE_MAX_GB * 1024**3
+        for _t, size, fp in sorted(files):          # plus ancien acces d'abord
+            if total <= cap:
+                break
+            if keep and os.path.abspath(fp) == os.path.abspath(keep):
+                continue
+            try:
+                os.remove(fp)
+                total -= size
+                _log(f"dequant cache: evicted {os.path.basename(fp)} "
+                     f"({size / 1024**3:.1f} GB, over the {DEQUANT_CACHE_MAX_GB:.0f} GB cap)")
+            except OSError as e:
+                _dbg(f"dequant cache evict failed {fp}: {e}")
+    except Exception as e:
+        _dbg(f"dequant cache prune failed: {e}")
+
+
+def _dequant_cache_store(src, sd):
+    """Ecrit le state dict dequantifie dans le cache (best effort: toute erreur est
+    ignoree, le chargement courant a deja le dict en memoire). Ecriture atomique via
+    un .tmp renomme -> une interruption ne laisse jamais un cache tronque."""
+    dst = _dequant_cache_path(src)
+    if not dst:
+        return
+    try:
+        from safetensors.torch import save_file
+        t0 = time.time()
+        tmp = dst + ".tmp"
+        # contiguous(): safetensors refuse les vues non contigues (issues des slices
+        # de dequant); clone implicite, on est deja en RAM.
+        save_file({k: v.contiguous() for k, v in sd.items()}, tmp)
+        os.replace(tmp, dst)
+        gb = os.path.getsize(dst) / 1024**3
+        _log(f"dequant cache: saved {gb:.1f} GB in {time.time() - t0:.1f}s "
+             f"-> next load of this checkpoint skips the dequant")
+        _dequant_cache_prune(keep=dst)
+    except Exception as e:
+        _log(f"dequant cache: not saved ({e})")
+        try:
+            os.remove(dst + ".tmp")
+        except OSError:
+            pass
 
 
 def _hadamard_ortho(n):
@@ -1089,12 +1297,29 @@ def _load_transformer():
                         torch_dtype=DTYPE))
             dq = _safetensors_dequant(ZIMAGE_TRANSFORMER)
             if dq:
+                # Deja dequantifie une fois ? -> relire le bf16 du cache disque, c'est
+                # un single-file normal (secondes) au lieu de re-convertir tout le
+                # fichier (minutes sur HDD).
+                cached = _dequant_cache_path(ZIMAGE_TRANSFORMER)
+                if cached and os.path.isfile(cached):
+                    _log(f"loading Z-Image transformer ({dq} -> bf16, from dequant "
+                         f"cache): {os.path.basename(cached)}")
+                    try:
+                        os.utime(cached, None)       # marque l'usage pour le LRU
+                    except OSError:
+                        pass
+                    return _load_monitor(
+                        f"transformer {os.path.basename(ZIMAGE_TRANSFORMER)} (cached bf16)",
+                        lambda: ZImageTransformer2DModel.from_single_file(
+                            cached, config=BASE_REPO, subfolder="transformer",
+                            torch_dtype=DTYPE))
                 # FP8/INT8 'scaled' ComfyUI (majorite des builds Civitai legers) ->
                 # dequant en RAM puis chargement du dict (conversion de cles diffusers
                 # incluse: prefixe ComfyUI, split QKV fusionne...).
                 _log(f"loading Z-Image transformer (single-file, {dq} ComfyUI -> "
                      f"dequantized to bf16): {ZIMAGE_TRANSFORMER} ...")
                 sd = _load_dequant_state_dict(ZIMAGE_TRANSFORMER)
+                _dequant_cache_store(ZIMAGE_TRANSFORMER, sd)
                 return _load_monitor(
                     f"transformer {os.path.basename(ZIMAGE_TRANSFORMER)} ({dq})",
                     lambda: ZImageTransformer2DModel.from_single_file(
@@ -1226,6 +1451,11 @@ def _ensure_base():
         free_vram()
     from diffusers import ZImagePipeline
     t0 = time.time()
+    # Garde: un autre process qui squatte la VRAM fait deborder le chargement en RAM
+    # partagee sans aucune erreur -> on previent AVANT de payer plusieurs minutes.
+    _busy = gpu_busy_warning()
+    if _busy:
+        _log(f"WARNING: {_busy}")
     kwargs = {}
     if ZIMAGE_TRANSFORMER:
         kwargs["transformer"] = _load_transformer()

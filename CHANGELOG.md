@@ -3,6 +3,60 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Persistent queue, HTTP txt2img/edit endpoints, real CI, slicing fix
+
+- **The job queue survives a restart.** It is written to `cache/queue.json` on every
+  mutation *and* after each finished job, then restored at startup (the accordion opens
+  itself and says how many jobs came back). Input images are stored beside it and
+  reloaded; the session gallery is not persisted; anything unserialisable degrades to
+  `None` instead of losing the whole file. Disable with `job_queue.persist: false`.
+- **`--serve` grew past `/upscale`**: **`POST /txt2img`** (prompt, size, steps,
+  guidance, sampler/schedule, optional chained upscale and face detailer) and
+  **`POST /edit`** (`mode: inpaint | expand | reframe` — mask file, directional sides,
+  or target ratio with contain/cover). Same engine as the UI, model stays warm between
+  calls. Verified live against a running server: txt2img 512², expand left+right
+  512→818 px, reframe cover 1376×768, and a bad mode returns a clean 400.
+- **CI actually tests now.** The workflow byte-compiles every module (was: `app.py`
+  only), validates the JSON files, checks that **every `CONFIG.get()` key is documented
+  in `config-sample.txt`** (`tools/check_config_keys.py` — it immediately found two
+  undocumented keys), and runs the whole suite on CPU torch. New `tools/run_tests.py`
+  runs the suite locally in isolated processes (15/15 in ~67 s).
+- **Fix: attention slicing was a no-op.** `_set_slicing` called
+  `pipe.enable_attention_slicing()` above 1664 px, but `DiffusionPipeline` only forwards
+  that to modules exposing `set_attention_slice` — and neither `ZImageTransformer2DModel`
+  nor `AutoencoderKL` define it (verified on diffusers 0.39.0.dev0), so the call was
+  silently dropped. It now (re)asserts **VAE tiling/slicing**, which is the mechanism
+  that actually caps the 2K+ memory peak.
+
+## Unreleased — Dequant disk cache, GPU-busy guard, format badges
+
+Three quality-of-life fixes born from a 7-checkpoint benchmark session.
+
+- **Dequant cache** — a FP8/INT8 checkpoint had to be converted to bf16 on *every*
+  load (~5-6 min for 5.7 GB off an HDD). The bf16 result is now written once to
+  `<app>/cache/dequant/` and later loads read it back as a plain single-file. Keyed on
+  path + size + mtime (a replaced file never reuses a stale entry), atomic write
+  (`.tmp` + rename), and an LRU cap (`dequant_cache_max_gb`, default 60 GB, 0 =
+  unlimited). Config `dequant_cache`: `auto` (default) / a custom path / `off`.
+- **GPU-busy guard** — two processes sharing the GPU silently push renders into shared
+  RAM (measured: 1.7 s/step → 300-600 s/step, then a crash). Before loading, the app
+  now compares the device's real free VRAM against what this process reserved and warns
+  when someone else holds more than `gpu_busy_warn_gb` (default 2 GB): console, CLI
+  stderr, and the Models status line. 0 disables it.
+- **Format badges** — the checkpoint dropdown now shows `[BF16 · 11.5 GB]`,
+  `[GGUF Q6_K · 5.5 GB]`, `[FP8→bf16 · 5.7 GB (slow 1st load)]` or `(cached)` next to
+  each model, so the cost of a switch is visible before clicking. The dropdown *value*
+  stays the raw file name — presets, XYZ, CLI and prefs are untouched. Safetensors
+  headers are memoised per (path, size, mtime), so listing + badges + loading share a
+  single read.
+
+Tests: `tests/test_dequant_cache.py` (9 cases — key stability, roundtrip, disabled
+mode, LRU eviction, keep-fresh-entry, header memoisation, badges, guard thresholds).
+Measured on a real 5.7 GB FP8 off the HDD: **first load 249.9 s** (238 s of dequant +
+8 s writing the 11.5 GB cache), **second load 0.2 s** to build the transformer — the
+dequant pass is gone and the checkpoint behaves like any BF16 single-file. Weights
+byte-identical between the two passes.
+
 ## Unreleased — Fix: hot-swap freed the old transformer too late (VRAM spill)
 
 **Why.** On a multi-checkpoint XYZ grid, the second swap put the machine in the mud:
