@@ -2094,16 +2094,18 @@ def _free_controlnet():
     global _CN_PIPE, _CN_PIPE_KEY, _CN_MODEL
     if _CN_MODEL is None and _CN_PIPE is None:
         return
-    _CN_PIPE = _CN_PIPE_KEY = None
-    try:
-        if _CN_MODEL is not None and DEVICE == "cuda":
-            _CN_MODEL.to("cpu")          # garde le modele en RAM: rechargement instantane
-    except Exception as e:
-        _dbg(f"controlnet unload: {e}")
+    # NE PAS faire _CN_MODEL.to("cpu"): from_transformer greffe dans le controlnet des
+    # references PARTAGEES vers les embedders du transformer (t_embedder, x_embedder,
+    # cap_embedder...). Les deplacer emmene ces morceaux du transformer sur CPU et la
+    # generation suivante plante sur "mat1 is on cuda:0, others on cpu" (constate).
+    # On LACHE simplement la reference: le GC libere les poids PROPRES du controlnet,
+    # et les modules partages survivent puisque le transformer les detient toujours.
+    _CN_PIPE = _CN_PIPE_KEY = _CN_MODEL = None
     gc.collect()
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
-    _log("ControlNet unloaded from VRAM (6.7 GB back for generation)")
+    _log("ControlNet released (6.7 GB of VRAM back for generation; it reloads "
+         "from cache on the next ControlNet refine)")
 
 
 def set_controlnet_tile(v):
