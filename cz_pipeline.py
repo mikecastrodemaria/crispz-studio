@@ -2057,9 +2057,13 @@ except Exception:
 # Seuil du garde-fou anti-bruit (ecart basse frequence sortie/entree). Mesure sur des
 # cas reels: ~35 quand le controlnet fonctionne, ~107 avec un checkpoint incompatible.
 try:
-    CONTROLNET_SANITY_MAX = float(CONFIG.get("controlnet_tile_sanity_max", 60))
+    CONTROLNET_SANITY_MAX = float(CONFIG.get("controlnet_tile_sanity_max", 75))
 except Exception:
-    CONTROLNET_SANITY_MAX = 60.0
+    CONTROLNET_SANITY_MAX = 75.0
+try:
+    CONTROLNET_SANITY_MIN_CORR = float(CONFIG.get("controlnet_tile_sanity_min_corr", 0.20))
+except Exception:
+    CONTROLNET_SANITY_MIN_CORR = 0.20
 _CN_MODEL = None          # ZImageControlNetModel charge (6.7 Go bf16)
 _CN_PIPE = None           # pipeline ControlNet monte sur les composants du base
 _CN_PIPE_KEY = None       # identite du transformer courant -> rebuild si swap
@@ -2148,11 +2152,20 @@ def _ensure_controlnet_pipe():
 
 
 def _cn_structure_gap(src, out):
-    """Ecart BASSE FREQUENCE (64x64) entre l'image de controle et la sortie. Un
-    ControlNet Tile qui fonctionne preserve la composition -> ecart faible."""
+    """(ecart couleur, correlation de structure) entre l'image de controle et la sortie,
+    en basse frequence (64x64).
+
+    Les DEUX sont necessaires: l'ecart couleur seul laisse passer une sortie corrompue
+    qui garde la repartition des tons (mesure sur des cas reels: tuile legitime 57,
+    sortie corrompue 106), et la correlation seule a une marge etroite en tuilage
+    (tuile legitime 0.32, corrompue 0.10). Une corruption echoue sur les deux."""
     a = np.asarray(src.convert("RGB").resize((64, 64), Image.LANCZOS), np.float32)
     b = np.asarray(out.convert("RGB").resize((64, 64), Image.LANCZOS), np.float32)
-    return float(np.abs(a - b).mean())
+    ga = np.asarray(src.convert("L").resize((64, 64), Image.LANCZOS), np.float32)
+    gb = np.asarray(out.convert("L").resize((64, 64), Image.LANCZOS), np.float32)
+    ga, gb = ga - ga.mean(), gb - gb.mean()
+    denom = float(np.sqrt((ga * ga).sum()) * np.sqrt((gb * gb).sum())) + 1e-9
+    return float(np.abs(a - b).mean()), float((ga * gb).sum() / denom)
 
 
 def _controlnet_refine(image, prompt, steps, seed, scale=None):
@@ -2177,14 +2190,15 @@ def _controlnet_refine(image, prompt, steps, seed, scale=None):
                controlnet_conditioning_scale=float(CONTROLNET_SCALE if scale is None else scale),
                num_inference_steps=int(steps), guidance_scale=GUIDANCE,
                generator=_make_generator(seed)).images[0]
-    gap = _cn_structure_gap(src, out)
-    if gap > CONTROLNET_SANITY_MAX:
+    gap, corr = _cn_structure_gap(src, out)
+    if gap > CONTROLNET_SANITY_MAX or corr < CONTROLNET_SANITY_MIN_CORR:
         raise RuntimeError(
-            f"output does not match the control image (structure gap {gap:.0f} > "
-            f"{CONTROLNET_SANITY_MAX:.0f}): this checkpoint is not compatible with the "
-            "ControlNet. Switch to the official Z-Image-Turbo (or a Turbo fine-tune), "
-            "or turn ControlNet Tile off")
-    _dbg(f"controlnet tile: structure gap {gap:.1f} (limit {CONTROLNET_SANITY_MAX:.0f})")
+            f"output does not match the control image (color gap {gap:.0f}/"
+            f"{CONTROLNET_SANITY_MAX:.0f}, structure correlation {corr:+.2f}/"
+            f"{CONTROLNET_SANITY_MIN_CORR:+.2f}): this checkpoint is most likely not "
+            "compatible with the ControlNet. Use the official Z-Image-Turbo, or turn "
+            "ControlNet Tile off")
+    _dbg(f"controlnet tile: gap {gap:.1f}, correlation {corr:+.2f}")
     return out.resize(orig, Image.LANCZOS) if out.size != orig else out
 
 
