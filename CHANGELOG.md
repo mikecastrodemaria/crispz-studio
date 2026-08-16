@@ -3,6 +3,34 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — ControlNet Tile DISABLED (open bug)
+
+**The feature below is switched off in the code** (`CONTROLNET_TILE_AVAILABLE = False`
+in `cz_pipeline.py`): the UI controls are hidden, `--controlnet-tile` is accepted but
+ignored, and the config key does nothing. Nothing else in the app is affected.
+
+**Why.** Once the ControlNet has been used, the pipeline returns images that have
+**nothing to do with the requested prompt**, with no error, until the app is restarted.
+Confirmed twice in real use — the second time from the output metadata: prompt
+`"interior design living room with herringbone parquet…"`, image produced = the facade
+of a palace with two people. The refine itself works well (structure preserved, 4.5 s
+per 768 tile, VRAM 28.2/32 GB); the damage shows up on the *next* renders.
+
+**Already ruled out** (so the next session does not redo it):
+- the transformer is not structurally altered — `from_transformer` only writes *into*
+  the ControlNet (it grafts `t_embedder`, `all_x_embedder`, `cap_embedder`,
+  `rope_embedder`, `noise_refiner`, `context_refiner`, `x_pad_token`, `cap_pad_token`,
+  read from the diffusers 0.39 source);
+- the release path no longer moves anything to CPU (that was a *separate* bug, fixed:
+  `.to("cpu")` on the ControlNet dragged the transformer's shared embedders along and
+  the next generation died on `mat1 is on cuda:0, others on cpu`);
+- VRAM saturation (fixed by the tile cap: 31 GB / 164 s per tile → 28.2 GB / 4.5 s).
+
+**Left to investigate**: the cached derived pipes (`_DERIVED`), the shared scheduler, or
+the VAE state after a ControlNet pass. Reproduce with `--log-level debug` and read the
+`_ensure_base key=… cached=…` and `deriving … pipeline` lines to see whether a stale
+cache is being reused.
+
 ## Unreleased — 🔒 ControlNet Tile refine (structure-locked upscale)
 
 The refine pass can now run through the official **Z-Image Tile ControlNet**

@@ -82,7 +82,7 @@
     "dequant_cache": "auto",
     "_dequant_cache_max_gb_help": "Size cap of that cache in GB; least-recently-used entries are evicted past it. 0 = unlimited.",
     "dequant_cache_max_gb": 60,
-    "_controlnet_tile_help": "Use the Z-Image Tile ControlNet for the refine pass instead of plain img2img. Every diffusion step is conditioned on the source image, so composition, faces and text stay in place and only detail is regenerated - the fix for 'my upscale changed the picture' and for tile duplication. First use downloads ~6.7 GB.",
+    "_controlnet_tile_help": "[DISABLED in this build - this key is ignored] Open bug: after the ControlNet has been used once, the pipeline returns images that have nothing to do with the prompt, with no error, until the app is restarted (confirmed twice from output metadata). Re-enable by setting CONTROLNET_TILE_AVAILABLE=True in cz_pipeline.py once fixed. Original description: use the Z-Image Tile ControlNet for the refine pass instead of plain img2img. Every diffusion step is conditioned on the source image, so composition, faces and text stay in place and only detail is regenerated - the fix for 'my upscale changed the picture' and for tile duplication. First use downloads ~6.7 GB.",
     "controlnet_tile": false,
     "_controlnet_tile_model_help": "Which ControlNet to load: 'org/repo/file.safetensors' (downloaded once into the HF cache) or an absolute local path. Default is the official alibaba-pai Tile 2.1 distilled for 8 steps. The Union model of the same repo also works (it handles tile + canny/depth/pose).",
     "controlnet_tile_model": "alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/Z-Image-Turbo-Fun-Controlnet-Tile-2.1-8steps.safetensors",
