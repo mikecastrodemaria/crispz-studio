@@ -548,15 +548,6 @@ def cli_main(argv=None):
                              "high res (ADetailer-style, same as the UI '🔧 Detail faces').")
     parser.add_argument("--detailer-denoise", type=float, default=None, metavar="0.35",
                         help="Face-detailer strength (0.1-0.7; default from config).")
-    parser.add_argument("--controlnet-tile", action="store_true",
-                        help="[DISABLED in this build] Refine with the Z-Image Tile "
-                             "ControlNet. Turned off because the tiled refine recopies "
-                             "the scene into every tile: the ControlNet pipeline has no "
-                             "'strength' and denoises fully, so each tile is generated "
-                             "from scratch. The flag is accepted but ignored.")
-    parser.add_argument("--controlnet-scale", type=float, default=None, metavar="0.75",
-                        help="ControlNet conditioning strength (0.1-1.5). High = faithful "
-                             "to the source, low = more invention.")
     parser.add_argument("--detail-hands", action="store_true",
                         help="txt2img: same detailer pass on detected HANDS (YOLOv8). "
                              "Needs the optional 'ultralytics' package "
@@ -631,10 +622,6 @@ def cli_main(argv=None):
         cz_pipeline.set_force_ratio(args.force_ratio)
     if args.force_ratio_mode:
         cz_pipeline.set_force_ratio_mode(args.force_ratio_mode)
-    if args.controlnet_tile:
-        cz_pipeline.set_controlnet_tile(True)
-    if args.controlnet_scale is not None:
-        cz_pipeline.set_controlnet_scale(args.controlnet_scale)
 
     # LoRA(s) en CLI: --lora NAME[:WEIGHT] (repetable)
     if args.loras_dir:

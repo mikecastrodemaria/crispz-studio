@@ -889,14 +889,11 @@ def gpu_busy_warning():
 def free_vram():
     """Libere le pipeline de base + les pipelines derives et rend la VRAM
     (palier 3: unload sur inactivite ou endpoint /unload). Rechargement paresseux."""
-    global _BASE_PIPE, _DERIVED, _LOADED_KEY, _APPLIED_LORAS, _CN_PIPE, _CN_PIPE_KEY, _CN_MODEL
+    global _BASE_PIPE, _DERIVED, _LOADED_KEY, _APPLIED_LORAS
     _BASE_PIPE = None
     _DERIVED = {}
     _LOADED_KEY = None
     _APPLIED_LORAS = []      # plus de pipe -> plus d'adaptateur pose
-    # Le pipeline ControlNet partage les composants du base (donc devient invalide) et
-    # le modele controlnet pese 6.7 Go a lui seul: on rend tout.
-    _CN_PIPE = _CN_PIPE_KEY = _CN_MODEL = None
     gc.collect()
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
@@ -972,154 +969,6 @@ def _vram_str():
         return f" | VRAM {resv:.1f}/{tot:.0f} Go"
     except Exception:
         return ""
-
-
-# ----------------------------------------------------------------------------
-# Diagnostic: empreinte de l'etat PARTAGE entre les pipelines.
-#
-# Le pipeline ControlNet est monte sur les composants du base (VAE, encodeur texte,
-# transformer) et le controlnet recoit en PLUS des references PARTAGEES vers les
-# embedders du transformer (from_transformer). Tout ce qui reste modifie cote partage
-# apres une passe ControlNet contamine donc les rendus SUIVANTS -- c'est exactement le
-# bug ouvert (images sans rapport avec le prompt, sans erreur, jusqu'au redemarrage).
-#
-# Ces empreintes servent a le prendre sur le fait: on photographie l'etat partage
-# avant/apres la passe et on ne journalise QUE ce qui a bouge. Niveau debug uniquement
-# (--log-level debug): la sonde fonctionnelle fait une passe d'encodeur de texte.
-# ----------------------------------------------------------------------------
-_STATE_SNAP = {}
-# Phrase temoin: le MEME texte doit toujours donner le MEME embedding. S'il change
-# apres une passe ControlNet, l'encodeur de texte (partage) est abime en VRAM -> le
-# modele genere alors une image coherente mais qui ignore le prompt (symptome observe).
-_STATE_PROBE_PROMPT = "a red cube on a white table"
-_STATE_PARAM_SAMPLE = 6
-
-
-def _module_sig(mod, sample=_STATE_PARAM_SAMPLE):
-    """Signature bon marche d'un nn.Module: device/dtype + somme des |poids| sur un
-    echantillon FIXE de tenseurs + detection NaN/Inf. Suffisant pour reperer des poids
-    abimes en VRAM (corruption silencieuse) sans checksummer 12 Go."""
-    if mod is None:
-        return "<none>"
-    try:
-        names = [n for n, _ in mod.named_parameters()]
-        if not names:
-            return f"{type(mod).__name__}<no params>"
-        first = next(mod.parameters())
-        step = max(1, len(names) // sample)
-        picked = names[::step][:sample]
-        params = dict(mod.named_parameters())
-        parts = []
-        for n in picked:
-            p = params[n].detach()
-            if not p.dtype.is_floating_point:
-                parts.append(f"{n}=<{p.dtype}>")
-                continue
-            s = float(p.abs().sum(dtype=torch.float32))
-            bad = "" if torch.isfinite(p).all() else " NaN/Inf!"
-            parts.append(f"{n}={s:.6e}{bad}")
-        return (f"{type(mod).__name__} dev={first.device} dtype={first.dtype} "
-                f"n={len(names)} " + " ".join(parts))
-    except Exception as e:
-        return f"<sig failed: {e}>"
-
-
-def _text_embed_sig(pipe):
-    """Sonde FONCTIONNELLE: encode une phrase temoin et renvoie une empreinte de
-    l'embedding. C'est le test qui tranche entre 'bug de logique' et 'encodeur de texte
-    abime': meme phrase -> meme empreinte, toujours."""
-    try:
-        with torch.no_grad():
-            emb, _ = pipe.encode_prompt(_STATE_PROBE_PROMPT,
-                                        do_classifier_free_guidance=False)
-        t = emb[0] if isinstance(emb, (list, tuple)) else emb
-        t = t.detach().float()
-        return (f"shape={tuple(t.shape)} sum={float(t.sum()):.6e} "
-                f"absmean={float(t.abs().mean()):.6e} "
-                f"finite={bool(torch.isfinite(t).all())}")
-    except Exception as e:
-        return f"<probe failed: {e}>"
-
-
-def _shared_state_snapshot(probe=True):
-    """Photographie l'etat partage: identite des objets, poids, scheduler, VAE, rope,
-    hooks accelerate, et (si probe) l'embedding de la phrase temoin."""
-    snap = {}
-    base = _BASE_PIPE
-    if base is None:
-        snap["pipe"] = "<no base pipeline>"
-        return snap
-    try:
-        snap["pipe:base"] = f"{type(base).__name__}#{id(base)}"
-        snap["pipe:derived"] = ",".join(sorted(_DERIVED))
-        snap["pipe:loaded_key"] = repr(_LOADED_KEY)
-        snap["cn:pipe"] = f"{type(_CN_PIPE).__name__}#{id(_CN_PIPE)}" if _CN_PIPE else "<none>"
-        snap["cn:model"] = f"#{id(_CN_MODEL)}" if _CN_MODEL is not None else "<none>"
-        for name in ("transformer", "text_encoder", "vae"):
-            comp = getattr(base, name, None)
-            snap[f"id:{name}"] = f"#{id(comp)}"
-            snap[f"sig:{name}"] = _module_sig(comp)
-            snap[f"hook:{name}"] = type(getattr(comp, "_hf_hook", None)).__name__
-            # Les pipes derives DOIVENT pointer sur les memes objets que le base.
-            for kind, p in _DERIVED.items():
-                if p is not base:
-                    snap[f"same:{kind}.{name}"] = getattr(p, name, None) is comp
-        tr = getattr(base, "transformer", None)
-        # x_pad_token / cap_pad_token: minuscules et PARTAGES avec le controlnet
-        # (from_transformer) -> canaris ideaux.
-        for tok in ("x_pad_token", "cap_pad_token"):
-            t = getattr(tr, tok, None)
-            snap[f"tok:{tok}"] = ("<none>" if t is None else
-                                  f"{tuple(t.shape)} {t.dtype} {t.device} "
-                                  f"sum={float(t.detach().float().sum()):.6e}")
-        rope = getattr(tr, "rope_embedder", None)
-        f = getattr(rope, "freqs_cis", None)
-        snap["rope:id"] = f"#{id(rope)}"
-        snap["rope:freqs"] = ("<lazy/None>" if f is None else
-                              " ".join(f"{tuple(x.shape)}@{x.device}" for x in f))
-        sch = getattr(base, "scheduler", None)
-        snap["sched:class"] = type(sch).__name__
-        snap["sched:id"] = f"#{id(sch)}"
-        snap["sched:config"] = repr(sorted(dict(sch.config).items())) if sch else "<none>"
-        vae = getattr(base, "vae", None)
-        for flag in ("use_tiling", "use_slicing"):
-            snap[f"vae:{flag}"] = repr(getattr(vae, flag, "<missing>"))
-        for key in ("force_upcast", "scaling_factor", "shift_factor"):
-            snap[f"vae:cfg.{key}"] = repr(getattr(getattr(vae, "config", None), key, "<missing>"))
-        snap["globals"] = (f"sampler={SAMPLER}/{SCHEDULE} guidance={GUIDANCE} "
-                           f"offload={OFFLOAD_MODE}/{_effective_offload()} "
-                           f"loras={_APPLIED_LORAS} cn_tile={CONTROLNET_TILE}")
-        if probe:
-            snap["probe:text_embed"] = _text_embed_sig(base)
-    except Exception as e:
-        snap["<snapshot error>"] = repr(e)
-    return snap
-
-
-def _shared_state_diff(label, probe=True):
-    """Compare l'etat partage a la photo precedente et journalise CE QUI A BOUGE.
-    No-op hors debug. A appeler autour de la passe ControlNet et a l'entree de
-    generate() -- la premiere ligne 'CHANGED' designe le coupable."""
-    global _STATE_SNAP
-    if cz_core.LOG_LEVEL < 2:
-        return
-    try:
-        snap = _shared_state_snapshot(probe=probe)
-    except Exception as e:
-        _dbg(f"state[{label}]: snapshot failed: {e}")
-        return
-    prev, _STATE_SNAP = _STATE_SNAP, snap
-    if not prev:
-        _dbg(f"state[{label}]: baseline ({len(snap)} keys)")
-        return
-    changed = [k for k in sorted(set(prev) | set(snap))
-               if prev.get(k, "<absent>") != snap.get(k, "<absent>")]
-    if not changed:
-        _dbg(f"state[{label}]: unchanged ({len(snap)} keys)")
-        return
-    _dbg(f"state[{label}]: {len(changed)} CHANGED key(s) <-- shared state moved here")
-    for k in changed:
-        _dbg(f"  {k}\n      before: {prev.get(k, '<absent>')}\n      after : {snap.get(k, '<absent>')}")
 
 
 # ----------------------------------------------------------------------------
@@ -1500,22 +1349,12 @@ def _load_transformer():
             BASE_REPO, subfolder="transformer", torch_dtype=DTYPE))
 
 
-_CURRENT_TRANSFORMER = object()   # sentinelle: "prends le transformer courant"
-
-
-def _effective_offload(tpath=_CURRENT_TRANSFORMER):
+def _effective_offload(tpath=None):
     """Offload REELLEMENT applique. Un transformer GGUF quantifie ne se deplace pas sur le
     GPU via .to(cuda) ni en sequential -> seul enable_model_cpu_offload le pose sur le GPU
-    pendant le forward. On force donc 'model' pour un base GGUF, quel que soit le reglage.
-
-    ATTENTION: la sentinelle n'est PAS None. None est une valeur LEGITIME de tpath (= pas
-    d'override, on tourne sur le transformer du repo de base). Avec None comme sentinelle,
-    _effective_offload(None) retombait sur ZIMAGE_TRANSFORMER, c'est-a-dire le NOUVEAU
-    transformer: le garde-fou de _swap_transformer comparait alors le nouveau a lui-meme
-    et laissait passer un echange a chaud repo de base -> GGUF, qui change pourtant
-    l'offload effectif ('none' -> 'model')."""
+    pendant le forward. On force donc 'model' pour un base GGUF, quel que soit le reglage."""
     off = OFFLOAD_MODE
-    t = ZIMAGE_TRANSFORMER if tpath is _CURRENT_TRANSFORMER else tpath
+    t = ZIMAGE_TRANSFORMER if tpath is None else tpath
     if DEVICE == "cuda" and _is_gguf_path(t) and off != "model":
         off = "model"
     return off
@@ -1558,12 +1397,6 @@ def _swap_transformer(pipe):
         # multi-checkpoints: 1.7 s/step -> 300-600 s/step, puis crash). Les pipes
         # derives (from_pipe) pointent aussi sur l'ancien -> a purger d'abord, sinon
         # `del old` ne libere rien (from_pipe est gratuit, il sera reconstruit).
-        # Le pipeline ControlNet AUSSI: il tient le transformer, et from_transformer lui a
-        # greffe des references vers ses embedders. L'oublier ici gardait l'ANCIEN
-        # transformer (12 Go) vivant malgre `del old` -> exactement le debordement en RAM
-        # partagee que ce bloc cherche a eviter, et un ControlNet lie a un transformer
-        # qui n'est plus celui du pipeline.
-        _free_controlnet()
         _DERIVED = {}
         del old
         gc.collect()
@@ -1717,10 +1550,6 @@ def get_pipe(kind="img2img"):
     except Exception as e:
         _log(f"img2img bf16 recast failed ({e})")
     _apply_sampler(p)   # meme sampler que le base (au cas ou from_pipe recree le scheduler)
-    # from_pipe recaste les composants PARTAGES (torch_dtype vaut float32 par defaut chez
-    # diffusers) -> premier suspect du bug ouvert. On regarde ce que la derivation a
-    # change sur le base, juste apres l'avoir faite.
-    _shared_state_diff(f"after deriving '{kind}' from base")
     # Diagnostic vitesse: si le pipe derive n'est PAS sur cuda -> img2img/refine tourne
     # sur CPU = ultra lent. On le force sur DEVICE en mode plein VRAM (offload gere seul).
     # NB: offload EFFECTIF (un base GGUF force 'model' meme si l'UI dit 'none'): en
@@ -1809,36 +1638,7 @@ def load_pipe():
 def generate(prompt, width, height, steps, seed, negative_prompt=""):
     """txt2img Z-Image: genere une image depuis un prompt.
     Turbo -> GUIDANCE 0. Base -> GUIDANCE ~3.5-5 + plus de steps."""
-    # Un ControlNet charge par un upscale precedent n'a rien a faire en VRAM pendant
-    # une generation: il ne sert qu'au refine, et ses 6.7 Go font basculer un rendu
-    # 1024+ dans la RAM partagee -> latents corrompus, sans erreur (cas reel observe:
-    # 3 txt2img de suite ruines apres un upscale ControlNet). Il revient au prochain
-    # refine (le modele reste en RAM, la remontee GPU est rapide).
-    _free_controlnet()
     pipe = get_pipe("txt2img")
-    # Rendre le cache d'allocations AVANT la passe, pas seulement apres. Un upscale qui
-    # vient de finir laisse l'allocateur torch avec des blocs libres mais RESERVES: mesure
-    # reelle juste apres un upscale ControlNet 2048x3072 -> alloc 19.3 Go mais reserved
-    # 28.7/32 Go. Sous Windows (WDDM) la VRAM reservee est prise aux autres process et le
-    # rendu suivant part avec ~3 Go de marge: c'est exactement le regime ou le pilote
-    # deborde en RAM partagee et ou les latents sortent corrompus SANS erreur.
-    # _refine_tiled fait deja ce menage avant sa boucle; generate ne le faisait qu'apres.
-    #
-    # UNIQUEMENT hors offload. En offload ('model', force pour tout GGUF) les poids font
-    # l'aller-retour CPU/GPU a chaque forward et ce menage entre deux rendus a produit des
-    # images ENTIEREMENT NOIRES a partir du 2e rendu (constate en vrai sur
-    # z_image_turbo-Q6_K.gguf 832x1216: rendu #1 correct, #2 et #3 max=0; le meme
-    # scenario sur le repo de base, sans offload, restait bon). Il n'y a de toute facon
-    # rien a y gagner: en offload le pipeline plafonne vers 8.5 Go, la marge VRAM qui
-    # motive ce nettoyage n'existe que quand tout le modele reste resident.
-    if DEVICE == "cuda" and _effective_offload() == "none":
-        gc.collect()
-        torch.cuda.empty_cache()
-        _dbg(f"txt2img start{_vram_str()}")
-    # Bug ouvert (rendus corrompus a partir du 2e rendu): photographie l'etat partage a
-    # CHAQUE txt2img. Si un rendu sort corrompu, le diff du rendu precedent dit ce qui a
-    # bouge entre les deux. Niveau debug uniquement.
-    _shared_state_diff("txt2img entry")
     w = round_to_multiple(int(width))
     h = round_to_multiple(int(height))
     _log(f"txt2img: {w}x{h}, {int(steps)} steps, guidance {GUIDANCE:.1f} ...")
@@ -2233,347 +2033,20 @@ def _feather_mask_np(th, tw, overlap, left, right, top, bottom):
     return mask
 
 
-# ----------------------------------------------------------------------------
-# ControlNet Tile: refine qui VERROUILLE la structure de l'image source.
-# Un refine img2img classique reinvente librement le contenu a fort denoise (visages
-# qui derivent, textes qui se deforment, duplication en tuiles). Le ControlNet Tile
-# conditionne CHAQUE etape sur l'image de depart: la composition, les contours et le
-# texte restent en place, seul le detail est regenere. C'est l'idiome "Ultimate SD
-# Upscale + Tile" et le controlnet officiel Z-Image (alibaba-pai, distille 8 steps).
-# ----------------------------------------------------------------------------
-# DESACTIVE (2026-08-16) -- cause RACINE trouvee, et elle est structurelle.
-#
-# LE REFINE TUILE PAR CONTROLNET RECOPIE LA SCENE DANS CHAQUE TUILE. Constate a l'oeil
-# sur un upscale 1024x1536 -> 2048x3072 d'un salon: parquet jonche de fauteuils et de
-# cheminees miniatures, murs et fauteuils couverts de motifs graves, et en prompt vide
-# des mains / des cheveux / du faux texte. Quatre configurations essayees, TOUTES
-# mauvaises: prompt vide @0.75, prompt de scene @0.75, @1.0, @1.3.
-#
-# POURQUOI (verifie dans les sources diffusers 0.39): ZImageControlNetPipeline n'a PAS
-# de parametre `strength` -- le mot n'apparait pas une seule fois dans le fichier, contre
-# 13 fois dans pipeline_z_image_img2img.py -- et il n'existe pas de
-# pipeline_z_image_controlnet_img2img (seulement controlnet et controlnet_inpaint).
-# Le pipeline DEBRUITE DONC ENTIEREMENT depuis du bruit. Applique a une TUILE, cela veut
-# dire generer une image complete dont le seul ancrage est l'image de controle: le
-# modele compose une scene entiere dans chaque tuile. L'img2img classique, lui, part de
-# la tuile reelle a denoise 0.35 -- il ne peut que la retoucher, jamais la recomposer.
-# Ce n'est pas un defaut de plomberie, c'est l'approche qui ne tient pas en tuilage avec
-# ce que diffusers expose aujourd'hui.
-#
-# CONTROLE QUI CONFIRME: la MEME passe sur l'image ENTIERE (1024x1536, refine_tile=0,
-# scale 0.75) sort PROPRE -- aucune recopie, aucun meuble miniature, structure identique
-# (cheminee, tableau, les deux fauteuils, parquet). Une seule "tuile" = l'image, donc
-# rien a recopier. Le coupable est bien le TUILAGE, pas le ControlNet.
-# MAIS elle a pris 559 s (9 min 20) contre 52 s pour les 15 tuiles: transformer (12 Go) +
-# controlnet (6.7 Go) + activations pleine image = debordement en RAM partagee. Donc le
-# seul mode qui donne un bon resultat est inutilisable en pratique sur 32 Go.
-#
-# CE QUI DEBLOQUERAIT: un ZImageControlNetImg2ImgPipeline (controlnet + debruitage
-# PARTIEL) -- il rendrait le tuilage sain, puisque chaque tuile repartirait de son
-# contenu reel au lieu d'etre generee de zero. A surveiller dans diffusers.
-#
-# LE GARDE-FOU NE VOIT RIEN: les tuiles fautives sortaient a gap 20-45 et correlation
-# +0.21/+0.99, largement dans les seuils (75 / 0.20). Normal: _cn_structure_gap mesure
-# l'accord BASSE FREQUENCE (64x64) par tuile, et une tuile qui repeuple un parquet de
-# petits meubles garde la meme repartition de tons et la meme structure grossiere.
-#
-# NB: le bug initialement rapporte ("apres un upscale ControlNet, les rendus SUIVANTS
-# n'ont plus de rapport avec le prompt") ne s'est PAS reproduit. Rejoue fidelement, le
-# diff d'etat partage affiche 'unchanged' avant/apres chaque passe, et les txt2img qui
-# suivent sont propres. L'image "facade de palais" qui avait motive le rapport etait
-# tres probablement la SORTIE D'UPSCALE elle-meme, c'est-a-dire exactement la recopie
-# decrite ci-dessus, et non un pipeline empoisonne.
-#
-# Ce qui est ECARTE, preuves a l'appui:
-#  - le transformer n'est PAS altere par le ControlNet. from_transformer ne fait que lui
-#    greffer des references PARTAGEES (t_embedder/all_x_embedder/cap_embedder/
-#    rope_embedder/noise_refiner/context_refiner/x_pad_token/cap_pad_token). Verifie
-#    empiriquement sur modeles miniatures CPU: apres greffe + forward controlnet +
-#    forward transformer + liberation, les 185 cles d'etat du transformer sont
-#    inchangees et une passe de reference redonne un resultat BIT A BIT identique.
-#  - la liberation ne deplace plus rien sur CPU (bug distinct, corrige).
-#  - la saturation VRAM (plafond de tuile: 31 Go/164 s par tuile -> 28.2 Go/4.5 s).
-#  - le prompt arrive intact au pipeline: cz_ui passe le MEME `fp` a txt2img_run et a
-#    _gen_meta, donc "metadonnee correcte + image sans rapport" = le modele a bien recu
-#    le prompt et l'a ignore.
-#
-# RESTE OUVERT A COTE (sans rapport avec le ControlNet): sur les sorties du 2026-08-16,
-# 7 txt2img d'affilee (17:32:58-17:35:52) puis 3 autres (17:58:14-17:59:34) sont sortis
-# corrompus. Non reproduit. Piste: les pipes derives par from_pipe, qui fait
-# `torch_dtype = kwargs.pop("torch_dtype", torch.float32)` puis `new_pipeline.to(dtype)`
-# sur des composants PARTAGES avec le base; et en offload 'model' (force pour un GGUF) le
-# pipe derive n'a pas les hooks accelerate du base (_all_hooks vide ->
-# maybe_free_model_hooks ne fait rien), ce qui laisse la chaine d'offload du base dans un
-# etat incoherent pour la generation SUIVANTE.
-#
-# METHODE: lancer avec --log-level debug. _shared_state_diff() photographie l'etat
-# PARTAGE (poids, dtypes, devices, hooks, scheduler, VAE, rope + une sonde fonctionnelle
-# sur l'encodeur de texte) et ne journalise QUE ce qui bouge: la premiere ligne
-# 'CHANGED' designe le coupable.
-CONTROLNET_TILE_AVAILABLE = False        # recopie la scene dans chaque tuile (cf. ci-dessus)
-CONTROLNET_TILE = CONTROLNET_TILE_AVAILABLE and bool(CONFIG.get("controlnet_tile", False))
-# repo HF + fichier, ou chemin local absolu vers un .safetensors controlnet.
-CONTROLNET_MODEL = str(CONFIG.get(
-    "controlnet_tile_model",
-    "alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/"
-    "Z-Image-Turbo-Fun-Controlnet-Tile-2.1-8steps.safetensors")).strip()
-try:
-    CONTROLNET_SCALE = float(CONFIG.get("controlnet_tile_scale", 0.75))
-except Exception:
-    CONTROLNET_SCALE = 0.75
-# Seuil du garde-fou anti-bruit (ecart basse frequence sortie/entree). Mesure sur des
-# cas reels: ~35 quand le controlnet fonctionne, ~107 avec un checkpoint incompatible.
-try:
-    CONTROLNET_SANITY_MAX = float(CONFIG.get("controlnet_tile_sanity_max", 75))
-except Exception:
-    CONTROLNET_SANITY_MAX = 75.0
-try:
-    CONTROLNET_SANITY_MIN_CORR = float(CONFIG.get("controlnet_tile_sanity_min_corr", 0.20))
-except Exception:
-    CONTROLNET_SANITY_MIN_CORR = 0.20
-# Tuile de refine MAXIMALE quand le ControlNet est actif. Le controlnet (6.7 Go) et le
-# transformer (12 Go) doivent cohabiter en VRAM pendant la passe: avec les activations
-# d'une tuile 1024, un upscale 1728x3072 monte a 31/32 Go et bascule en RAM partagee
-# (mesure reelle: 164 s par tuile au lieu de ~10 s). Une tuile 768 divise ces
-# activations par ~2. 0 = ne pas plafonner (si tu as beaucoup de VRAM).
-try:
-    CONTROLNET_MAX_TILE = int(CONFIG.get("controlnet_tile_max_tile", 768))
-except Exception:
-    CONTROLNET_MAX_TILE = 768
-_CN_MODEL = None          # ZImageControlNetModel charge (6.7 Go bf16)
-_CN_PIPE = None           # pipeline ControlNet monte sur les composants du base
-_CN_PIPE_KEY = None       # identite du transformer courant -> rebuild si swap
-
-
-def _free_controlnet():
-    """Rend la VRAM du ControlNet (6.7 Go) et jette le pipeline qui le porte.
-
-    CRUCIAL: ce modele n'est utile QUE pendant un refine. Le laisser resident ampute
-    la VRAM de tout le reste (txt2img compris) -- constate en vrai: apres un upscale
-    ControlNet, trois txt2img 1024x1024 d'affilee sont sortis corrompus (latents
-    massacres, pas d'erreur), et seul un redemarrage a retabli les rendus."""
-    global _CN_PIPE, _CN_PIPE_KEY, _CN_MODEL
-    if _CN_MODEL is None and _CN_PIPE is None:
-        return
-    # NE PAS faire _CN_MODEL.to("cpu"): from_transformer greffe dans le controlnet des
-    # references PARTAGEES vers les embedders du transformer (t_embedder, x_embedder,
-    # cap_embedder...). Les deplacer emmene ces morceaux du transformer sur CPU et la
-    # generation suivante plante sur "mat1 is on cuda:0, others on cpu" (constate).
-    # On LACHE simplement la reference: le GC libere les poids PROPRES du controlnet,
-    # et les modules partages survivent puisque le transformer les detient toujours.
-    _CN_PIPE = _CN_PIPE_KEY = _CN_MODEL = None
-    gc.collect()
-    if DEVICE == "cuda":
-        torch.cuda.empty_cache()
-    _log("ControlNet released (6.7 GB of VRAM back for generation; it reloads "
-         "from cache on the next ControlNet refine)")
-    _shared_state_diff("after ControlNet release")
-
-
-def set_controlnet_tile(v):
-    global CONTROLNET_TILE
-    if v and not CONTROLNET_TILE_AVAILABLE:
-        _log("ControlNet Tile is DISABLED in this build - ignoring. The tiled refine "
-             "recopies the scene into every tile (miniature furniture over the floor, "
-             "carved patterns on the walls): the ControlNet pipeline has no 'strength' "
-             "and denoises fully, so each tile is generated from scratch instead of "
-             "being retouched. Needs a ControlNet img2img pipeline in diffusers.")
-        CONTROLNET_TILE = False
-        return
-    CONTROLNET_TILE = bool(v)
-    _log(f"ControlNet Tile refine -> {'ON' if CONTROLNET_TILE else 'OFF'}")
-    if not CONTROLNET_TILE:
-        _free_controlnet()
-
-
-def set_controlnet_scale(v):
-    global CONTROLNET_SCALE
-    try:
-        CONTROLNET_SCALE = min(1.5, max(0.1, float(v)))
-    except (TypeError, ValueError):
-        pass
-    return f"ControlNet strength: {CONTROLNET_SCALE}"
-
-
-def _resolve_controlnet_path():
-    """Chemin local du .safetensors controlnet. 'repo/sous/chemin.safetensors' ->
-    telecharge une fois dans le cache HF; un chemin absolu est pris tel quel."""
-    spec = CONTROLNET_MODEL
-    if os.path.isabs(spec) or os.path.isfile(spec):
-        return spec
-    parts = spec.split("/")
-    if len(parts) < 3:
-        raise RuntimeError(
-            f"controlnet_tile_model invalide: '{spec}' (attendu 'org/repo/fichier.safetensors' "
-            "ou un chemin local absolu)")
-    repo, fname = "/".join(parts[:2]), "/".join(parts[2:])
-    from huggingface_hub import hf_hub_download
-    _log(f"fetching ControlNet {fname} from {repo} (once, ~6.7 GB) ...")
-    return hf_hub_download(repo, fname)
-
-
-def _load_controlnet():
-    """Charge (une fois) le ZImageControlNetModel."""
-    global _CN_MODEL
-    if _CN_MODEL is not None:
-        return _CN_MODEL
-    from diffusers import ZImageControlNetModel
-    path = _resolve_controlnet_path()
-    _log(f"loading ControlNet: {os.path.basename(path)} ...")
-    _CN_MODEL = _load_monitor(
-        f"controlnet {os.path.basename(path)}",
-        lambda: ZImageControlNetModel.from_single_file(path, torch_dtype=DTYPE))
-    return _CN_MODEL
-
-
-def _ensure_controlnet_pipe():
-    """Pipeline ControlNet monte sur les composants DEJA charges (VAE, encodeur texte,
-    transformer): aucun poids en double a part le controlnet lui-meme.
-
-    NB: ZImageControlNetPipeline.__init__ appelle from_transformer(controlnet,
-    transformer), qui attache au controlnet des references PARTAGEES vers les embedders
-    du transformer -> le pipeline est lie a CE transformer. Un swap de checkpoint doit
-    donc le reconstruire, d'ou la cle d'identite."""
-    global _CN_PIPE, _CN_PIPE_KEY
-    from diffusers import ZImageControlNetPipeline
-    base = _ensure_base()
-    key = id(base.transformer)
-    if _CN_PIPE is not None and _CN_PIPE_KEY == key:
-        return _CN_PIPE
-    cn = _load_controlnet()
-    _log("building ControlNet pipeline (weights shared with the base pipeline)")
-    pipe = ZImageControlNetPipeline(
-        scheduler=base.scheduler, vae=base.vae, text_encoder=base.text_encoder,
-        tokenizer=base.tokenizer, transformer=base.transformer, controlnet=cn)
-    # Placement du controlnet. NE PAS appeler enable_*_cpu_offload sur CE pipeline:
-    # ses composants (VAE, encodeur, transformer) sont ceux du base et portent DEJA les
-    # hooks accelerate; re-hooker par-dessus laisse le controlnet sur CPU alors que les
-    # activations arrivent en cuda -> "mat1 is on cuda:0, others on cpu" (constate).
-    #
-    # Resident en permanence, le controlnet coute 6.7 Go: avec le transformer (12 Go),
-    # le VAE, l'encodeur et les activations d'une tuile 1024, un upscale 1728x3072
-    # atteint 31/32 Go -> debordement en RAM partagee, 164 s PAR TUILE au lieu de ~10 s
-    # (mesure). On l'offloade donc individuellement (accelerate): il monte sur le GPU
-    # pour son forward et redescend juste apres, sans toucher aux composants partages.
-    # PAS d'offload par forward du controlnet (accelerate cpu_offload_with_hook):
-    # from_transformer lui greffe des references PARTAGEES vers les embedders du
-    # transformer, donc le descendre sur CPU emmene des morceaux du transformer avec
-    # lui -> "index is on cpu, different from other tensors on cuda:0" (essaye, constate).
-    # La VRAM se gagne ailleurs: en reduisant la tuile de refine (cf. _refine_tiled).
-    if DEVICE == "cuda":
-        cn.to(DEVICE)
-    try:
-        pipe.vae.config.force_upcast = False
-    except Exception:
-        pass
-    _apply_sampler(pipe)
-    _CN_PIPE, _CN_PIPE_KEY = pipe, key
-    return pipe
-
-
-def _cn_structure_gap(src, out):
-    """(ecart couleur, correlation de structure) entre l'image de controle et la sortie,
-    en basse frequence (64x64).
-
-    Les DEUX sont necessaires: l'ecart couleur seul laisse passer une sortie corrompue
-    qui garde la repartition des tons (mesure sur des cas reels: tuile legitime 57,
-    sortie corrompue 106), et la correlation seule a une marge etroite en tuilage
-    (tuile legitime 0.32, corrompue 0.10). Une corruption echoue sur les deux."""
-    a = np.asarray(src.convert("RGB").resize((64, 64), Image.LANCZOS), np.float32)
-    b = np.asarray(out.convert("RGB").resize((64, 64), Image.LANCZOS), np.float32)
-    ga = np.asarray(src.convert("L").resize((64, 64), Image.LANCZOS), np.float32)
-    gb = np.asarray(out.convert("L").resize((64, 64), Image.LANCZOS), np.float32)
-    ga, gb = ga - ga.mean(), gb - gb.mean()
-    denom = float(np.sqrt((ga * ga).sum()) * np.sqrt((gb * gb).sum())) + 1e-9
-    return float(np.abs(a - b).mean()), float((ga * gb).sum() / denom)
-
-
-def _controlnet_refine(image, prompt, steps, seed, scale=None):
-    """Une passe ControlNet Tile: l'image d'ENTREE sert de conditionnement, la sortie
-    garde sa structure. Pas de `strength` ici (le pipeline denoise entierement); c'est
-    `controlnet_conditioning_scale` qui dose fidelite (haut) vs invention (bas).
-
-    Leve si la sortie ne ressemble plus du tout a l'entree: un controlnet Z-Image ne
-    marche qu'avec un transformer de la lignee sur laquelle il a ete entraine, et un
-    checkpoint incompatible ne donne PAS une erreur mais du BRUIT (mesure: ecart basse
-    frequence ~107 contre ~35 quand tout va bien). Le caller retombe alors sur
-    l'img2img classique plutot que de sortir une image ratee."""
-    pipe = _ensure_controlnet_pipe()
-    _shared_state_diff("before ControlNet pass")
-    orig = image.size
-    w = round_to_multiple(image.width, 32)
-    h = round_to_multiple(image.height, 32)
-    src = image.convert("RGB")
-    if (w, h) != orig:
-        src = src.resize((w, h), Image.LANCZOS)
-    _set_slicing(pipe, max(w, h))
-    out = pipe(prompt=prompt or "", control_image=src, height=h, width=w,
-               controlnet_conditioning_scale=float(CONTROLNET_SCALE if scale is None else scale),
-               num_inference_steps=int(steps), guidance_scale=GUIDANCE,
-               generator=_make_generator(seed)).images[0]
-    _shared_state_diff("after ControlNet pass")
-    gap, corr = _cn_structure_gap(src, out)
-    if gap > CONTROLNET_SANITY_MAX or corr < CONTROLNET_SANITY_MIN_CORR:
-        raise RuntimeError(
-            f"output does not match the control image (color gap {gap:.0f}/"
-            f"{CONTROLNET_SANITY_MAX:.0f}, structure correlation {corr:+.2f}/"
-            f"{CONTROLNET_SANITY_MIN_CORR:+.2f}): this checkpoint is most likely not "
-            "compatible with the ControlNet. Use the official Z-Image-Turbo, or turn "
-            "ControlNet Tile off")
-    _dbg(f"controlnet tile: gap {gap:.1f}, correlation {corr:+.2f}")
-    return out.resize(orig, Image.LANCZOS) if out.size != orig else out
-
-
-def _refine_pass(image, denoise, steps, prompt, seed):
-    """Une passe de refine, ControlNet Tile si active (structure verrouillee) sinon
-    img2img classique. Repli automatique sur l'img2img si le ControlNet est
-    indisponible (modele absent, VRAM...) -> un upscale ne casse jamais pour ca."""
-    if CONTROLNET_TILE:
-        try:
-            return _controlnet_refine(image, prompt, steps, seed)
-        except Exception as e:
-            _log(f"ControlNet Tile unavailable ({e}); falling back to img2img refine")
-    return _refine_whole(get_pipe("img2img"), image, denoise, steps, prompt, seed)
-
-
 def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
     """Passe Z-Image en tuiles avec recomposition feather (facon Ultimate SD Upscale).
     Plafonne le pic VRAM (une tuile a la fois) et permet le 4K+ sans coutures.
     Memes rampe lineaire + overlap-add que esrgan_upscale, mais a scale 1 sur PIL."""
     w, h = image.size
     tile = round_to_multiple(tile)                       # multiple de 16 pour le VAE
-    # ControlNet actif = 6.7 Go de plus a cote du transformer pendant toute la passe:
-    # on plafonne la tuile, sinon la VRAM sature et l'upscale part en RAM partagee.
-    if CONTROLNET_TILE and CONTROLNET_MAX_TILE > 0 and tile > CONTROLNET_MAX_TILE:
-        _log(f"refine tiled: tile {tile} -> {CONTROLNET_MAX_TILE} (ControlNet needs "
-             f"~6.7 GB alongside the model; regle: controlnet_tile_max_tile)")
-        tile = round_to_multiple(CONTROLNET_MAX_TILE)
     overlap = max(0, min(int(overlap), tile - 16))
     if w <= tile and h <= tile:
         # Une seule tuile = image entiere -> pas de duplication possible: denoise demande.
-        return _refine_pass(image, denoise, steps, prompt, seed)
+        return _refine_whole(pipe, image, denoise, steps, prompt, seed)
     # Anti-duplication 1: prompt vide par tuile (le prompt global decrit toute la compo).
-    #
-    # SAUF avec le ControlNet Tile, ou vider le prompt CASSE la passe. Raison: l'img2img
-    # classique part de la tuile bruitee a `denoise` (0.35) -- l'image source retient
-    # deja le contenu, le prompt ne sert qu'a orienter le detail, et le vider evite que
-    # chaque tuile redessine toute la scene. Le pipeline ControlNet, lui, DEBRUITE
-    # ENTIEREMENT (pas de `strength`): le seul ancrage est l'image de controle a
-    # conditioning_scale. Sur une zone plate (un parquet, un mur) ce signal ne suffit
-    # pas, et sans prompt le modele invente -- constate: un upscale 2048x3072 de salon a
-    # rendu un tiers bas peuple de mains, de cheveux et de faux texte, alors que le
-    # garde-fou passait (gap 20-30, correlation +0.69/+0.72, tres au-dessus des seuils:
-    # il mesure l'accord BASSE FREQUENCE par tuile, qui reste bon meme quand la tuile
-    # invente un autre sujet).
-    # L'anti-duplication n'a de toute facon pas lieu d'etre ici: c'est l'image de
-    # controle qui verrouille la composition de chaque tuile, c'est tout son interet.
-    if CONTROLNET_TILE:
-        _log("refine tiled: ControlNet actif -> prompt de scene GARDE par tuile "
-             "(le controlnet debruite entierement; sans prompt les zones plates inventent)")
-    else:
-        prompt = _tile_prompt(prompt)
-        if not (prompt or "").strip():
-            _log("refine tiled: prompt vide par tuile (anti-duplication; regle refine_tile_prompt).")
+    prompt = _tile_prompt(prompt)
+    if not (prompt or "").strip():
+        _log("refine tiled: prompt vide par tuile (anti-duplication; regle refine_tile_prompt).")
     # Anti-duplication 2 (filet): a fort denoise chaque tuile peut encore deriver.
     denoise = float(denoise)
     if _TILE_DENOISE_CAP > 0 and denoise > _TILE_DENOISE_CAP:
@@ -2588,12 +2061,6 @@ def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
     xs = list(range(0, w, step))
     total = len(ys) * len(xs)
     _log(f"refine: tiled {w}x{h}, tile {tile} overlap {overlap} -> {len(xs)}x{len(ys)} = {total} tiles")
-    # L'etage ESRGAN vient de liberer de gros buffers: les rendre AVANT la boucle evite
-    # de demarrer le refine avec un cache d'allocations qui pousse a la saturation.
-    gc.collect()
-    if DEVICE == "cuda":
-        torch.cuda.empty_cache()
-        _dbg(f"tiled refine start{_vram_str()}")
     i = 0
     for y in ys:
         for x in xs:
@@ -2607,7 +2074,7 @@ def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
             _progress(0.45 + 0.5 * (i - 1) / max(1, total), f"Refine tile {i}/{total}")
             crop = image.crop((x1, y1, x2, y2))
             _t_tile = time.time()
-            out = _refine_pass(crop, denoise, steps, prompt, seed)
+            out = _refine_whole(pipe, crop, denoise, steps, prompt, seed)
             _log(f"  tile {i}/{total} ({cw}x{ch}) in {time.time() - _t_tile:.1f}s{_vram_str()}")
             if out.size != (cw, ch):
                 out = out.resize((cw, ch), Image.LANCZOS)
@@ -2688,12 +2155,10 @@ def process_one(image, esrgan_model, factor, denoise, steps, prompt, seed, tile,
             out = _refine_tiled(pipe, img, denoise, steps, prompt, seed,
                                 rt, int(refine_overlap) or 64)
         else:
-            _log(f"Z-Image refine: whole image {rw}x{rh}, "
-                 + (f"ControlNet Tile (scale {CONTROLNET_SCALE:.2f})" if CONTROLNET_TILE
-                    else f"denoise {float(denoise):.2f}")
-                 + f", {int(steps)} steps ...")
+            _log(f"Z-Image refine: whole image {rw}x{rh}, denoise {float(denoise):.2f}, "
+                 f"{int(steps)} steps ...")
             _progress(0.5, f"Z-Image refine {rw}x{rh}...")
-            out = _refine_pass(img, denoise, steps, prompt, seed)
+            out = _refine_whole(pipe, img, denoise, steps, prompt, seed)
         timings["refine"] += time.time() - t0
         return out
 

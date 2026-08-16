@@ -3024,22 +3024,6 @@ def build_ui():
                                                                   label="Refine before upscale (faster)",
                                                                   info="Refine at native res THEN ESRGAN enlarge "
                                                                        "(~4-16x faster refine; a touch less high-res detail).")
-                                    # ControlNet Tile: la Row suit CONTROLNET_TILE_AVAILABLE
-                                    # (cf. cz_pipeline). Masquee quand le drapeau est a
-                                    # False, les composants restent crees pour ne pas
-                                    # casser le cablage des handlers.
-                                    with gr.Row(visible=cz_pipeline.CONTROLNET_TILE_AVAILABLE):
-                                        cn_tile_cb = gr.Checkbox(
-                                            value=cz_pipeline.CONTROLNET_TILE,
-                                            label="🔒 ControlNet Tile refine",
-                                            info="Conditions every step on the source image: composition, "
-                                                 "faces and text stay put, only detail is regenerated. "
-                                                 "First use downloads a 6.7 GB model.")
-                                        cn_scale_sl = gr.Slider(
-                                            0.1, 1.5, value=cz_pipeline.CONTROLNET_SCALE, step=0.05,
-                                            label="ControlNet strength",
-                                            info="High = faithful to the source, low = more invention. "
-                                                 "0.6-0.9 is the usual range.")
                                     with gr.Row():
                                         vary_subtle_btn = gr.Button("🎲 Vary (subtle)", size="sm")
                                         vary_strong_btn = gr.Button("🎲 Vary (strong)", size="sm")
@@ -3595,11 +3579,6 @@ def build_ui():
         meta_scheme_dd.change(set_metadata_scheme, [meta_scheme_dd], [meta_scheme_status])
         wildcards_order_cb.change(set_wildcards_in_order, [wildcards_order_cb], [wild_order_status])
         save_pre_upscale_cb.change(cz_pipeline.set_save_pre_upscale, [save_pre_upscale_cb], None)
-        # lambda: les setters renvoient un libelle de statut, mais ces handlers n'ont
-        # aucune sortie -> sans ca Gradio avertit "returned too many output values".
-        cn_tile_cb.change(lambda v: cz_pipeline.set_controlnet_tile(v), [cn_tile_cb], None)
-        cn_scale_sl.change(lambda v: cz_pipeline.set_controlnet_scale(v) and None,
-                           [cn_scale_sl], None)
         detail_faces_cb.change(cz_detailer.set_enabled, [detail_faces_cb], None)
         detail_hands_cb.change(cz_detailer.set_hands_enabled, [detail_hands_cb], None)
         detailer_denoise_sl.change(cz_detailer.set_denoise, [detailer_denoise_sl], None)
