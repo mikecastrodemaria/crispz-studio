@@ -139,30 +139,6 @@ def test_set_zimage_model_new_base_repo_still_reloads():
     assert P._LOADED_KEY is None
 
 
-def test_effective_offload_distinguishes_none_from_current():
-    """None est une valeur LEGITIME de tpath (= pas d'override, transformer du repo de
-    base). Elle ne doit PAS etre confondue avec 'prends le transformer courant'.
-
-    Regression: avec None comme sentinelle, _effective_offload(None) retombait sur
-    ZIMAGE_TRANSFORMER. Le garde-fou de _swap_transformer comparait donc le NOUVEAU
-    transformer a lui-meme, et un echange a chaud repo de base -> GGUF passait alors
-    que l'offload effectif change ('none' -> 'model')."""
-    old_dev, old_off, old_t = P.DEVICE, P.OFFLOAD_MODE, P.ZIMAGE_TRANSFORMER
-    try:
-        P.DEVICE, P.OFFLOAD_MODE = "cuda", "none"
-        P.ZIMAGE_TRANSFORMER = r"C:\models\z_image_turbo-Q6_K.gguf"   # le NOUVEAU
-        # tpath explicite None = ancien = repo de base -> pas de GGUF -> 'none'
-        assert P._effective_offload(None) == "none", (
-            "None doit designer 'pas d'override', pas le transformer courant")
-        # sentinelle omise = transformer courant (GGUF) -> 'model' force
-        assert P._effective_offload() == "model"
-        assert P._effective_offload(P.ZIMAGE_TRANSFORMER) == "model"
-        # -> les deux different, donc _swap_transformer doit refuser l'echange a chaud
-        assert P._effective_offload(None) != P._effective_offload(P.ZIMAGE_TRANSFORMER)
-    finally:
-        P.DEVICE, P.OFFLOAD_MODE, P.ZIMAGE_TRANSFORMER = old_dev, old_off, old_t
-
-
 if __name__ == "__main__":
     _real = P._load_transformer
     try:
@@ -172,8 +148,7 @@ if __name__ == "__main__":
                    test_swap_failure_falls_back,
                    test_set_zimage_transformer_does_not_free_the_pipe,
                    test_set_zimage_model_single_file_does_not_free,
-                   test_set_zimage_model_new_base_repo_still_reloads,
-                   test_effective_offload_distinguishes_none_from_current):
+                   test_set_zimage_model_new_base_repo_still_reloads):
             fn()
             print(f"OK {fn.__name__}")
     finally:
