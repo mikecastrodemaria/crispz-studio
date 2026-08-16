@@ -120,6 +120,14 @@ and hand detailers derive `img2img` **after** the first render — which matches
   ~9 GB of freed-but-reserved blocks still held (28.7 / 32 GB measured). It now does the
   same `gc.collect()` + `empty_cache()` before the pass that `_refine_tiled` has done
   since d1761c2 — measured: the render now starts at 19.6 GB instead of 28.7 GB.
+  **Only when offload is off.** A first version of this ran unconditionally and produced
+  **entirely black images from the second render onwards** on `z_image_turbo-Q6_K.gguf`
+  at 832×1216 (render #1 correct, #2 and #3 `max=0`), while the same sequence on the base
+  repo without offload stayed fine. In offload `model` — forced for every GGUF — the
+  weights round-trip CPU↔GPU on each forward, and this cleanup between two renders breaks
+  them. There is nothing to gain there anyway: under offload the pipeline tops out around
+  8.5 GB, and the VRAM margin this cleanup targets only exists when the whole model stays
+  resident.
 - **`_effective_offload(None)` was ambiguous.** `None` is a *legitimate* value for
   `tpath` (no override → the base repo's transformer), but it was also the "use the
   current transformer" sentinel — so `_effective_offload(None)` silently evaluated
