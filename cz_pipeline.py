@@ -1641,6 +1641,12 @@ def load_pipe():
 def generate(prompt, width, height, steps, seed, negative_prompt=""):
     """txt2img Z-Image: genere une image depuis un prompt.
     Turbo -> GUIDANCE 0. Base -> GUIDANCE ~3.5-5 + plus de steps."""
+    # Un ControlNet charge par un upscale precedent n'a rien a faire en VRAM pendant
+    # une generation: il ne sert qu'au refine, et ses 6.7 Go font basculer un rendu
+    # 1024+ dans la RAM partagee -> latents corrompus, sans erreur (cas reel observe:
+    # 3 txt2img de suite ruines apres un upscale ControlNet). Il revient au prochain
+    # refine (le modele reste en RAM, la remontee GPU est rapide).
+    _free_controlnet()
     pipe = get_pipe("txt2img")
     w = round_to_multiple(int(width))
     h = round_to_multiple(int(height))
@@ -2069,10 +2075,34 @@ _CN_PIPE = None           # pipeline ControlNet monte sur les composants du base
 _CN_PIPE_KEY = None       # identite du transformer courant -> rebuild si swap
 
 
+def _free_controlnet():
+    """Rend la VRAM du ControlNet (6.7 Go) et jette le pipeline qui le porte.
+
+    CRUCIAL: ce modele n'est utile QUE pendant un refine. Le laisser resident ampute
+    la VRAM de tout le reste (txt2img compris) -- constate en vrai: apres un upscale
+    ControlNet, trois txt2img 1024x1024 d'affilee sont sortis corrompus (latents
+    massacres, pas d'erreur), et seul un redemarrage a retabli les rendus."""
+    global _CN_PIPE, _CN_PIPE_KEY, _CN_MODEL
+    if _CN_MODEL is None and _CN_PIPE is None:
+        return
+    _CN_PIPE = _CN_PIPE_KEY = None
+    try:
+        if _CN_MODEL is not None and DEVICE == "cuda":
+            _CN_MODEL.to("cpu")          # garde le modele en RAM: rechargement instantane
+    except Exception as e:
+        _dbg(f"controlnet unload: {e}")
+    gc.collect()
+    if DEVICE == "cuda":
+        torch.cuda.empty_cache()
+    _log("ControlNet unloaded from VRAM (6.7 GB back for generation)")
+
+
 def set_controlnet_tile(v):
     global CONTROLNET_TILE
     CONTROLNET_TILE = bool(v)
     _log(f"ControlNet Tile refine -> {'ON' if CONTROLNET_TILE else 'OFF'}")
+    if not CONTROLNET_TILE:
+        _free_controlnet()
 
 
 def set_controlnet_scale(v):
