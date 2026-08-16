@@ -86,6 +86,8 @@
     "controlnet_tile": false,
     "_controlnet_tile_model_help": "Which ControlNet to load: 'org/repo/file.safetensors' (downloaded once into the HF cache) or an absolute local path. Default is the official alibaba-pai Tile 2.1 distilled for 8 steps. The Union model of the same repo also works (it handles tile + canny/depth/pose).",
     "controlnet_tile_model": "alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/Z-Image-Turbo-Fun-Controlnet-Tile-2.1-8steps.safetensors",
+    "_controlnet_tile_max_tile_help": "Largest refine tile allowed while ControlNet Tile is on. The ControlNet (6.7 GB) has to sit in VRAM next to the transformer (12 GB) for the whole pass, so a 1024 tile pushed a 1728x3072 upscale to 31/32 GB and into shared RAM - measured 164 s per tile instead of ~10 s. 768 halves those activations. 0 = no cap (plenty of VRAM).",
+    "controlnet_tile_max_tile": 768,
     "_controlnet_tile_sanity_max_help": "Safety net (colour half): a ControlNet only works with a transformer of the lineage it was trained on, and an incompatible checkpoint returns NOISE rather than an error. The output is compared to the control image at low frequency; measured 35 (whole image) to 57 (a tile) when it works, ~107 when it doesn't. Above this the pass is discarded and the normal img2img refine runs instead.",
     "controlnet_tile_sanity_max": 75,
     "_controlnet_tile_sanity_min_corr_help": "Safety net (structure half): correlation between the control image and the output. Measured 0.32 (tile) to 0.64 (whole image) when it works, 0.10-0.13 when the output is corrupted. Below this the pass is discarded. Lower both thresholds if a legitimate result gets rejected.",

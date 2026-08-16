@@ -3591,8 +3591,11 @@ def build_ui():
         meta_scheme_dd.change(set_metadata_scheme, [meta_scheme_dd], [meta_scheme_status])
         wildcards_order_cb.change(set_wildcards_in_order, [wildcards_order_cb], [wild_order_status])
         save_pre_upscale_cb.change(cz_pipeline.set_save_pre_upscale, [save_pre_upscale_cb], None)
-        cn_tile_cb.change(cz_pipeline.set_controlnet_tile, [cn_tile_cb], None)
-        cn_scale_sl.change(cz_pipeline.set_controlnet_scale, [cn_scale_sl], None)
+        # lambda: les setters renvoient un libelle de statut, mais ces handlers n'ont
+        # aucune sortie -> sans ca Gradio avertit "returned too many output values".
+        cn_tile_cb.change(lambda v: cz_pipeline.set_controlnet_tile(v), [cn_tile_cb], None)
+        cn_scale_sl.change(lambda v: cz_pipeline.set_controlnet_scale(v) and None,
+                           [cn_scale_sl], None)
         detail_faces_cb.change(cz_detailer.set_enabled, [detail_faces_cb], None)
         detail_hands_cb.change(cz_detailer.set_hands_enabled, [detail_hands_cb], None)
         detailer_denoise_sl.change(cz_detailer.set_denoise, [detailer_denoise_sl], None)
