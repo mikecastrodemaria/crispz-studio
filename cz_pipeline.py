@@ -889,11 +889,14 @@ def gpu_busy_warning():
 def free_vram():
     """Libere le pipeline de base + les pipelines derives et rend la VRAM
     (palier 3: unload sur inactivite ou endpoint /unload). Rechargement paresseux."""
-    global _BASE_PIPE, _DERIVED, _LOADED_KEY, _APPLIED_LORAS
+    global _BASE_PIPE, _DERIVED, _LOADED_KEY, _APPLIED_LORAS, _CN_PIPE, _CN_PIPE_KEY, _CN_MODEL
     _BASE_PIPE = None
     _DERIVED = {}
     _LOADED_KEY = None
     _APPLIED_LORAS = []      # plus de pipe -> plus d'adaptateur pose
+    # Le pipeline ControlNet partage les composants du base (donc devient invalide) et
+    # le modele controlnet pese 6.7 Go a lui seul: on rend tout.
+    _CN_PIPE = _CN_PIPE_KEY = _CN_MODEL = None
     gc.collect()
     if DEVICE == "cuda":
         torch.cuda.empty_cache()
@@ -2033,6 +2036,170 @@ def _feather_mask_np(th, tw, overlap, left, right, top, bottom):
     return mask
 
 
+# ----------------------------------------------------------------------------
+# ControlNet Tile: refine qui VERROUILLE la structure de l'image source.
+# Un refine img2img classique reinvente librement le contenu a fort denoise (visages
+# qui derivent, textes qui se deforment, duplication en tuiles). Le ControlNet Tile
+# conditionne CHAQUE etape sur l'image de depart: la composition, les contours et le
+# texte restent en place, seul le detail est regenere. C'est l'idiome "Ultimate SD
+# Upscale + Tile" et le controlnet officiel Z-Image (alibaba-pai, distille 8 steps).
+# ----------------------------------------------------------------------------
+CONTROLNET_TILE = bool(CONFIG.get("controlnet_tile", False))
+# repo HF + fichier, ou chemin local absolu vers un .safetensors controlnet.
+CONTROLNET_MODEL = str(CONFIG.get(
+    "controlnet_tile_model",
+    "alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/"
+    "Z-Image-Turbo-Fun-Controlnet-Tile-2.1-8steps.safetensors")).strip()
+try:
+    CONTROLNET_SCALE = float(CONFIG.get("controlnet_tile_scale", 0.75))
+except Exception:
+    CONTROLNET_SCALE = 0.75
+# Seuil du garde-fou anti-bruit (ecart basse frequence sortie/entree). Mesure sur des
+# cas reels: ~35 quand le controlnet fonctionne, ~107 avec un checkpoint incompatible.
+try:
+    CONTROLNET_SANITY_MAX = float(CONFIG.get("controlnet_tile_sanity_max", 60))
+except Exception:
+    CONTROLNET_SANITY_MAX = 60.0
+_CN_MODEL = None          # ZImageControlNetModel charge (6.7 Go bf16)
+_CN_PIPE = None           # pipeline ControlNet monte sur les composants du base
+_CN_PIPE_KEY = None       # identite du transformer courant -> rebuild si swap
+
+
+def set_controlnet_tile(v):
+    global CONTROLNET_TILE
+    CONTROLNET_TILE = bool(v)
+    _log(f"ControlNet Tile refine -> {'ON' if CONTROLNET_TILE else 'OFF'}")
+
+
+def set_controlnet_scale(v):
+    global CONTROLNET_SCALE
+    try:
+        CONTROLNET_SCALE = min(1.5, max(0.1, float(v)))
+    except (TypeError, ValueError):
+        pass
+    return f"ControlNet strength: {CONTROLNET_SCALE}"
+
+
+def _resolve_controlnet_path():
+    """Chemin local du .safetensors controlnet. 'repo/sous/chemin.safetensors' ->
+    telecharge une fois dans le cache HF; un chemin absolu est pris tel quel."""
+    spec = CONTROLNET_MODEL
+    if os.path.isabs(spec) or os.path.isfile(spec):
+        return spec
+    parts = spec.split("/")
+    if len(parts) < 3:
+        raise RuntimeError(
+            f"controlnet_tile_model invalide: '{spec}' (attendu 'org/repo/fichier.safetensors' "
+            "ou un chemin local absolu)")
+    repo, fname = "/".join(parts[:2]), "/".join(parts[2:])
+    from huggingface_hub import hf_hub_download
+    _log(f"fetching ControlNet {fname} from {repo} (once, ~6.7 GB) ...")
+    return hf_hub_download(repo, fname)
+
+
+def _load_controlnet():
+    """Charge (une fois) le ZImageControlNetModel."""
+    global _CN_MODEL
+    if _CN_MODEL is not None:
+        return _CN_MODEL
+    from diffusers import ZImageControlNetModel
+    path = _resolve_controlnet_path()
+    _log(f"loading ControlNet: {os.path.basename(path)} ...")
+    _CN_MODEL = _load_monitor(
+        f"controlnet {os.path.basename(path)}",
+        lambda: ZImageControlNetModel.from_single_file(path, torch_dtype=DTYPE))
+    return _CN_MODEL
+
+
+def _ensure_controlnet_pipe():
+    """Pipeline ControlNet monte sur les composants DEJA charges (VAE, encodeur texte,
+    transformer): aucun poids en double a part le controlnet lui-meme.
+
+    NB: ZImageControlNetPipeline.__init__ appelle from_transformer(controlnet,
+    transformer), qui attache au controlnet des references PARTAGEES vers les embedders
+    du transformer -> le pipeline est lie a CE transformer. Un swap de checkpoint doit
+    donc le reconstruire, d'ou la cle d'identite."""
+    global _CN_PIPE, _CN_PIPE_KEY
+    from diffusers import ZImageControlNetPipeline
+    base = _ensure_base()
+    key = id(base.transformer)
+    if _CN_PIPE is not None and _CN_PIPE_KEY == key:
+        return _CN_PIPE
+    cn = _load_controlnet()
+    _log("building ControlNet pipeline (weights shared with the base pipeline)")
+    pipe = ZImageControlNetPipeline(
+        scheduler=base.scheduler, vae=base.vae, text_encoder=base.text_encoder,
+        tokenizer=base.tokenizer, transformer=base.transformer, controlnet=cn)
+    # Placement du controlnet. NE PAS appeler enable_*_cpu_offload sur CE pipeline:
+    # ses composants (VAE, encodeur, transformer) sont ceux du base et portent DEJA les
+    # hooks accelerate; re-hooker par-dessus laisse le controlnet sur CPU alors que les
+    # activations arrivent en cuda -> "mat1 is on cuda:0, others on cpu" (constate).
+    # Le controlnet est donc pose une fois sur le GPU et y reste; les composants
+    # partages continuent d'etre geres par les hooks du base.
+    if DEVICE == "cuda":
+        cn.to(DEVICE)
+    try:
+        pipe.vae.config.force_upcast = False
+    except Exception:
+        pass
+    _apply_sampler(pipe)
+    _CN_PIPE, _CN_PIPE_KEY = pipe, key
+    return pipe
+
+
+def _cn_structure_gap(src, out):
+    """Ecart BASSE FREQUENCE (64x64) entre l'image de controle et la sortie. Un
+    ControlNet Tile qui fonctionne preserve la composition -> ecart faible."""
+    a = np.asarray(src.convert("RGB").resize((64, 64), Image.LANCZOS), np.float32)
+    b = np.asarray(out.convert("RGB").resize((64, 64), Image.LANCZOS), np.float32)
+    return float(np.abs(a - b).mean())
+
+
+def _controlnet_refine(image, prompt, steps, seed, scale=None):
+    """Une passe ControlNet Tile: l'image d'ENTREE sert de conditionnement, la sortie
+    garde sa structure. Pas de `strength` ici (le pipeline denoise entierement); c'est
+    `controlnet_conditioning_scale` qui dose fidelite (haut) vs invention (bas).
+
+    Leve si la sortie ne ressemble plus du tout a l'entree: un controlnet Z-Image ne
+    marche qu'avec un transformer de la lignee sur laquelle il a ete entraine, et un
+    checkpoint incompatible ne donne PAS une erreur mais du BRUIT (mesure: ecart basse
+    frequence ~107 contre ~35 quand tout va bien). Le caller retombe alors sur
+    l'img2img classique plutot que de sortir une image ratee."""
+    pipe = _ensure_controlnet_pipe()
+    orig = image.size
+    w = round_to_multiple(image.width, 32)
+    h = round_to_multiple(image.height, 32)
+    src = image.convert("RGB")
+    if (w, h) != orig:
+        src = src.resize((w, h), Image.LANCZOS)
+    _set_slicing(pipe, max(w, h))
+    out = pipe(prompt=prompt or "", control_image=src, height=h, width=w,
+               controlnet_conditioning_scale=float(CONTROLNET_SCALE if scale is None else scale),
+               num_inference_steps=int(steps), guidance_scale=GUIDANCE,
+               generator=_make_generator(seed)).images[0]
+    gap = _cn_structure_gap(src, out)
+    if gap > CONTROLNET_SANITY_MAX:
+        raise RuntimeError(
+            f"output does not match the control image (structure gap {gap:.0f} > "
+            f"{CONTROLNET_SANITY_MAX:.0f}): this checkpoint is not compatible with the "
+            "ControlNet. Switch to the official Z-Image-Turbo (or a Turbo fine-tune), "
+            "or turn ControlNet Tile off")
+    _dbg(f"controlnet tile: structure gap {gap:.1f} (limit {CONTROLNET_SANITY_MAX:.0f})")
+    return out.resize(orig, Image.LANCZOS) if out.size != orig else out
+
+
+def _refine_pass(image, denoise, steps, prompt, seed):
+    """Une passe de refine, ControlNet Tile si active (structure verrouillee) sinon
+    img2img classique. Repli automatique sur l'img2img si le ControlNet est
+    indisponible (modele absent, VRAM...) -> un upscale ne casse jamais pour ca."""
+    if CONTROLNET_TILE:
+        try:
+            return _controlnet_refine(image, prompt, steps, seed)
+        except Exception as e:
+            _log(f"ControlNet Tile unavailable ({e}); falling back to img2img refine")
+    return _refine_whole(get_pipe("img2img"), image, denoise, steps, prompt, seed)
+
+
 def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
     """Passe Z-Image en tuiles avec recomposition feather (facon Ultimate SD Upscale).
     Plafonne le pic VRAM (une tuile a la fois) et permet le 4K+ sans coutures.
@@ -2042,7 +2209,7 @@ def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
     overlap = max(0, min(int(overlap), tile - 16))
     if w <= tile and h <= tile:
         # Une seule tuile = image entiere -> pas de duplication possible: denoise demande.
-        return _refine_whole(pipe, image, denoise, steps, prompt, seed)
+        return _refine_pass(image, denoise, steps, prompt, seed)
     # Anti-duplication 1: prompt vide par tuile (le prompt global decrit toute la compo).
     prompt = _tile_prompt(prompt)
     if not (prompt or "").strip():
@@ -2074,7 +2241,7 @@ def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
             _progress(0.45 + 0.5 * (i - 1) / max(1, total), f"Refine tile {i}/{total}")
             crop = image.crop((x1, y1, x2, y2))
             _t_tile = time.time()
-            out = _refine_whole(pipe, crop, denoise, steps, prompt, seed)
+            out = _refine_pass(crop, denoise, steps, prompt, seed)
             _log(f"  tile {i}/{total} ({cw}x{ch}) in {time.time() - _t_tile:.1f}s{_vram_str()}")
             if out.size != (cw, ch):
                 out = out.resize((cw, ch), Image.LANCZOS)
@@ -2155,10 +2322,12 @@ def process_one(image, esrgan_model, factor, denoise, steps, prompt, seed, tile,
             out = _refine_tiled(pipe, img, denoise, steps, prompt, seed,
                                 rt, int(refine_overlap) or 64)
         else:
-            _log(f"Z-Image refine: whole image {rw}x{rh}, denoise {float(denoise):.2f}, "
-                 f"{int(steps)} steps ...")
+            _log(f"Z-Image refine: whole image {rw}x{rh}, "
+                 + (f"ControlNet Tile (scale {CONTROLNET_SCALE:.2f})" if CONTROLNET_TILE
+                    else f"denoise {float(denoise):.2f}")
+                 + f", {int(steps)} steps ...")
             _progress(0.5, f"Z-Image refine {rw}x{rh}...")
-            out = _refine_whole(pipe, img, denoise, steps, prompt, seed)
+            out = _refine_pass(img, denoise, steps, prompt, seed)
         timings["refine"] += time.time() - t0
         return out
 
