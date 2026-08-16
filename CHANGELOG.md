@@ -3,6 +3,37 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — 🔒 ControlNet Tile refine (structure-locked upscale)
+
+The refine pass can now run through the official **Z-Image Tile ControlNet**
+(`alibaba-pai`, distilled for 8 steps) instead of plain img2img: every diffusion step is
+conditioned on the source image, so composition, faces and text stay in place and only
+detail is regenerated. This is the fix for "my upscale changed the picture" and for tile
+duplication at high denoise — `controlnet_tile_scale` (0.75) replaces `denoise` as the
+fidelity knob.
+
+The ControlNet pipeline is built **on the components already in VRAM** (VAE, text
+encoder, transformer): nothing is loaded twice apart from the ControlNet itself, and it
+is rebuilt automatically when you swap checkpoints (it holds shared references to the
+transformer's embedders). UI: *ControlNet Tile refine* + strength slider in the Upscale
+tab. CLI: `--controlnet-tile`, `--controlnet-scale`. Config: `controlnet_tile`,
+`controlnet_tile_model` (repo/file or a local path), `controlnet_tile_scale`.
+
+**Two traps found while testing, both handled:**
+- Calling `enable_model_cpu_offload()` on this pipeline leaves the ControlNet on CPU
+  (its components already carry the base pipeline's accelerate hooks) →
+  `mat1 is on cuda:0, other tensors on cpu`. The ControlNet is now simply placed on the
+  GPU once and the shared components keep the base's hooks.
+- **A ControlNet only works with a transformer of the lineage it was trained on, and an
+  incompatible checkpoint returns pure noise instead of an error.** The pass now
+  measures the low-frequency gap between its output and the control image (~35 when it
+  works, ~107 when it doesn't, measured) and, past `controlnet_tile_sanity_max` (60),
+  discards the result, explains why, and falls back to the normal img2img refine — an
+  upscale never returns a broken image because of this.
+
+Validated: identical results between the shared-component pipeline and a stock diffusers
+one built from scratch (sharpness 985 vs 1002, structure gap 44.4 vs 45.4).
+
 ## Unreleased — 🖐 Hand detailer
 
 Hands are the weak point of every diffusion model, so the ADetailer-style pass now
