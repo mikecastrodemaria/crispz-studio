@@ -549,6 +549,19 @@ ZIMAGE_BASE_PERFORMANCE = {
 }
 
 
+def _ckpt_choices(names=None):
+    """Choix du menu checkpoint au format Gradio [(libelle, valeur)]: le libelle porte
+    le badge de format ('BF16 · 11.5 GB', 'GGUF Q6_K · 5.5 GB', 'FP8→bf16 · 5.7 GB
+    (slow 1st load)'), la VALEUR reste le nom de fichier brut -- presets, XYZ, CLI et
+    prefs continuent de manipuler des noms, rien d'autre a adapter."""
+    names = (ZIMAGE_BASE_REPOS + list_checkpoints()) if names is None else names
+    out = []
+    for n in names:
+        badge = cz_pipeline.checkpoint_badge(n)      # '' pour un repo HF
+        out.append((f"{n}   [{badge}]" if badge else n, n))
+    return out
+
+
 def _refresh_checkpoints(new_dir, extra_dir=""):
     """Change le(s) dossier(s) checkpoints (principal + extra) + liste les modeles fusionnes
     + persiste."""
@@ -566,7 +579,8 @@ def _refresh_checkpoints(new_dir, extra_dir=""):
     if n_new:
         msg += f" +{n_new} preset(s) auto-created."
     # 3e sortie: rafraichit le menu Presets (nouveaux modeles -> nouveaux presets).
-    return (gr.update(choices=ZIMAGE_BASE_REPOS + cks), msg, gr.update(choices=list_presets()))
+    return (gr.update(choices=_ckpt_choices(ZIMAGE_BASE_REPOS + cks)), msg,
+            gr.update(choices=list_presets()))
 
 
 def _performance_label_for(steps, guidance):
@@ -591,6 +605,10 @@ def _apply_checkpoint(name):
     Ajuste aussi steps/guidance ET le preset Performance selon le profil du modele."""
     if not name:
         return (gr.update(), gr.update(), gr.update(), gr.update())
+    # Un autre process qui occupe la VRAM fait deborder le chargement en RAM partagee
+    # (rendus en minutes/step, sans erreur) -> on le dit ici, avant le prochain run.
+    busy = cz_pipeline.gpu_busy_warning()
+    warn = f"\n\n⚠️ {busy}" if busy else ""
     if name in ZIMAGE_BASE_REPOS:
         # Repo de base complet -> on enleve tout transformer single-file puis on swap le base.
         set_zimage_transformer("")
@@ -602,13 +620,17 @@ def _apply_checkpoint(name):
         else:
             st, g = profile_for_model(name)
             perf_upd = _perf_update(st, g)
-        return (f"Z-Image base: {name} -> {perf or 'auto'} (steps={st}, CFG={g}, reload on next run).",
+        return (f"Z-Image base: {name} -> {perf or 'auto'} (steps={st}, CFG={g}, "
+                f"reload on next run).{warn}",
                 gr.update(value=st), gr.update(value=g), perf_upd)
     path = resolve_checkpoint(name)
     set_zimage_transformer(path)
     st, g = profile_for_model(os.path.basename(path))
-    return (f"Z-Image transformer: {os.path.basename(path)} -> auto steps={st}, CFG={g} "
-            f"(transformer swap on next run — VAE + text encoder stay loaded).",
+    badge = cz_pipeline.checkpoint_badge(name)
+    return (f"Z-Image transformer: {os.path.basename(path)}"
+            + (f" [{badge}]" if badge else "")
+            + f" -> auto steps={st}, CFG={g} "
+              f"(transformer swap on next run — VAE + text encoder stay loaded).{warn}",
             gr.update(value=st), gr.update(value=g), _perf_update(st, g))
 
 
@@ -1833,6 +1855,93 @@ def _q_render(items, sel=None):
             gr.update(value=f"+ Queue ({len(items)})"))
 
 
+# --- Persistance de la file (survit a un redemarrage / un crash) ---------------
+# Une file de nuit represente des heures de reglages: la perdre parce que l'app a
+# redemarre est le pire scenario. Sauvee a chaque mutation ET apres chaque job.
+_Q_STORE = os.path.join(HERE, "cache", "queue.json")
+_Q_ASSETS = os.path.join(HERE, "cache", "queue_assets")
+Q_PERSIST = bool(_JQ_CFG.get("persist", True))
+
+
+def _q_json_ready(v, assets):
+    """Convertit une valeur de composant Gradio en JSON. Les images (entree, editeur
+    de masque) sont ecrites a cote et remplacees par leur chemin; ce qui n'est pas
+    serialisable devient None plutot que de faire echouer toute la sauvegarde."""
+    from PIL import Image as _Img
+    if v is None or isinstance(v, (str, int, float, bool)):
+        return v
+    if isinstance(v, _Img.Image):
+        os.makedirs(assets, exist_ok=True)
+        p = os.path.join(assets, f"q_{abs(hash((id(v), v.size)))}.png")
+        v.save(p)
+        return {"__img__": p}
+    if isinstance(v, dict):
+        return {k: _q_json_ready(x, assets) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_q_json_ready(x, assets) for x in v]
+    return None
+
+
+def _q_json_restore(v):
+    from PIL import Image as _Img
+    if isinstance(v, dict):
+        p = v.get("__img__")
+        if p:
+            try:
+                return _Img.open(p).convert("RGB") if os.path.isfile(p) else None
+            except Exception:
+                return None
+        return {k: _q_json_restore(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_q_json_restore(x) for x in v]
+    return v
+
+
+def _q_persist(items):
+    """Ecrit la file sur disque (best effort, jamais bloquant pour l'UI)."""
+    if not Q_PERSIST:
+        return
+    try:
+        os.makedirs(os.path.dirname(_Q_STORE), exist_ok=True)
+        out = []
+        for job in (items or []):
+            vals = list(job.get("vals") or [])
+            if len(vals) > _Q_HISTORY_IDX:
+                vals[_Q_HISTORY_IDX] = None      # historique injecte au run, pas stocke
+            out.append({"vals": _q_json_ready(vals, _Q_ASSETS),
+                        "ms": _q_json_ready(job.get("ms"), _Q_ASSETS),
+                        "label": job.get("label", ""),
+                        "xyz": job.get("xyz")})
+        tmp = _Q_STORE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "jobs": out}, f)
+        os.replace(tmp, _Q_STORE)
+    except Exception as e:
+        _log(f"queue not saved ({e})", mod="queue")
+
+
+def _q_load():
+    """Recharge la file du disque au demarrage ([] si absente/illisible)."""
+    if not Q_PERSIST or not os.path.isfile(_Q_STORE):
+        return []
+    try:
+        with open(_Q_STORE, encoding="utf-8") as f:
+            data = json.load(f)
+        jobs = []
+        for j in data.get("jobs") or []:
+            ms = _q_json_restore(j.get("ms")) or {}
+            # les LoRA sont des paires (chemin, poids): le JSON les rend en listes
+            ms["loras"] = [tuple(x) for x in (ms.get("loras") or []) if x]
+            jobs.append({"vals": _q_json_restore(j.get("vals")) or [],
+                         "ms": ms, "label": j.get("label", ""), "xyz": j.get("xyz")})
+        if jobs:
+            _log(f"{len(jobs)} job(s) restored from the previous session", mod="queue")
+        return jobs
+    except Exception as e:
+        _log(f"queue not restored ({e})", mod="queue")
+        return []
+
+
 def _ui_queue_add(*args):
     """'+ Queue': fige les 36 valeurs courantes + l'etat modele global, empile.
     Mutation IN-PLACE de la liste d'etat (objet partage): un 'Run queue' deja en
@@ -1844,16 +1953,19 @@ def _ui_queue_add(*args):
         items = []
     items.append(job)
     _log(f"job added ({len(items)} queued): {job['label']}", mod="queue")
+    _q_persist(items)
     return (items, *_q_render(items, len(items) - 1))
 
 
 def _ui_queue_move(items, sel, delta):
     items, sel = _q_move(items, sel, delta)
+    _q_persist(items)
     return (items, *_q_render(items, sel))
 
 
 def _ui_queue_remove(items, sel):
     items, sel = _q_remove(items, sel)
+    _q_persist(items)
     return (items, *_q_render(items, sel))
 
 
@@ -1864,6 +1976,7 @@ def _ui_queue_clear(items):
         items.clear()
     else:
         items = []
+    _q_persist(items)
     return (items, *_q_render(items))
 
 
@@ -1909,6 +2022,9 @@ def _ui_queue_run(items, history, progress=gr.Progress(track_tqdm=True)):
             rep = f"Job failed: {e}"
         done += 1
         items.pop(0)
+        # Persiste apres CHAQUE job: un crash / une coupure en pleine file de nuit ne
+        # coute que le job en cours, pas les suivants.
+        _q_persist(items)
         if cz_pipeline._STOP:
             _log(f"stopped; queue PAUSED, {len(items)} job(s) remaining", mod="queue")
             break
@@ -2820,13 +2936,20 @@ def build_ui():
                 improve_status = gr.Markdown("")
 
                 if JOB_QUEUE_ENABLED:
-                    queue_state = gr.State([])
-                    with gr.Accordion("Job queue", open=False):
+                    # File restauree du disque: une file de nuit survit a un
+                    # redemarrage / un crash (cf. _q_persist, config job_queue.persist).
+                    _q_restored = _q_load()
+                    queue_state = gr.State(_q_restored)
+                    with gr.Accordion(
+                            f"Job queue{f' ({len(_q_restored)} restored)' if _q_restored else ''}",
+                            open=bool(_q_restored)):
                         gr.Markdown("*'+ Queue' snapshots ALL current settings (incl. model, "
                                     "LoRAs, sampler). 'Run queue' executes jobs in order; "
-                                    "**Stop** pauses the queue — remaining jobs are kept.*")
+                                    "**Stop** pauses the queue — remaining jobs are kept. "
+                                    "The queue is saved to disk and restored at startup.*")
                         with gr.Row():
-                            queue_add_btn = gr.Button("+ Queue (0)", size="sm", scale=1, min_width=140)
+                            queue_add_btn = gr.Button(f"+ Queue ({len(_q_restored)})",
+                                                      size="sm", scale=1, min_width=140)
                             queue_run_btn = gr.Button("Run queue", variant="primary", size="sm",
                                                       scale=1, min_width=140)
                         queue_md = gr.Markdown("*Queue empty.*")
@@ -3211,10 +3334,13 @@ def build_ui():
                                 save_paths_btn = gr.Button("Save paths", size="sm")
                             paths_status = gr.Markdown("")
                             with gr.Row():
-                                _ckpt_choices = ZIMAGE_BASE_REPOS + list_checkpoints()
-                                _ckpt_value = cz_pipeline.BASE_REPO if cz_pipeline.BASE_REPO in _ckpt_choices else ZIMAGE_BASE_REPOS[0]
-                                ckpt_dd = gr.Dropdown(choices=_ckpt_choices,
-                                                      value=_ckpt_value, label="Z-Image checkpoint", scale=3)
+                                _ckpt_names = ZIMAGE_BASE_REPOS + list_checkpoints()
+                                _ckpt_value = (cz_pipeline.BASE_REPO if cz_pipeline.BASE_REPO
+                                               in _ckpt_names else ZIMAGE_BASE_REPOS[0])
+                                ckpt_dd = gr.Dropdown(choices=_ckpt_choices(_ckpt_names),
+                                                      value=_ckpt_value, label="Z-Image checkpoint", scale=3,
+                                                      info="[format · size] — GGUF stays quantized in VRAM; "
+                                                           "FP8/INT8 are dequantized once, then cached")
                                 ckpt_open_btn = gr.Button("\U0001F5BC️", size="sm", scale=0, min_width=44,
                                                           elem_id="cz_ckpt_open")
                                 ckpt_refresh_btn = gr.Button("Refresh", size="sm", scale=1)

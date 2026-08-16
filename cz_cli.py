@@ -142,6 +142,118 @@ def serve_main(host="127.0.0.1", port=7861, idle_timeout=300):
                 "refine_s": round(t.get("refine", 0.0), 2),
                 "total_s": round(t.get("esrgan", 0.0) + t.get("refine", 0.0), 2)}
 
+    class Txt2ImgReq(BaseModel):
+        prompt: str
+        negative: str = ""
+        width: int = 1024
+        height: int = 1024
+        steps: int = 8                 # steps de GENERATION (txt2img)
+        guidance: float = 0.0
+        seed: int = -1
+        sampler: str = ""              # "" = garde le reglage courant du serveur
+        schedule: str = ""
+        # enchainement optionnel du meme upscale que /upscale
+        upscale: bool = False
+        model: str = DEFAULT_MODEL     # modele ESRGAN si upscale
+        factor: float = DEFAULT_FACTOR
+        denoise: float = DEFAULT_DENOISE
+        refine_steps: int = DEFAULT_STEPS
+        refine_first: bool = False
+        detail_faces: bool = False
+        save_mode: str = "local"
+        output_dir: str = DEFAULT_OUTPUT_DIR
+        output_format: str = DEFAULT_OUTPUT_FORMAT
+
+    class EditReq(BaseModel):
+        """Inpaint (mask fourni), expand directionnel, ou reframe a un ratio."""
+        input: str
+        prompt: str = ""
+        mode: str = "expand"           # "inpaint" | "expand" | "reframe"
+        mask: str = ""                 # mode inpaint: chemin d'un masque (blanc = a refaire)
+        sides: str = "left,right,top,bottom"   # mode expand
+        expand_ratio: float = 0.3
+        ratio: str = "16:9"            # mode reframe
+        fit: str = "contain"           # mode reframe: contain (outpaint) | cover (crop)
+        steps: int = 8
+        strength: float = 1.0          # mode inpaint
+        seed: int = -1
+        save_mode: str = "local"
+        output_dir: str = DEFAULT_OUTPUT_DIR
+        output_format: str = DEFAULT_OUTPUT_FORMAT
+
+    def _save_result(img, req, tag, seed):
+        """Chemin de sortie + ecriture, comme la CLI (save_mode/output_dir/format)."""
+        dst = build_output_path(None, req.save_mode, req.output_dir, req.output_format,
+                                tag=tag, seed=seed, size=img.size)
+        if dst:
+            save_image(img, dst, req.output_format)
+        return os.path.abspath(dst) if dst else None
+
+    @app.post("/txt2img")
+    def txt2img(req: Txt2ImgReq):
+        """Genere une image depuis un prompt (+ upscale et face detailer optionnels).
+        Meme moteur que l'UI et la CLI: le modele reste chaud entre les appels."""
+        with lock:
+            state["last"] = time.time()
+            if req.sampler:
+                set_sampler(req.sampler)
+            if req.schedule:
+                set_schedule(req.schedule)
+            set_guidance(req.guidance)
+            seed = req.seed if req.seed >= 0 else int(time.time() * 1000) % (2**31)
+            img, t = txt2img_run(
+                req.prompt, req.width, req.height, req.steps, seed,
+                negative_prompt=req.negative, upscale=req.upscale,
+                esrgan_model=(req.model if req.upscale else None),
+                factor=req.factor, denoise=req.denoise, steps=req.refine_steps,
+                refine_first=req.refine_first)
+            if req.detail_faces:
+                import cz_detailer
+                img = cz_detailer.detail_faces(img, req.prompt, seed, req.steps)
+            out = _save_result(img, req, "txt2img", seed)
+            state["last"] = time.time()
+        return {"output": out, "size": list(img.size), "seed": seed,
+                "esrgan_s": round(t.get("esrgan", 0.0), 2),
+                "refine_s": round(t.get("refine", 0.0), 2)}
+
+    @app.post("/edit")
+    def edit(req: EditReq):
+        """Inpaint / outpaint directionnel / reframe sur une image du disque."""
+        if not os.path.isfile(req.input):
+            raise HTTPException(status_code=400, detail=f"input not found: {req.input}")
+        mode = (req.mode or "expand").strip().lower()
+        with lock:
+            state["last"] = time.time()
+            src = Image.open(req.input)
+            seed = req.seed if req.seed >= 0 else int(time.time() * 1000) % (2**31)
+            try:
+                if mode == "inpaint":
+                    if not os.path.isfile(req.mask):
+                        raise HTTPException(status_code=400,
+                                            detail=f"mask not found: {req.mask}")
+                    img = cz_pipeline.inpaint_run(
+                        src, Image.open(req.mask).convert("L"), req.prompt,
+                        req.steps, req.strength, seed)
+                elif mode == "reframe":
+                    rw, rh = [int(x) for x in str(req.ratio).split(":")]
+                    img = cz_pipeline.reframe(src, rw, rh, req.fit, req.prompt,
+                                              req.steps, seed)
+                elif mode == "expand":
+                    sides = [s.strip().lower() for s in req.sides.split(",") if s.strip()]
+                    img = cz_pipeline.outpaint_directions(
+                        src, None, sides, req.prompt, req.steps, seed,
+                        expand=req.expand_ratio)
+                else:
+                    raise HTTPException(status_code=400,
+                                        detail=f"unknown mode '{mode}' "
+                                               "(inpaint | expand | reframe)")
+            except ValueError as e:      # ratio malforme, cotes invalides...
+                raise HTTPException(status_code=400, detail=str(e))
+            base = os.path.splitext(os.path.basename(req.input))[0]
+            out = _save_result(img, req, f"{base}_{mode}", seed)
+            state["last"] = time.time()
+        return {"output": out, "size": list(img.size), "seed": seed, "mode": mode}
+
     def _idle_watch():
         period = min(30, max(5, idle_timeout // 4)) if idle_timeout > 0 else 30
         while True:
@@ -614,6 +726,13 @@ def cli_main(argv=None):
 
     if args.serve:
         return serve_main(args.host, args.port, args.idle_timeout)
+
+    # Garde: un autre process (2e instance, ComfyUI, un jeu) qui occupe la VRAM fait
+    # deborder les rendus en RAM partagee -- des secondes deviennent des minutes par
+    # step, sans erreur. Averti ici, une fois, avant tout chargement.
+    _busy = cz_pipeline.gpu_busy_warning()
+    if _busy and not args.print_output:
+        print(f"[crispz] WARNING: {_busy}", file=sys.stderr)
 
     # Mode txt2img (Text -> Image, + upscale optionnel)
     if args.txt2img:
