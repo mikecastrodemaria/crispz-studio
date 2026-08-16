@@ -1823,8 +1823,16 @@ def generate(prompt, width, height, steps, seed, negative_prompt=""):
     # rendu suivant part avec ~3 Go de marge: c'est exactement le regime ou le pilote
     # deborde en RAM partagee et ou les latents sortent corrompus SANS erreur.
     # _refine_tiled fait deja ce menage avant sa boucle; generate ne le faisait qu'apres.
-    gc.collect()
-    if DEVICE == "cuda":
+    #
+    # UNIQUEMENT hors offload. En offload ('model', force pour tout GGUF) les poids font
+    # l'aller-retour CPU/GPU a chaque forward et ce menage entre deux rendus a produit des
+    # images ENTIEREMENT NOIRES a partir du 2e rendu (constate en vrai sur
+    # z_image_turbo-Q6_K.gguf 832x1216: rendu #1 correct, #2 et #3 max=0; le meme
+    # scenario sur le repo de base, sans offload, restait bon). Il n'y a de toute facon
+    # rien a y gagner: en offload le pipeline plafonne vers 8.5 Go, la marge VRAM qui
+    # motive ce nettoyage n'existe que quand tout le modele reste resident.
+    if DEVICE == "cuda" and _effective_offload() == "none":
+        gc.collect()
         torch.cuda.empty_cache()
         _dbg(f"txt2img start{_vram_str()}")
     # Bug ouvert (rendus corrompus a partir du 2e rendu): photographie l'etat partage a
