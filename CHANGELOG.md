@@ -3,6 +3,28 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — 🖐 Hand detailer
+
+Hands are the weak point of every diffusion model, so the ADetailer-style pass now
+works on them too: **🖐 Detail hands** next to *Detail faces* runs the same circuit
+(detect → expanded crop → upscale to the model's sweet spot → img2img refine → feathered
+elliptical paste) with a **tighter margin** (0.35 vs 0.6 — widening it would regenerate
+the forearm and the background) and a **higher default denoise** (0.4 — fingers need
+more than a face). Faces are processed first, then hands.
+
+Detection uses a **YOLOv8 hand model** through `ultralytics`, an **optional** dependency
+(`requirements-extra.txt`): without it the feature logs an actionable message and does
+nothing — the face detailer is untouched (it uses insightface). The ~6 MB model is
+pulled once from `Bingsu/adetailer`; `hand_detailer_model` also accepts an absolute path
+to your own `.pt`. Config: `hand_detailer`, `hand_detailer_denoise`,
+`hand_detailer_max_hands`, `hand_detailer_margin`, `hand_detailer_conf`. CLI:
+`--detail-hands`, `--hand-denoise`. Also exposed on the server's `/txt2img`.
+
+Validated on a real render (768×1024, both palms visible): 2 hands detected in 1.1 s,
+both refined in 9.6 s, mean pixel difference **6.5 inside the hand boxes and 0.0000
+everywhere else** — palm creases and skin texture appear, the face and clothes are
+byte-identical.
+
 ## Unreleased — Persistent queue, HTTP txt2img/edit endpoints, real CI, slicing fix
 
 - **The job queue survives a restart.** It is written to `cache/queue.json` on every
