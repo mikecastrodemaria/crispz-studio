@@ -2070,6 +2070,15 @@ try:
     CONTROLNET_SANITY_MIN_CORR = float(CONFIG.get("controlnet_tile_sanity_min_corr", 0.20))
 except Exception:
     CONTROLNET_SANITY_MIN_CORR = 0.20
+# Tuile de refine MAXIMALE quand le ControlNet est actif. Le controlnet (6.7 Go) et le
+# transformer (12 Go) doivent cohabiter en VRAM pendant la passe: avec les activations
+# d'une tuile 1024, un upscale 1728x3072 monte a 31/32 Go et bascule en RAM partagee
+# (mesure reelle: 164 s par tuile au lieu de ~10 s). Une tuile 768 divise ces
+# activations par ~2. 0 = ne pas plafonner (si tu as beaucoup de VRAM).
+try:
+    CONTROLNET_MAX_TILE = int(CONFIG.get("controlnet_tile_max_tile", 768))
+except Exception:
+    CONTROLNET_MAX_TILE = 768
 _CN_MODEL = None          # ZImageControlNetModel charge (6.7 Go bf16)
 _CN_PIPE = None           # pipeline ControlNet monte sur les composants du base
 _CN_PIPE_KEY = None       # identite du transformer courant -> rebuild si swap
@@ -2168,8 +2177,17 @@ def _ensure_controlnet_pipe():
     # ses composants (VAE, encodeur, transformer) sont ceux du base et portent DEJA les
     # hooks accelerate; re-hooker par-dessus laisse le controlnet sur CPU alors que les
     # activations arrivent en cuda -> "mat1 is on cuda:0, others on cpu" (constate).
-    # Le controlnet est donc pose une fois sur le GPU et y reste; les composants
-    # partages continuent d'etre geres par les hooks du base.
+    #
+    # Resident en permanence, le controlnet coute 6.7 Go: avec le transformer (12 Go),
+    # le VAE, l'encodeur et les activations d'une tuile 1024, un upscale 1728x3072
+    # atteint 31/32 Go -> debordement en RAM partagee, 164 s PAR TUILE au lieu de ~10 s
+    # (mesure). On l'offloade donc individuellement (accelerate): il monte sur le GPU
+    # pour son forward et redescend juste apres, sans toucher aux composants partages.
+    # PAS d'offload par forward du controlnet (accelerate cpu_offload_with_hook):
+    # from_transformer lui greffe des references PARTAGEES vers les embedders du
+    # transformer, donc le descendre sur CPU emmene des morceaux du transformer avec
+    # lui -> "index is on cpu, different from other tensors on cuda:0" (essaye, constate).
+    # La VRAM se gagne ailleurs: en reduisant la tuile de refine (cf. _refine_tiled).
     if DEVICE == "cuda":
         cn.to(DEVICE)
     try:
@@ -2250,6 +2268,12 @@ def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
     Memes rampe lineaire + overlap-add que esrgan_upscale, mais a scale 1 sur PIL."""
     w, h = image.size
     tile = round_to_multiple(tile)                       # multiple de 16 pour le VAE
+    # ControlNet actif = 6.7 Go de plus a cote du transformer pendant toute la passe:
+    # on plafonne la tuile, sinon la VRAM sature et l'upscale part en RAM partagee.
+    if CONTROLNET_TILE and CONTROLNET_MAX_TILE > 0 and tile > CONTROLNET_MAX_TILE:
+        _log(f"refine tiled: tile {tile} -> {CONTROLNET_MAX_TILE} (ControlNet needs "
+             f"~6.7 GB alongside the model; regle: controlnet_tile_max_tile)")
+        tile = round_to_multiple(CONTROLNET_MAX_TILE)
     overlap = max(0, min(int(overlap), tile - 16))
     if w <= tile and h <= tile:
         # Une seule tuile = image entiere -> pas de duplication possible: denoise demande.
@@ -2272,6 +2296,12 @@ def _refine_tiled(pipe, image, denoise, steps, prompt, seed, tile, overlap):
     xs = list(range(0, w, step))
     total = len(ys) * len(xs)
     _log(f"refine: tiled {w}x{h}, tile {tile} overlap {overlap} -> {len(xs)}x{len(ys)} = {total} tiles")
+    # L'etage ESRGAN vient de liberer de gros buffers: les rendre AVANT la boucle evite
+    # de demarrer le refine avec un cache d'allocations qui pousse a la saturation.
+    gc.collect()
+    if DEVICE == "cuda":
+        torch.cuda.empty_cache()
+        _dbg(f"tiled refine start{_vram_str()}")
     i = 0
     for y in ys:
         for x in xs:
