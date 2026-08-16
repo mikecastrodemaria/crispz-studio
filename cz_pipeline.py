@@ -2050,7 +2050,27 @@ def _feather_mask_np(th, tw, overlap, left, right, top, bottom):
 # texte restent en place, seul le detail est regenere. C'est l'idiome "Ultimate SD
 # Upscale + Tile" et le controlnet officiel Z-Image (alibaba-pai, distille 8 steps).
 # ----------------------------------------------------------------------------
-CONTROLNET_TILE = bool(CONFIG.get("controlnet_tile", False))
+# DESACTIVE (2026-08-16) -- ne PAS reactiver sans avoir corrige le bug ci-dessous.
+#
+# BUG OUVERT: apres avoir active puis desactive le ControlNet Tile, le pipeline rend
+# des images SANS RAPPORT avec le prompt demande, et sans aucune erreur. Constate deux
+# fois en usage reel (metadonnees a l'appui: prompt "interior design living room",
+# image obtenue = une facade de palais). Seul un redemarrage retablit les rendus.
+#
+# Ce qui est deja ECARTE:
+#  - le transformer n'est pas altere: from_transformer n'ecrit QUE dans le controlnet
+#    (il lui greffe t_embedder/all_x_embedder/cap_embedder/rope_embedder/noise_refiner/
+#    context_refiner/x_pad_token/cap_pad_token, lu dans les sources diffusers 0.39);
+#  - la liberation ne deplace plus rien sur CPU (c'etait un autre bug, corrige: cela
+#    emmenait les embedders partages du transformer et faisait planter la generation);
+#  - la saturation VRAM (reglee par le plafond de tuile: 31 Go/164 s par tuile ->
+#    28.2 Go/4.5 s).
+# PISTES RESTANTES a explorer: les pipes derives en cache (_DERIVED), le scheduler
+# partage, ou l'etat du VAE apres une passe ControlNet. Reproduire avec
+# --log-level debug et lire les lignes '_ensure_base key=... cached=...' et
+# 'deriving ... pipeline' pour voir si un cache pourri est reutilise.
+CONTROLNET_TILE_AVAILABLE = False        # met a True pour reprendre le chantier
+CONTROLNET_TILE = CONTROLNET_TILE_AVAILABLE and bool(CONFIG.get("controlnet_tile", False))
 # repo HF + fichier, ou chemin local absolu vers un .safetensors controlnet.
 CONTROLNET_MODEL = str(CONFIG.get(
     "controlnet_tile_model",
@@ -2110,6 +2130,11 @@ def _free_controlnet():
 
 def set_controlnet_tile(v):
     global CONTROLNET_TILE
+    if v and not CONTROLNET_TILE_AVAILABLE:
+        _log("ControlNet Tile is DISABLED in this build (open bug: after using it, "
+             "renders no longer match the prompt until restart) - ignoring")
+        CONTROLNET_TILE = False
+        return
     CONTROLNET_TILE = bool(v)
     _log(f"ControlNet Tile refine -> {'ON' if CONTROLNET_TILE else 'OFF'}")
     if not CONTROLNET_TILE:

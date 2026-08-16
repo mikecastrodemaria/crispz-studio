@@ -549,11 +549,10 @@ def cli_main(argv=None):
     parser.add_argument("--detailer-denoise", type=float, default=None, metavar="0.35",
                         help="Face-detailer strength (0.1-0.7; default from config).")
     parser.add_argument("--controlnet-tile", action="store_true",
-                        help="Refine with the Z-Image Tile ControlNet instead of plain "
-                             "img2img: every step is conditioned on the source image, so "
-                             "composition/faces/text stay put and only detail is redrawn. "
-                             "First use downloads a 6.7 GB model (config "
-                             "'controlnet_tile_model' to point elsewhere).")
+                        help="[DISABLED in this build] Refine with the Z-Image Tile "
+                             "ControlNet. Turned off after an open bug: once used, the "
+                             "pipeline returns images unrelated to the prompt until the "
+                             "app is restarted. The flag is accepted but ignored.")
     parser.add_argument("--controlnet-scale", type=float, default=None, metavar="0.75",
                         help="ControlNet conditioning strength (0.1-1.5). High = faithful "
                              "to the source, low = more invention.")
