@@ -19,6 +19,11 @@ from cz_core import CONFIG, _log, _dbg
 DETAILER_ENABLED = bool(CONFIG.get("face_detailer", False))
 DETAILER_DENOISE = float(CONFIG.get("face_detailer_denoise", 0.35))
 _MAX_FACES = max(1, int(CONFIG.get("face_detailer_max_faces", 4)))
+# Prompt passe au refine de CHAQUE crop de visage. VIDE par defaut, comme pour les
+# mains et les tuiles (refine_tile_prompt): le prompt de SCENE fait peindre la scene
+# dans le crop -- constate: un prompt 'pancarte CRISPZ STUDIO' a ecrit le texte SUR
+# les joues du visage refine. Vide, l'img2img n'affine que le visage source.
+_FACE_PROMPT = str(CONFIG.get("face_detailer_prompt", ""))
 _TARGET = 832      # cote de travail du crop (sweet spot Z-Image, /32)
 _MARGIN = 0.6      # expansion de la bbox visage (contexte: cheveux, cou)
 _MIN_FACE = 28     # px: en-dessous, trop petit pour gagner quoi que ce soit
@@ -199,7 +204,9 @@ def detail_faces(image, prompt, seed, steps=12, denoise=None, progress=None):
     except Exception as e:
         _log(f"detailer: face detection unavailable ({e})")
         return image, 0
-    return _detail_regions(image, boxes, prompt, seed, steps,
+    # Prompt de scene IGNORE pour le refine des crops (cf. _FACE_PROMPT: le texte/decor
+    # du prompt finit peint sur le visage sinon).
+    return _detail_regions(image, boxes, _FACE_PROMPT, seed, steps,
                            DETAILER_DENOISE if denoise is None else float(denoise),
                            "face", _MARGIN, _MIN_FACE, _MAX_FACES, progress)
 
