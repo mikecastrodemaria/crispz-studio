@@ -37,6 +37,15 @@ _HAND_MARGIN = float(CONFIG.get("hand_detailer_margin", 0.35))
 # 'hand_yolov8s.pt' (plus precis). Un chemin local absolu marche aussi.
 _HAND_MODEL = str(CONFIG.get("hand_detailer_model", "hand_yolov8n.pt")).strip()
 _HAND_CONF = float(CONFIG.get("hand_detailer_conf", 0.3))
+# Peripherique du DETECTEUR de mains. CPU PAR DEFAUT, et ce n'est pas une option de
+# confort: le predict() ultralytics sur le GPU empoisonne l'etat CUDA/torch du process,
+# et TOUTES les diffusions suivantes sortent en mosaique jusqu'au redemarrage. Prouve
+# le 2026-08-17 (sidecars a l'appui, drapeaux detail_*_run): rendu base propre ->
+# passe mains H:1 rendue propre -> rendu SUIVANT detruit, reproduit a chaque fois,
+# meme apres revert complet du reste. Le YOLOv8n fait 6 Mo: la detection CPU coute
+# ~0.1 s par image. 'cuda' reste accepte pour re-tester le jour ou ultralytics/torch
+# regle le conflit -- en connaissance de cause.
+_HAND_DEVICE = str(CONFIG.get("hand_detailer_device", "cpu")).strip().lower() or "cpu"
 _hand_model = None
 
 
@@ -92,10 +101,13 @@ def _ensure_hand_model():
 
 
 def detect_hands(image):
-    """Bboxes [x1,y1,x2,y2] des mains detectees (liste vide si aucune)."""
+    """Bboxes [x1,y1,x2,y2] des mains detectees (liste vide si aucune).
+
+    device=_HAND_DEVICE (cpu par defaut): le predict ultralytics sur GPU corrompt les
+    diffusions suivantes du process (cf. commentaire de _HAND_DEVICE). Ne pas enlever."""
     model = _ensure_hand_model()
     res = model.predict(source=np.asarray(image.convert("RGB")), conf=_HAND_CONF,
-                        verbose=False)
+                        verbose=False, device=_HAND_DEVICE)
     out = []
     for r in res:
         for b in getattr(r, "boxes", []):
