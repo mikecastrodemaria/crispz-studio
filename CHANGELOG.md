@@ -3,6 +3,37 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — mosaic corruption SOLVED: the hand detector poisoned the GPU
+
+The mystery corruption that plagued 2026-08-16/17 — renders coming out as mosaic
+garbage, unrelated to the prompt, no error, until restart — is root-caused and fixed.
+
+**The culprit: the hand detailer's YOLO detection running on the GPU.** The ultralytics
+`predict()` call poisons the process CUDA/torch state: the render *during* which the
+hand pass runs comes out fine, and **every diffusion render after it is destroyed**.
+Nailed by a controlled matrix on 2026-08-17 with per-render execution metadata
+(`detail_*_run` sidecar keys): clean base render → hands pass `H:1` (one hand refined,
+image clean) → next render total garbage, reproducible, user-confirmed
+(base OK, base+face OK, base+hands KO). The refine code shared with the face detailer
+is innocent (identical code path, weeks of clean service with insightface detection;
+refine-on-crop repro without YOLO also clean).
+
+This retroactively explains the "first render clean, everything after corrupted until
+restart" signature seen since the hand detailer shipped (d6143c0, 2026-08-16 13:15 —
+the corruption's first-ever appearance was the same day at 17:32), across all models
+(GGUF, sickOllie, base repo) and through every unrelated revert.
+
+**Fix**: hand detection now runs on **CPU** by default (`hand_detailer_device: "cpu"`).
+The YOLOv8n model is 6 MB; CPU detection costs ~0.1 s per image. `"cuda"` remains
+accepted to re-test the conflict after an ultralytics/torch upgrade. The exact
+mechanism inside ultralytics/torch is still unidentified — the isolation is the fix.
+
+**New forensics** (kept): every sidecar now records `detail_faces` / `detail_hands`
+(checkbox state), `detail_faces_run` / `detail_hands_run` (-1 not attempted, -2 pass
+crashed, ≥0 regions actually refined) and `offload` (configured/effective). Note for
+test matrices: the job queue does NOT snapshot the detailer checkboxes (module flags
+read at run time) — use direct Generate clicks when varying them per step.
+
 ## Unreleased — ControlNet Tile: root cause found, feature stays OFF
 
 `CONTROLNET_TILE_AVAILABLE` remains **False**. It was flipped on to resume the

@@ -94,6 +94,8 @@
     "hand_detailer_model": "hand_yolov8n.pt",
     "_hand_detailer_conf_help": "Detection confidence threshold (0-1). Lower catches more hands (and more false positives).",
     "hand_detailer_conf": 0.3,
+    "_hand_detailer_device_help": "Device for the hand DETECTOR (YOLO). 'cpu' (default) is a deliberate safety choice, not a fallback: running the ultralytics predict on the GPU poisons the process CUDA state and EVERY later diffusion render comes out as mosaic garbage until the app is restarted (root-caused 2026-08-17: clean base render -> hand pass runs fine -> next render destroyed, reproducible). The YOLOv8n model is 6 MB, CPU detection costs ~0.1 s per image. Set 'cuda' only to re-test the conflict after an ultralytics/torch upgrade.",
+    "hand_detailer_device": "cpu",
     "_gpu_busy_warn_gb_help": "Warn when another process (a second crispz instance, ComfyUI, a game) already holds this many GB of VRAM: sharing the GPU pushes renders into shared RAM and turns seconds into minutes per step, with no error message. 0 = no warning.",
     "gpu_busy_warn_gb": 2.0,
     "loras_dir": "",
