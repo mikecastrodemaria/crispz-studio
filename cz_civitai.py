@@ -337,6 +337,144 @@ def _download(url, timeout=30):
         return r.read()
 
 
+def search_loras(query, limit=10, api_key=None, types="LORA", base_model=None):
+    """Recherche CivitAI par NOM: GET /models?query=...&types=LORA. Renvoie une liste de
+    candidats PLATS, une entree par VERSION du modele (les versions d'une meme page
+    CivitAI visent souvent des bases differentes: Z-Image, Flux, SDXL...). Champs:
+      {modelId, modelName, creator, nsfw, versionId, versionName, baseModel,
+       fileName, sizeKB, downloadUrl, sha256, previewUrl, url}
+    base_model (ex. 'Z-Image') remonte les versions de cette base EN TETE sans exclure
+    les autres (tri stable) — l'appelant filtre s'il veut du strict. [] si echec reseau
+    ou aucun resultat (jamais d'exception: l'UI affiche 'no result')."""
+    q = str(query or "").strip()
+    if not q:
+        return []
+    data = _api_get("/models", {"query": q, "types": types, "limit": int(limit),
+                                "sort": "Highest Rated"}, api_key=api_key)
+    out = []
+    for m in (data or {}).get("items") or []:
+        if not isinstance(m, dict) or m.get("id") is None:
+            continue
+        for v in m.get("modelVersions") or []:
+            if not isinstance(v, dict) or v.get("id") is None:
+                continue
+            files = [f for f in (v.get("files") or []) if isinstance(f, dict)]
+            f = next((x for x in files if x.get("primary")), files[0] if files else {})
+            out.append({
+                "modelId": m.get("id"),
+                "modelName": str(m.get("name") or "").strip(),
+                "creator": str((m.get("creator") or {}).get("username") or "").strip(),
+                "nsfw": bool(m.get("nsfw")),
+                "versionId": v.get("id"),
+                "versionName": str(v.get("name") or "").strip(),
+                "baseModel": str(v.get("baseModel") or "").strip(),
+                "fileName": str(f.get("name") or "").strip(),
+                "sizeKB": float(f.get("sizeKB") or 0),
+                "downloadUrl": str(f.get("downloadUrl") or v.get("downloadUrl") or "").strip(),
+                "sha256": str((f.get("hashes") or {}).get("SHA256") or "").strip().lower(),
+                "previewUrl": next((i.get("url") for i in (v.get("images") or [])
+                                    if isinstance(i, dict) and i.get("url")), ""),
+                "url": f"https://civitai.com/models/{m.get('id')}",
+            })
+    if base_model:
+        want = _norm_base(base_model)
+        out.sort(key=lambda e: 0 if _norm_base(e["baseModel"]) == want else 1)
+    return out
+
+
+def download_model_file(cand, dest_dir, api_key=None, progress=None):
+    """Telecharge le fichier d'un candidat search_loras() dans dest_dir (stream 1 Mo +
+    progress('download', frac, texte) avec % REEL si la taille est connue). Le SHA256 est
+    calcule PENDANT le streaming et compare a celui annonce par CivitAI: mismatch ->
+    fichier supprime + echec propre (pas de LoRA corrompue silencieuse). Ecrit vers un
+    '.part' puis renomme (jamais de fichier partiel visible), met le hash en cache dans
+    '<stem>.civitai.json' et enrichit preview + trigger words (best effort).
+    Renvoie {success, message, path}. Jamais d'exception vers l'appelant."""
+    def _p(frac, text):
+        if progress:
+            try:
+                progress("download", frac, text)
+            except Exception:
+                pass
+    try:
+        cand = cand or {}
+        url = str(cand.get("downloadUrl") or "").strip()
+        if not url and cand.get("versionId"):
+            url = f"https://civitai.com/api/download/models/{cand['versionId']}"
+        if not url:
+            return {"success": False, "message": "no download URL for this version", "path": ""}
+        key = api_key or API_KEY
+        if key:
+            url += ("&" if "?" in url else "?") + urllib.parse.urlencode({"token": key})
+        fname = os.path.basename(str(cand.get("fileName") or "").strip().replace("\\", "/"))
+        if not fname:
+            fname = f"civitai_{cand.get('versionId') or 'model'}.safetensors"
+        os.makedirs(dest_dir, exist_ok=True)
+        dest = os.path.join(dest_dir, fname)
+        if os.path.isfile(dest):
+            return {"success": True, "message": f"{fname} already exists (not overwritten)",
+                    "path": dest}
+        expected = str(cand.get("sha256") or "").strip().lower()
+        req = urllib.request.Request(url, headers={"User-Agent": _UA})
+        h = hashlib.sha256()
+        done = 0
+        tmp = dest + ".part"
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                total = int(r.headers.get("Content-Length") or 0) \
+                    or int(float(cand.get("sizeKB") or 0) * 1024)
+                with open(tmp, "wb") as f:
+                    for chunk in iter(lambda: r.read(1 << 20), b""):
+                        f.write(chunk)
+                        h.update(chunk)
+                        done += len(chunk)
+                        if total:
+                            frac = min(1.0, done / total)
+                            _p(frac, f"Downloading {fname}… {int(frac * 100)}% "
+                                     f"({done / 1024**2:.0f} MB)")
+                        else:
+                            _p(None, f"Downloading {fname}… {done / 1024**2:.0f} MB")
+        except urllib.error.HTTPError as e:
+            _try_remove(tmp)
+            hint = (" (this file may require a CivitAI API key — set one in Advanced)"
+                    if e.code in (401, 403) and not key else "")
+            return {"success": False, "message": f"download failed: HTTP {e.code} {e.reason}{hint}",
+                    "path": ""}
+        except Exception as e:
+            _try_remove(tmp)
+            return {"success": False, "message": f"download failed: {e}", "path": ""}
+        sha = h.hexdigest().lower()
+        if expected and len(expected) == 64 and sha != expected:
+            _try_remove(tmp)
+            return {"success": False,
+                    "message": f"SHA256 mismatch for {fname} (corrupted download, file removed)",
+                    "path": ""}
+        os.replace(tmp, dest)
+        _cache_sha256(dest, sha)
+        _log(f"civitai download: {fname} ({done / 1024**2:.0f} MB) -> {dest_dir}")
+        # Enrichissement (preview + trigger words): le hash est deja en cache -> aucune
+        # relecture du fichier. Best effort: un echec reseau ne gache pas le download.
+        try:
+            _p(None, "Fetching preview + trigger words…")
+            fetch_civitai_for_model(dest, api_key=api_key, check_update=False)
+        except Exception as e:
+            _dbg(f"post-download enrich failed: {e}")
+        return {"success": True, "message": f"{fname} downloaded ({done / 1024**2:.0f} MB, "
+                                            f"SHA256 {'verified' if expected else 'recorded'})",
+                "path": dest}
+    except Exception as e:
+        _dbg(f"download_model_file failed: {e}")
+        return {"success": False, "message": f"download failed: {e}", "path": ""}
+
+
+def _try_remove(path):
+    try:
+        if os.path.isfile(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
 def has_preview(safepath):
     stem = os.path.splitext(safepath)[0]
     return any(os.path.isfile(stem + e) for e in

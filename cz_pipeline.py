@@ -64,6 +64,13 @@ LORAS_DIR = (os.environ.get("LORAS_DIR") or _prefs.get("loras_dir")
              or CONFIG.get("loras_dir") or os.path.join(HERE, "loras"))
 # LoRA actives: liste de (chemin, poids). Plusieurs LoRA combinables (multi-slots).
 LORAS = []
+# LoRA appelees DANS LE PROMPT via <lora:nom[:poids]> (syntaxe A1111), re-derivees a
+# chaque run depuis le prompt par consume_prompt_loras. Separees des slots (LORAS) pour
+# que retirer le tag du prompt suffise a les desactiver sans toucher aux slots.
+PROMPT_LORAS = []
+# Coupe-circuit config: prompt_lora_tags=false -> les tags sont juste retires du prompt
+# (jamais envoyes a l'encodeur) mais plus resolus/actives.
+PROMPT_LORA_TAGS = bool(CONFIG.get("prompt_lora_tags", True))
 LORA_WEIGHT = float(CONFIG.get("default_lora_weight", 1.0))  # poids par defaut des slots
 
 
@@ -801,6 +808,95 @@ def set_loras(slots):
              + " -> applied on next run (hot-swap, no model reload)")
 
 
+def set_prompt_loras(pairs):
+    """Definit les LoRA appelees dans le prompt (liste de (chemin_abs, poids)). Appele a
+    chaque run par consume_prompt_loras — y compris avec [] quand le prompt n'a plus de
+    tag, pour que la LoRA se desactive au run suivant."""
+    global PROMPT_LORAS
+    new = [(p, float(w)) for p, w in (pairs or [])]
+    if new != PROMPT_LORAS:
+        PROMPT_LORAS = new
+        _log("prompt LoRAs -> "
+             + (", ".join(f"{os.path.basename(p)}@{w}" for p, w in new) or "(none)"))
+
+
+def _effective_loras():
+    """Slots (LORAS) + LoRA du prompt (PROMPT_LORAS), dedoublonnees par chemin: une LoRA
+    presente des deux cotes garde le poids du PROMPT (le tag est le reglage le plus
+    explicite). C'est CETTE liste que _apply_loras pose sur le transformer."""
+    merged = {os.path.normcase(p): (p, float(w)) for p, w in LORAS}
+    for p, w in PROMPT_LORAS:
+        merged[os.path.normcase(p)] = (p, float(w))
+    return list(merged.values())
+
+
+def resolve_lora_name(name):
+    """Resout un nom de tag <lora:...> vers un chemin RELATIF de list_loras(), ou None.
+    Tolerant (insensible a la casse, '\\' acceptes): chemin relatif exact -> nom de
+    fichier -> stem (sans extension) -> sous-chaine du stem si le match est UNIQUE
+    (ambigu = non resolu: on ne devine pas entre deux fichiers)."""
+    want = str(name or "").strip().replace("\\", "/").lower()
+    if not want:
+        return None
+    files = list_loras()
+    by_rel = {f.lower(): f for f in files}
+    if want in by_rel:
+        return by_rel[want]
+    base = want.rsplit("/", 1)[-1]
+    stem = base.rsplit(".", 1)[0] if base.lower().endswith((".safetensors", ".ckpt", ".pt")) \
+        else base
+    exact = [f for f in files if os.path.basename(f).lower() in (base, stem + ".safetensors",
+                                                                 stem + ".ckpt", stem + ".pt")]
+    if not exact:
+        exact = [f for f in files
+                 if os.path.splitext(os.path.basename(f))[0].lower() == stem]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        _log(f"lora tag '{name}': ambiguous ({len(exact)} files share this name), not resolved")
+        return None
+    partial = [f for f in files if stem in os.path.splitext(os.path.basename(f))[0].lower()]
+    if len(partial) == 1:
+        return partial[0]
+    if len(partial) > 1:
+        _log(f"lora tag '{name}': ambiguous ({len(partial)} partial matches), not resolved")
+    return None
+
+
+def consume_prompt_loras(prompt):
+    """Point d'entree unique pour les tags <lora:nom[:poids]> d'un prompt utilisateur:
+    les extrait, les resout dans LORAS_DIR et ACTIVE les LoRA trouvees pour ce run
+    (PROMPT_LORAS, combinees aux slots par _apply_loras). Renvoie (prompt_nettoye,
+    missing) — missing = noms introuvables localement; l'appelant decide de la suite
+    (l'UI bloque avec un message + recherche CivitAI, la CLI sort en erreur). Les tags
+    sont TOUJOURS retires du prompt: un fragment de syntaxe ne va jamais a l'encodeur.
+    Poids absent -> LORA_WEIGHT; poids hors bornes -> ramene dans [min, max]."""
+    from cz_prompt import extract_lora_tags
+    clean, tags = extract_lora_tags(prompt)
+    if not tags:
+        set_prompt_loras([])
+        return clean, []
+    if not PROMPT_LORA_TAGS:
+        _log(f"prompt lora tags disabled (config prompt_lora_tags=false): "
+             f"{len(tags)} tag(s) removed from the prompt, not applied")
+        set_prompt_loras([])
+        return clean, []
+    pairs, missing = [], []
+    for name, w in tags:
+        rel = resolve_lora_name(name)
+        if not rel:
+            missing.append(name)
+            continue
+        w = LORA_WEIGHT if w is None else float(w)
+        cw = min(LORA_WEIGHT_MAX, max(LORA_WEIGHT_MIN, w))
+        if cw != w:
+            _log(f"lora tag '{name}': weight {w} clamped to {cw} "
+                 f"(bounds {LORA_WEIGHT_MIN:g}..{LORA_WEIGHT_MAX:g})")
+        pairs.append((os.path.join(LORAS_DIR, rel), cw))
+    set_prompt_loras(pairs)
+    return clean, missing
+
+
 def set_omni_model(repo):
     """Definit le modele Omni/Edit (repo HF ou dossier). Invalide le pipe omni."""
     global OMNI_MODEL
@@ -1002,7 +1098,8 @@ def _clear_loras(pipe):
 
 
 def _apply_loras(pipe, force=False):
-    """Synchronise les adaptateurs LoRA du pipe avec LORAS, SANS recharger le modele.
+    """Synchronise les adaptateurs LoRA du pipe avec la liste EFFECTIVE (slots LORAS +
+    LoRA du prompt PROMPT_LORAS), SANS recharger le modele.
 
     Le transformer reste en VRAM; seuls les adaptateurs PEFT bougent:
       - memes fichiers, poids differents -> set_adapters (immediat)
@@ -1010,22 +1107,23 @@ def _apply_loras(pipe, force=False):
     Les pipes derives (from_pipe) partagent ce transformer -> ils suivent automatiquement.
     Renvoie True si applique, False si echec (le caller retombe sur un reload complet)."""
     global _APPLIED_LORAS
-    if not force and _APPLIED_LORAS == LORAS:
+    eff = _effective_loras()
+    if not force and _APPLIED_LORAS == eff:
         return True
     old_paths = [p for p, _ in _APPLIED_LORAS]
-    new_paths = [p for p, _ in LORAS]
+    new_paths = [p for p, _ in eff]
     try:
         if not force and old_paths and old_paths == new_paths:
             # Seuls les poids changent -> re-ponderation instantanee.
-            pipe.set_adapters(_lora_names(LORAS), [float(w) for _, w in LORAS])
-            _APPLIED_LORAS = list(LORAS)
+            pipe.set_adapters(_lora_names(eff), [float(w) for _, w in eff])
+            _APPLIED_LORAS = list(eff)
             _log("LoRA weights updated in place (no reload): "
-                 + ", ".join(f"{os.path.basename(p)}@{w}" for p, w in LORAS))
+                 + ", ".join(f"{os.path.basename(p)}@{w}" for p, w in eff))
             return True
         if old_paths or force:
             _clear_loras(pipe)
         names, weights = [], []
-        for i, (p, w) in enumerate(LORAS):
+        for i, (p, w) in enumerate(eff):
             if os.path.isfile(p):
                 an = f"cz_lora_{i}"
                 _log(f"applying LoRA: {os.path.basename(p)} (weight {w})")
@@ -1040,7 +1138,7 @@ def _apply_loras(pipe, force=False):
                 _log(f"LoRA file not found, ignored: {p}")
         if names:
             pipe.set_adapters(names, weights)
-        _APPLIED_LORAS = list(LORAS)
+        _APPLIED_LORAS = list(eff)
         if not force:
             _log("LoRAs hot-swapped (no model reload)")
         return True
@@ -1421,7 +1519,7 @@ def _swap_transformer(pipe):
                 new_t.to(DEVICE)
         # Les adaptateurs LoRA etaient poses sur l'ancien transformer -> a reposer.
         _APPLIED_LORAS = []
-        if LORAS:
+        if _effective_loras():
             _apply_loras(pipe, force=True)
         _log(f"transformer switched in {time.time() - t0:.1f}s "
              "(VAE + text encoder kept, no full reload)")
@@ -1482,7 +1580,7 @@ def _ensure_base():
     # LoRA Z-Image (sur le transformer du base -> partage par les pipes derives).
     # force=True: pipe neuf, aucun adaptateur pose -> on (re)pose tout.
     _APPLIED_LORAS = []
-    if LORAS:
+    if _effective_loras():
         _apply_loras(pipe, force=True)
     # Attention slicing: POSE PAR APPEL via _set_slicing (selon la resolution traitee),
     # PAS au chargement. En tuile/1024 -> slicing OFF = attention SDPA native, rapide
@@ -2255,8 +2353,11 @@ def _gen_meta(mode, prompt, negative="", seed=None, steps=None, guidance=None,
         m["styles"] = _styles
     m["sampler"] = f"{SAMPLER}/{SCHEDULE}"
     m["model"] = model or (ZIMAGE_TRANSFORMER or BASE_REPO)
-    if LORAS:
-        m["loras"] = [f"{os.path.basename(p)}@{w}" for p, w in LORAS]
+    # Liste EFFECTIVE (slots + tags <lora:...> du prompt): c'est ce qui a reellement
+    # tourne -> indispensable pour reproduire le rendu depuis le sidecar.
+    _eff_loras = _effective_loras()
+    if _eff_loras:
+        m["loras"] = [f"{os.path.basename(p)}@{w}" for p, w in _eff_loras]
     # Etat runtime qui change le CHEMIN d'execution: indispensable pour dater/attribuer
     # une corruption depuis les sidecars seuls (bug mosaique ouvert: sans ces cles il a
     # fallu reconstituer la config de chaque rendu de memoire). Import paresseux: le

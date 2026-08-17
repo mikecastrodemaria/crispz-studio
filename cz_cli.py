@@ -200,16 +200,23 @@ def serve_main(host="127.0.0.1", port=7861, idle_timeout=300):
             if req.schedule:
                 set_schedule(req.schedule)
             set_guidance(req.guidance)
+            # Tags <lora:...> du prompt: resolus + actives; introuvable -> 400 clair
+            # (pas de generation sans la LoRA demandee), AVANT tout chargement.
+            prompt, _missing = cz_pipeline.consume_prompt_loras(req.prompt)
+            if _missing:
+                raise HTTPException(status_code=400,
+                                    detail="LoRA not found locally: " + ", ".join(_missing)
+                                           + f" (folder: {cz_pipeline.LORAS_DIR})")
             seed = req.seed if req.seed >= 0 else int(time.time() * 1000) % (2**31)
             img, t = txt2img_run(
-                req.prompt, req.width, req.height, req.steps, seed,
+                prompt, req.width, req.height, req.steps, seed,
                 negative_prompt=req.negative, upscale=req.upscale,
                 esrgan_model=(req.model if req.upscale else None),
                 factor=req.factor, denoise=req.denoise, steps=req.refine_steps,
                 refine_first=req.refine_first)
             if req.detail_faces:
                 import cz_detailer
-                img = cz_detailer.detail_faces(img, req.prompt, seed, req.steps)
+                img = cz_detailer.detail_faces(img, prompt, seed, req.steps)
             out = _save_result(img, req, "txt2img", seed)
             state["last"] = time.time()
         return {"output": out, "size": list(img.size), "seed": seed,
@@ -225,6 +232,12 @@ def serve_main(host="127.0.0.1", port=7861, idle_timeout=300):
         with lock:
             state["last"] = time.time()
             src = Image.open(req.input)
+            # Memes regles que /txt2img pour les tags <lora:...> du prompt.
+            prompt, _missing = cz_pipeline.consume_prompt_loras(req.prompt)
+            if _missing:
+                raise HTTPException(status_code=400,
+                                    detail="LoRA not found locally: " + ", ".join(_missing)
+                                           + f" (folder: {cz_pipeline.LORAS_DIR})")
             seed = req.seed if req.seed >= 0 else int(time.time() * 1000) % (2**31)
             try:
                 if mode == "inpaint":
@@ -232,16 +245,16 @@ def serve_main(host="127.0.0.1", port=7861, idle_timeout=300):
                         raise HTTPException(status_code=400,
                                             detail=f"mask not found: {req.mask}")
                     img = cz_pipeline.inpaint_run(
-                        src, Image.open(req.mask).convert("L"), req.prompt,
+                        src, Image.open(req.mask).convert("L"), prompt,
                         req.steps, req.strength, seed)
                 elif mode == "reframe":
                     rw, rh = [int(x) for x in str(req.ratio).split(":")]
-                    img = cz_pipeline.reframe(src, rw, rh, req.fit, req.prompt,
+                    img = cz_pipeline.reframe(src, rw, rh, req.fit, prompt,
                                               req.steps, seed)
                 elif mode == "expand":
                     sides = [s.strip().lower() for s in req.sides.split(",") if s.strip()]
                     img = cz_pipeline.outpaint_directions(
-                        src, None, sides, req.prompt, req.steps, seed,
+                        src, None, sides, prompt, req.steps, seed,
                         expand=req.expand_ratio)
                 else:
                     raise HTTPException(status_code=400,
@@ -656,6 +669,20 @@ def cli_main(argv=None):
         save_image(res, dst, "png")
         print(os.path.abspath(dst))
         return 0
+
+    # Tags <lora:nom[:poids]> dans --prompt: extraits + resolus + actives (meme moteur
+    # que l'UI, cz_pipeline.consume_prompt_loras). Introuvable localement -> sortie
+    # propre AVANT tout chargement de modele, avec le chemin cherche et le remede.
+    if args.prompt:
+        args.prompt, _missing_loras = cz_pipeline.consume_prompt_loras(args.prompt)
+        if _missing_loras:
+            print("error: LoRA not found locally: " + ", ".join(_missing_loras),
+                  file=sys.stderr)
+            print(f"  looked in: {cz_pipeline.LORAS_DIR}", file=sys.stderr)
+            print("  fix: check the <lora:...> name, drop the file into that folder, or "
+                  "search & download it from CivitAI (UI: Models > LoRA > Search CivitAI)",
+                  file=sys.stderr)
+            return 2
 
     # --reframe W:H : reframe -i (contain = outpaint / cover = crop) puis termine
     if args.reframe:
