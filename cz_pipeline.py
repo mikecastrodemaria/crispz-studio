@@ -2210,6 +2210,22 @@ def txt2img_run(prompt, width, height, gen_steps, seed, negative_prompt="",
     return result, timings
 
 
+# Hash git court du build qui tourne, fige au demarrage. Ecrit dans chaque sidecar:
+# pendant la chasse au bug mosaique, impossible de savoir si un rendu venait du code
+# corrige ou d'un process pas encore redemarre -- cette cle tranche.
+def _read_build():
+    try:
+        import subprocess
+        return subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=HERE, capture_output=True,
+            text=True, timeout=5).stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+_BUILD = _read_build()
+
+
 def _gen_meta(mode, prompt, negative="", seed=None, steps=None, guidance=None,
               size=None, model=None, styles=None, extra=None):
     """Construit le dict de metadonnees de generation (pour sidecar/PNG)."""
@@ -2236,10 +2252,12 @@ def _gen_meta(mode, prompt, negative="", seed=None, steps=None, guidance=None,
     # fallu reconstituer la config de chaque rendu de memoire). Import paresseux: le
     # detailer importe cz_pipeline dans ses fonctions, jamais l'inverse en tete de module.
     m["offload"] = f"{OFFLOAD_MODE}/{_effective_offload()}"
+    m["build"] = _BUILD
     try:
         import cz_detailer
         m["detail_faces"] = bool(cz_detailer.DETAILER_ENABLED)
         m["detail_hands"] = bool(cz_detailer.HAND_ENABLED)
+        m["hand_device"] = cz_detailer._HAND_DEVICE
     except Exception:
         pass
     if extra:
