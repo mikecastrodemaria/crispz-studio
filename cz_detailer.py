@@ -46,6 +46,13 @@ _HAND_CONF = float(CONFIG.get("hand_detailer_conf", 0.3))
 # ~0.1 s par image. 'cuda' reste accepte pour re-tester le jour ou ultralytics/torch
 # regle le conflit -- en connaissance de cause.
 _HAND_DEVICE = str(CONFIG.get("hand_detailer_device", "cpu")).strip().lower() or "cpu"
+# Prompt passe au refine de CHAQUE crop de main. VIDE par defaut, et c'est important:
+# avec le prompt de SCENE, le modele repeint le sujet DANS le crop (constate: un
+# mini-visage incruste entre le pouce et l'index a denoise 0.4). Meme principe que
+# refine_tile_prompt pour le refine tuile: un prompt global sur un crop local fait
+# recomposer la scene; vide, l'img2img n'affine que ce que l'image source contient.
+# Configurable pour qui veut guider ("detailed hand, natural fingers...").
+_HAND_PROMPT = str(CONFIG.get("hand_detailer_prompt", ""))
 _hand_model = None
 
 
@@ -200,12 +207,16 @@ def detail_faces(image, prompt, seed, steps=12, denoise=None, progress=None):
 def detail_hands(image, prompt, seed, steps=12, denoise=None, progress=None):
     """Retouche chaque main detectee (YOLOv8). Marge plus SERREE que pour un visage:
     elargir trop ferait re-generer l'avant-bras et le decor autour. Renvoie
-    (image, nb_mains_traitees); ne leve jamais (ultralytics absent -> message + no-op)."""
+    (image, nb_mains_traitees); ne leve jamais (ultralytics absent -> message + no-op).
+
+    Le prompt de scene recu est IGNORE pour le refine des crops: il fait peindre le
+    sujet dans la main (mini-visage entre pouce et index, constate). On refine avec
+    _HAND_PROMPT (vide par defaut = detail local seulement, cf. commentaire)."""
     try:
         boxes = detect_hands(image)
     except Exception as e:
         _log(f"detailer: hand detection unavailable ({e})")
         return image, 0
-    return _detail_regions(image, boxes, prompt, seed, steps,
+    return _detail_regions(image, boxes, _HAND_PROMPT, seed, steps,
                            HAND_DENOISE if denoise is None else float(denoise),
                            "hand", _HAND_MARGIN, _MIN_HAND, _MAX_HANDS, progress)

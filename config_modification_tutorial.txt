@@ -163,6 +163,13 @@ hand_detailer_device    'cpu' (default). NOT a fallback but a deliberate isolati
                         render -> hand pass fine -> next render destroyed, every
                         time). CPU detection costs ~0.1 s per image (6 MB model).
                         Set 'cuda' only to re-test after an ultralytics/torch upgrade.
+hand_detailer_prompt    "" (default). Prompt for the refine of each hand CROP. Empty =
+                        the pass only sharpens what the crop already contains. Feeding
+                        the scene prompt there makes the model repaint the subject
+                        INSIDE the hand (a tiny face between thumb and index,
+                        observed) - same principle as refine_tile_prompt. A short
+                        generic string ('detailed hand, natural fingers') is fine;
+                        never the scene description.
 faceswap_model_path     Absolute path to an inswapper .onnx file (Face Swap tab). If
                         empty, the app also looks for inswapper_128.onnx in the
                         'faceswap' folder (next to app.py), 'models', checkpoints_dir,
