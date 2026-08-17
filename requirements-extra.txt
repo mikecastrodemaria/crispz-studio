@@ -1,8 +1,13 @@
 # Optional extras (local tools that don't need a Z-Image model).
 # Install:  .venv/Scripts/python -m pip install -r requirements-extra.txt
 rembg                  # Remove BG tab (downloads the u2net model on first use)
-ultralytics            # 🖐 Detail hands (YOLOv8 hand detector; the ~6 MB model is
-                       # pulled once from Bingsu/adetailer on first use). Face detailer
-                       # does NOT need it (insightface handles faces).
+ultralytics            # 🖐 Detail hands: used ONCE, in a subprocess, to export the
+                       # YOLOv8 hand detector (~6 MB, pulled from Bingsu/adetailer) to
+                       # ONNX in cache/. It is NEVER imported inside the app process:
+                       # loading the torch YOLO model there corrupts the shared model
+                       # weights during offload transfers (renders turn to mosaic/NaN).
+                       # Runtime detection uses onnxruntime only. Face detailer does
+                       # NOT need it (insightface handles faces).
+onnx                   # needed by that one-time ONNX export (subprocess).
 pillow-avif-plugin     # read .avif input images (else PIL.UnidentifiedImageError)
 # Auto-describe captioner (BLIP) needs only transformers (already installed).

@@ -53,11 +53,15 @@ SwarmUI. On top of crispz's upscaler it adds:
   (enlarged crop → Z-Image img2img → feathered paste). Denoise slider in Advanced;
   `face_detailer*` config keys.
 - **🖐 Auto hand detailer**: same circuit for detected hands (*Detail hands* checkbox;
-  `hand_detailer*` config keys). Needs the optional `ultralytics` package
-  (`requirements-extra.txt`); without it the pass logs a message and does nothing. The
-  YOLO hand *detection* runs on **CPU** on purpose (`hand_detailer_device`, ~0.1 s per
-  image): running it on the GPU poisons the process CUDA state and every later render
-  comes out as mosaic garbage until restart (root-caused 2026-08-17 — see CHANGELOG).
+  `hand_detailer*` config keys). The YOLOv8 hand detector runs as a **pure ONNX
+  session** (onnxruntime, CPU by default — `hand_detailer_device`): the torch model is
+  exported once to `cache/` in a subprocess, and `ultralytics` is **never imported in
+  the app process**. That isolation is a hard requirement, not an optimization — with
+  the torch YOLO model merely resident in memory, the offload transfers corrupt the
+  shared diffusion weights and renders degrade to mosaic then NaN (checksum-proven
+  2026-08-17, see CHANGELOG). The one-time export needs the optional `ultralytics` +
+  `onnx` packages (`requirements-extra.txt`); without them the pass logs a clear
+  message and does nothing.
 - **Models**: one **Z-Image checkpoint** dropdown merging the official base repos
   (Turbo / Z-Image) with single-file `.safetensors` **and `.gguf`** from a main **and**
   an optional extra folder, a **Transformer override** (diffusers repo/folder, e.g.
