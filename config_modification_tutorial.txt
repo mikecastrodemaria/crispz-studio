@@ -141,6 +141,28 @@ face_detailer_denoise   Strength of the per-face refine (0.1-0.7, default 0.35).
                         live slider in Advanced > Generation. Higher = sharper but starts
                         changing the identity.
 face_detailer_max_faces Max faces per image (default 4, biggest first).
+hand_detailer           false (default). true -> '🖐 Detail hands' checked at startup:
+                        same circuit as faces (crop -> refine -> feathered paste) on
+                        hands detected by YOLOv8. Needs the OPTIONAL 'ultralytics'
+                        package (requirements-extra.txt); absent -> clear log, no crash.
+hand_detailer_denoise   Strength of the per-hand refine (0.1-0.7, default 0.4). Hands
+                        usually want more than faces to fix fingers; too high invents
+                        a different hand.
+hand_detailer_max_hands Max hands per image (default 4, biggest first).
+hand_detailer_margin    Context around a detected hand (default 0.35, tighter than the
+                        face margin: too wide regenerates the forearm and background).
+hand_detailer_model     'hand_yolov8n.pt' (default, fast) or 'hand_yolov8s.pt' (more
+                        accurate) from the Bingsu/adetailer HF repo, or an absolute
+                        path to your own YOLO .pt.
+hand_detailer_conf      Detection confidence 0-1 (default 0.3). Lower catches more
+                        hands and more false positives.
+hand_detailer_device    'cpu' (default). NOT a fallback but a deliberate isolation:
+                        the ultralytics predict() on GPU poisons the process CUDA
+                        state and EVERY later diffusion render comes out as mosaic
+                        garbage until the app restarts (root-caused 2026-08-17: clean
+                        render -> hand pass fine -> next render destroyed, every
+                        time). CPU detection costs ~0.1 s per image (6 MB model).
+                        Set 'cuda' only to re-test after an ultralytics/torch upgrade.
 faceswap_model_path     Absolute path to an inswapper .onnx file (Face Swap tab). If
                         empty, the app also looks for inswapper_128.onnx in the
                         'faceswap' folder (next to app.py), 'models', checkpoints_dir,
