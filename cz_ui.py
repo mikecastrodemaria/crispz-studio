@@ -1717,6 +1717,13 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                         _dbg(f"pre-upscale save failed: {e}")
             # Detaileur auto (visages puis mains) sur l'image FINALE (apres l'upscale
             # eventuel). Ordre: visages d'abord (zone la plus regardee), mains ensuite.
+            # _nf/_nh: -1 = passe non tentee, -2 = passe plantee, >=0 = zones refinees.
+            # Ecrits dans les metadonnees ('detail_faces_run'/'detail_hands_run'): la
+            # case cochee ne dit PAS si la passe a reellement tourne (detecteur qui
+            # plante ou ne trouve rien = passe muette), et le bug mosaique ouvert exige
+            # de pouvoir dater le DERNIER passage reel d'un detailleur depuis les
+            # sidecars seuls.
+            _nf = _nh = -1
             if cz_detailer.DETAILER_ENABLED:
                 progress((i + 0.85) / n, desc=f"Detailing faces {i + 1}/{n}")
                 try:
@@ -1724,6 +1731,7 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                         img, fp, s, steps=int(refine_steps),
                         progress=lambda t: progress((i + 0.9) / n, desc=t))
                 except Exception as e:
+                    _nf = -2
                     _log(f"detailer failed: {e}")
             if cz_detailer.HAND_ENABLED:
                 progress((i + 0.92) / n, desc=f"Detailing hands {i + 1}/{n}")
@@ -1732,6 +1740,7 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                         img, fp, s, steps=int(refine_steps),
                         progress=lambda t: progress((i + 0.95) / n, desc=t))
                 except Exception as e:
+                    _nh = -2
                     _log(f"hand detailer failed: {e}")
             images.append(img)
             dst = None
@@ -1743,7 +1752,8 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                     if dst:
                         save_image(img, dst, output_format, meta=_gen_meta(
                             gmode, fp, fn, s, gen_steps, cz_pipeline.GUIDANCE,
-                            img.size, styles=chosen))
+                            img.size, styles=chosen,
+                            extra={"detail_faces_run": _nf, "detail_hands_run": _nh}))
                         _dbg(f"saved: {dst}")
                 except Exception as e:
                     dst = None
