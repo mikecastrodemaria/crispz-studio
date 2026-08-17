@@ -52,6 +52,12 @@ SwarmUI. On top of crispz's upscaler it adds:
   each render (and upscale), faces are detected and each is re-refined at high resolution
   (enlarged crop → Z-Image img2img → feathered paste). Denoise slider in Advanced;
   `face_detailer*` config keys.
+- **🖐 Auto hand detailer**: same circuit for detected hands (*Detail hands* checkbox;
+  `hand_detailer*` config keys). Needs the optional `ultralytics` package
+  (`requirements-extra.txt`); without it the pass logs a message and does nothing. The
+  YOLO hand *detection* runs on **CPU** on purpose (`hand_detailer_device`, ~0.1 s per
+  image): running it on the GPU poisons the process CUDA state and every later render
+  comes out as mosaic garbage until restart (root-caused 2026-08-17 — see CHANGELOG).
 - **Models**: one **Z-Image checkpoint** dropdown merging the official base repos
   (Turbo / Z-Image) with single-file `.safetensors` **and `.gguf`** from a main **and**
   an optional extra folder, a **Transformer override** (diffusers repo/folder, e.g.
