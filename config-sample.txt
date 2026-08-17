@@ -110,6 +110,8 @@
     "lora_weight_max": 2.0,
     "_lora_weight_range_help": "Min/max of the LoRA 'Weight' sliders (Models > LoRA). NEGATIVE weights are allowed and useful: a LoRA applied at a negative weight pushes AWAY from what it was trained on (e.g. a 'skinny slider' LoRA at -1 gives the opposite effect, an 'age slider' at -0.5 makes the subject younger/older the other way). 0 = LoRA has no effect. Typical range: -2..2; beyond ~±1.5 most LoRAs burn/deform the image. Set lora_weight_min to 0 if you never want negatives. If the values are not numbers, or min >= max, the app falls back to -2..2 and logs it.",
     "lora_slots": 3,
+    "prompt_lora_tags": true,
+    "_prompt_lora_tags_help": "Parse <lora:name> / <lora:name:weight> tags written in the prompt (A1111 syntax). The tag is removed from the prompt before text encoding, the LoRA file is looked up in the LoRA folder (case-insensitive; file name, stem or unique partial match) and applied ON TOP of the LoRA slots for that run (same file in a slot and in the prompt: the prompt weight wins). Weight omitted = default_lora_weight; out-of-range weights are clamped to lora_weight_min..lora_weight_max. If the file is NOT found locally, nothing is generated: the app shows the missing name and pre-fills Models > LoRA > 'Search CivitAI' (search by name, Z-Image versions first, download into the LoRA folder with SHA256 check). false = tags are still stripped from the prompt but never resolved/applied.",
     "zimage_omni_model": "",
     "face_detailer": false,
     "face_detailer_denoise": 0.35,

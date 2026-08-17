@@ -65,7 +65,9 @@ SwarmUI. On top of crispz's upscaler it adds:
 - **Models**: one **Z-Image checkpoint** dropdown merging the official base repos
   (Turbo / Z-Image) with single-file `.safetensors` **and `.gguf`** from a main **and**
   an optional extra folder, a **Transformer override** (diffusers repo/folder, e.g.
-  Juggernaut-Z), and **multi-LoRA** (configurable **1–10 slots** + trigger words).
+  Juggernaut-Z), and **multi-LoRA** (configurable **1–10 slots** + trigger words, or
+  **`<lora:name:weight>` right in the prompt** — a missing file blocks the run with a
+  clear message and a **CivitAI search/download** panel, see below).
   Picking a model also auto-syncs the Performance preset. Supported formats: BF16/FP16,
   **GGUF quants** (Q3..Q8, stay quantized in VRAM), and ComfyUI **FP8 / FP8-scaled /
   INT8-scaled** builds (dequantized to bf16 at load — bf16 memory footprint, the saving
@@ -559,6 +561,28 @@ by txt2img/img2img) and applied on the next run **without reloading the model** 
 changing a weight is instant, swapping LoRA files takes ~1 s. Selecting LoRAs auto-fills their
 merged **keywords / trigger words** (read from the file metadata); **Add to prompt**
 appends them.
+
+### LoRA in the prompt: `<lora:name:weight>` + CivitAI search
+
+A LoRA can also be called **directly from the prompt** with the A1111 syntax —
+`<lora:my_lora>` or `<lora:my_lora:0.8>` (UI, CLI `--prompt`, and the HTTP server). The
+tag is **removed from the prompt before text encoding**, the file is looked up in the
+LoRA folder (case-insensitive — file name, stem, or unique partial match, subfolders
+included) and applied **on top of the LoRA slots** for that run (same file in a slot and
+in the prompt: the prompt weight wins; no `:weight` = `default_lora_weight`, out-of-range
+weights are clamped to `lora_weight_min..lora_weight_max`). Remove the tag and the LoRA
+is gone on the next run — slots are untouched.
+
+**If the file is not found locally, nothing is generated** — you get the missing name and
+a pointer to **Models → 🧩 LoRA → 🔎 Search CivitAI** instead of a render that silently
+ignored your LoRA. That panel searches CivitAI **by name** (the missing name is
+pre-filled), lists every version with its **base model** (Z-Image first — untick
+*Z-Image only* to see the others), and **⬇ Download** drops the file into the LoRA
+folder with a **SHA256 check** (streamed, corrupted downloads are deleted), then fetches
+the preview + trigger words like the Asset Browser's 🔎 button. The slot dropdowns
+refresh automatically. Gated/NSFW files may need the **CivitAI API key** (Advanced tab).
+Set `prompt_lora_tags` to `false` in `config.txt` to disable the parsing (tags are then
+stripped from the prompt but never applied).
 
 ## Disabling the upscale (pure txt2img / pure img2img)
 

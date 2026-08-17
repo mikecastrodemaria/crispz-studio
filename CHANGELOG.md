@@ -3,6 +3,29 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — `<lora:name:weight>` in the prompt + CivitAI search for missing LoRAs
+
+A LoRA can now be called **directly from the prompt** (A1111 syntax): `<lora:my_lora>`
+or `<lora:my_lora:0.8>`, in the UI, the CLI (`--prompt`) and the HTTP server. The tag
+is stripped **before text encoding** (a syntax fragment must never reach the encoder),
+the name is resolved in the LoRA folder (case-insensitive; file name, stem, or unique
+partial match — ambiguous names are refused rather than guessed) and the file is applied
+**on top of the LoRA slots** via the existing hot-swap (no model reload). Same file in a
+slot and in the prompt → the prompt weight wins; no weight → `default_lora_weight`;
+out-of-range → clamped to `lora_weight_min..max`. The effective list (slots + prompt) is
+what lands in the image metadata, so renders stay reproducible from their sidecar.
+A tag injected by a **wildcard** is stripped too but not applied (the run's LoRAs are
+fixed before wildcard expansion). Config: `prompt_lora_tags` (default true).
+
+**Missing LoRA = no render, never a silent ignore**: the run stops before any model
+load, names the missing file, and pre-fills the new **Models > 🧩 LoRA > 🔎 Search
+CivitAI** panel — search by name (`/models?query=…&types=LORA`), one candidate per
+version with its **base model** (Z-Image first, strict filter by default), **⬇
+Download** into the LoRA folder with streamed **SHA256 verification** (mismatch →
+file deleted + clear message), hash cached in the `.civitai.json` sidecar, preview +
+trigger words fetched, slot dropdowns refreshed. CLI exits with code 2 and the same
+guidance; the server answers HTTP 400.
+
 ## Unreleased — the REAL mechanism: a resident torch YOLO model corrupts offload transfers
 
 The CPU-detection fix was not the end of it. On the GGUF path (offload `model`, forced
