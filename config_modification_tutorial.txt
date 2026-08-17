@@ -162,13 +162,16 @@ hand_detailer_model     'hand_yolov8n.pt' (default, fast) or 'hand_yolov8s.pt' (
                         path to your own YOLO .pt.
 hand_detailer_conf      Detection confidence 0-1 (default 0.3). Lower catches more
                         hands and more false positives.
-hand_detailer_device    'cpu' (default). NOT a fallback but a deliberate isolation:
-                        the ultralytics predict() on GPU poisons the process CUDA
-                        state and EVERY later diffusion render comes out as mosaic
-                        garbage until the app restarts (root-caused 2026-08-17: clean
-                        render -> hand pass fine -> next render destroyed, every
-                        time). CPU detection costs ~0.1 s per image (6 MB model).
-                        Set 'cuda' only to re-test after an ultralytics/torch upgrade.
+hand_detailer_device    'cpu' (default) or 'cuda' -> onnxruntime provider for the hand
+                        detector. The detector runs as a pure ONNX session; the torch
+                        YOLO model is exported ONCE to cache/<model>.onnx in a
+                        SUBPROCESS (needs ultralytics + onnx, requirements-extra.txt)
+                        and ultralytics is never imported inside the app. Hard
+                        requirement: with the torch YOLO model merely RESIDENT in the
+                        app process, the offload transfers corrupt the shared
+                        diffusion weights (checksum-proven 2026-08-17; renders turn
+                        to mosaic then NaN). Delete cache/<model>.onnx to force a
+                        re-export.
 hand_detailer_prompt    "" (default). Prompt for the refine of each hand CROP. Empty =
                         the pass only sharpens what the crop already contains. Feeding
                         the scene prompt there makes the model repaint the subject

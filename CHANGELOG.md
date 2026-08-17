@@ -3,6 +3,44 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — the REAL mechanism: a resident torch YOLO model corrupts offload transfers
+
+The CPU-detection fix was not the end of it. On the GGUF path (offload `model`, forced
+for every GGUF) the corruption came back — hands pass fine, next render mosaic, then
+NaN (`RuntimeWarning: invalid value encountered in cast` in diffusers'
+`image_processor`). A systematic bisection in isolated processes (one scenario per
+process, since the poison survives within a process) established, deterministically:
+
+| scenario (Q8_0 GGUF, offload model) | renders after |
+|---|---|
+| control / detect-only / refine-only / deep imports / RNG advance / raw `torch.load` of the .pt | clean, bit-stable |
+| **`YOLO(path)` loaded (no predict, CPU) + 2 crop refines** | **mosaic, degrading** |
+
+**Checksum proof**: in a clean process the text encoder's total weight sum is stable
+across CPU↔GPU offload trips (7.223877e7, drift ≤ 1.5e-8) and the same sentence always
+encodes to the same embedding. With the torch YOLO model merely **resident in
+memory** — never used — the weights read 7.341337e7 right after the refines and keep
+drifting on every subsequent call (7.3456e7, 7.3686e7): **the offload transfers
+corrupt the shared model weights in memory**, progressively — which is exactly why
+renders degrade from subtle drift to mosaic to NaN/black, why the damage survives
+checkbox toggles, and why only a restart cures it. Reproduced identically on Q6_K.
+No torch global flag, no thread, no env var changes: the corruption vector is the mere
+presence of the ultralytics-built module during transfers (allocator-layout /
+transfer-race sensitivity; exact torch/WDDM internals not pinned down).
+
+**Fix — total isolation**: `ultralytics` is never imported in the app process anymore.
+The hand detector is exported **once to ONNX** (`cache/<model>.onnx`) in a
+**subprocess** (where ultralytics lives and dies), and runtime detection is a pure
+`onnxruntime` session — the same stack insightface has used all along without a single
+incident — with letterbox preprocessing and numpy NMS. `hand_detailer_device` now
+selects the onnxruntime provider (`cpu` default). One-time export needs `ultralytics`
++ `onnx` (requirements-extra.txt); absent → clear log, no crash.
+
+**Validated**: full hands pass and face+hands pass on Q8_0/offload model → following
+renders bit-stable (0.64/0.64/0.64); positive control with the old in-process torch
+load on the same build still poisons (0.64→0.36→0.30), proving the harness catches it.
+ONNX detection finds the same hands as the torch predictor on the reference image.
+
 ## Unreleased — `_effective_offload(None)` ambiguity re-fixed after the revert
 
 Re-lands a real fix that was swept away by the ControlNet revert (dc66910). `None` is a

@@ -89,43 +89,150 @@ def set_hand_denoise(v):
     return f"Hand detailer denoise: {HAND_DENOISE}"
 
 
-def _ensure_hand_model():
-    """Charge (une fois) le detecteur de mains YOLOv8. Leve avec un message actionnable
-    si ultralytics manque -- c'est une dependance optionnelle (requirements-extra.txt)."""
+def _resolve_hand_pt():
+    """Chemin local du .pt YOLO (telecharge une fois depuis Bingsu/adetailer)."""
+    import os
+    path = _HAND_MODEL
+    if not os.path.isabs(path) and not os.path.isfile(path):
+        from huggingface_hub import hf_hub_download
+        path = hf_hub_download("Bingsu/adetailer", _HAND_MODEL)
+    return path
+
+
+def _ensure_hand_onnx():
+    """Chemin du detecteur de mains au format ONNX, exporte UNE fois dans cache/.
+
+    POURQUOI ONNX + SOUS-PROCESS, et pas ultralytics dans l'app: charger le modele
+    YOLO (torch) dans le process de diffusion CORROMPT LES POIDS des composants
+    partages pendant les transferts d'offload -- prouve au checksum le 2026-08-17 sur
+    le chemin GGUF/offload 'model': somme|poids| de l'encodeur de texte 7.2239e7
+    stable en process propre, 7.3413e7 puis derive continue (7.3456, 7.3686) des que
+    YOLO(path) residait en memoire, MEME SANS predict, MEME en device cpu. Les rendus
+    suivants sortent en mosaique puis en NaN. L'export tourne donc dans un
+    sous-process (ultralytics y vit et y meurt), et l'app n'utilise a l'execution
+    QUE onnxruntime -- la stack d'insightface, qui coexiste sans incident."""
+    import os
+    import shutil
+    import subprocess
+    import sys
+    from cz_core import HERE
+    pt = _resolve_hand_pt()
+    stem = os.path.splitext(os.path.basename(pt))[0]
+    cache_dir = os.path.join(HERE, "cache")
+    onnx_path = os.path.join(cache_dir, stem + ".onnx")
+    if os.path.isfile(onnx_path):
+        return onnx_path
+    os.makedirs(cache_dir, exist_ok=True)
+    # ultralytics ecrit le .onnx a cote du .pt -> on exporte sur une COPIE dans
+    # cache/ (le cache HF n'est pas un endroit ou ecrire).
+    pt_copy = os.path.join(cache_dir, stem + ".pt")
+    shutil.copyfile(pt, pt_copy)
+    _log(f"exporting hand detector to ONNX (once, in a subprocess): {stem}.pt ...")
+    code = ("import sys\n"
+            "from ultralytics import YOLO\n"
+            "YOLO(sys.argv[1]).export(format='onnx', imgsz=640, dynamic=False, "
+            "device='cpu')\n")
+    try:
+        r = subprocess.run([sys.executable, "-c", code, pt_copy],
+                           capture_output=True, text=True, timeout=300)
+        if r.returncode != 0 or not os.path.isfile(onnx_path):
+            tail = (r.stderr or r.stdout or "").strip()[-400:]
+            raise RuntimeError(
+                f"ONNX export of {stem}.pt failed (needs 'ultralytics' + 'onnx', "
+                f"see requirements-extra.txt): {tail}")
+    finally:
+        try:
+            os.remove(pt_copy)
+        except OSError:
+            pass
+    _log(f"hand detector ready: {os.path.basename(onnx_path)}")
+    return onnx_path
+
+
+def _ensure_hand_session():
+    """Session onnxruntime (une fois). Provider selon hand_detailer_device."""
     global _hand_model
     if _hand_model is not None:
         return _hand_model
     try:
-        from ultralytics import YOLO
+        import onnxruntime
     except ImportError:
         raise RuntimeError(
-            "hand detailer needs 'ultralytics' (optional): "
-            "pip install -r requirements-extra.txt")
-    import os
-    path = _HAND_MODEL
-    if not os.path.isabs(path) and not os.path.isfile(path):
-        # nom court -> modele publie par Bingsu/adetailer (telecharge une fois, ~6 Mo)
-        from huggingface_hub import hf_hub_download
-        path = hf_hub_download("Bingsu/adetailer", _HAND_MODEL)
-    _log(f"loading hand detector: {os.path.basename(path)}")
-    _hand_model = YOLO(path)
+            "hand detailer needs 'onnxruntime' (already required by Face Swap): "
+            "pip install onnxruntime-gpu")
+    providers = (["CUDAExecutionProvider", "CPUExecutionProvider"]
+                 if _HAND_DEVICE == "cuda" else ["CPUExecutionProvider"])
+    _hand_model = onnxruntime.InferenceSession(_ensure_hand_onnx(),
+                                               providers=providers)
     return _hand_model
+
+
+def _letterbox(arr, size=640, pad=114):
+    """Redimensionne en gardant le ratio + padding centre (protocole YOLO).
+    Renvoie (image size x size, scale, pad_x, pad_y)."""
+    h, w = arr.shape[:2]
+    s = min(size / w, size / h)
+    nw, nh = max(1, round(w * s)), max(1, round(h * s))
+    from PIL import Image as _Image
+    resized = np.asarray(_Image.fromarray(arr).resize((nw, nh), _Image.BILINEAR))
+    out = np.full((size, size, 3), pad, dtype=np.uint8)
+    px, py = (size - nw) // 2, (size - nh) // 2
+    out[py:py + nh, px:px + nw] = resized
+    return out, s, px, py
+
+
+def _nms(boxes, scores, iou_thr=0.45):
+    """NMS glouton numpy. boxes: (N,4) xyxy."""
+    order = scores.argsort()[::-1]
+    keep = []
+    while order.size:
+        i = order[0]
+        keep.append(i)
+        if order.size == 1:
+            break
+        xx1 = np.maximum(boxes[i, 0], boxes[order[1:], 0])
+        yy1 = np.maximum(boxes[i, 1], boxes[order[1:], 1])
+        xx2 = np.minimum(boxes[i, 2], boxes[order[1:], 2])
+        yy2 = np.minimum(boxes[i, 3], boxes[order[1:], 3])
+        inter = np.clip(xx2 - xx1, 0, None) * np.clip(yy2 - yy1, 0, None)
+        a = (boxes[i, 2] - boxes[i, 0]) * (boxes[i, 3] - boxes[i, 1])
+        b = ((boxes[order[1:], 2] - boxes[order[1:], 0])
+             * (boxes[order[1:], 3] - boxes[order[1:], 1]))
+        iou = inter / (a + b - inter + 1e-9)
+        order = order[1:][iou <= iou_thr]
+    return keep
 
 
 def detect_hands(image):
     """Bboxes [x1,y1,x2,y2] des mains detectees (liste vide si aucune).
 
-    device=_HAND_DEVICE (cpu par defaut): le predict ultralytics sur GPU corrompt les
-    diffusions suivantes du process (cf. commentaire de _HAND_DEVICE). Ne pas enlever."""
-    model = _ensure_hand_model()
-    res = model.predict(source=np.asarray(image.convert("RGB")), conf=_HAND_CONF,
-                        verbose=False, device=_HAND_DEVICE)
-    out = []
-    for r in res:
-        for b in getattr(r, "boxes", []):
-            x1, y1, x2, y2 = (float(v) for v in b.xyxy[0].tolist())
-            out.append([x1, y1, x2, y2])
-    return out
+    Inference onnxruntime pure (pas d'ultralytics dans ce process, cf.
+    _ensure_hand_onnx): letterbox 640 -> session ONNX -> decode YOLOv8 + NMS."""
+    sess = _ensure_hand_session()
+    rgb = np.asarray(image.convert("RGB"))
+    inp, s, px, py = _letterbox(rgb)
+    x = inp.astype(np.float32).transpose(2, 0, 1)[None] / 255.0
+    out = sess.run(None, {sess.get_inputs()[0].name: x})[0][0]
+    if out.shape[0] < out.shape[1]:            # (4+nc, N) -> (N, 4+nc)
+        out = out.T
+    scores = out[:, 4:].max(axis=1)
+    m = scores >= _HAND_CONF
+    if not m.any():
+        return []
+    cx, cy, w, h = (out[m, 0], out[m, 1], out[m, 2], out[m, 3])
+    boxes = np.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], axis=1)
+    scores = scores[m]
+    keep = _nms(boxes, scores)
+    W, H = image.size
+    res = []
+    for i in keep:
+        x1 = min(max((boxes[i, 0] - px) / s, 0), W)
+        y1 = min(max((boxes[i, 1] - py) / s, 0), H)
+        x2 = min(max((boxes[i, 2] - px) / s, 0), W)
+        y2 = min(max((boxes[i, 3] - py) / s, 0), H)
+        if x2 > x1 and y2 > y1:
+            res.append([float(x1), float(y1), float(x2), float(y2)])
+    return res
 
 
 def _expand_box(b, W, H, margin=_MARGIN):
