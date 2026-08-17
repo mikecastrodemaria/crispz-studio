@@ -2231,6 +2231,17 @@ def _gen_meta(mode, prompt, negative="", seed=None, steps=None, guidance=None,
     m["model"] = model or (ZIMAGE_TRANSFORMER or BASE_REPO)
     if LORAS:
         m["loras"] = [f"{os.path.basename(p)}@{w}" for p, w in LORAS]
+    # Etat runtime qui change le CHEMIN d'execution: indispensable pour dater/attribuer
+    # une corruption depuis les sidecars seuls (bug mosaique ouvert: sans ces cles il a
+    # fallu reconstituer la config de chaque rendu de memoire). Import paresseux: le
+    # detailer importe cz_pipeline dans ses fonctions, jamais l'inverse en tete de module.
+    m["offload"] = f"{OFFLOAD_MODE}/{_effective_offload()}"
+    try:
+        import cz_detailer
+        m["detail_faces"] = bool(cz_detailer.DETAILER_ENABLED)
+        m["detail_hands"] = bool(cz_detailer.HAND_ENABLED)
+    except Exception:
+        pass
     if extra:
         m.update(extra)
     return m
