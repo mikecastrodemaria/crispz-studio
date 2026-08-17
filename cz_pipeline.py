@@ -1349,12 +1349,22 @@ def _load_transformer():
             BASE_REPO, subfolder="transformer", torch_dtype=DTYPE))
 
 
-def _effective_offload(tpath=None):
+_CURRENT_TRANSFORMER = object()   # sentinelle: "prends le transformer courant"
+
+
+def _effective_offload(tpath=_CURRENT_TRANSFORMER):
     """Offload REELLEMENT applique. Un transformer GGUF quantifie ne se deplace pas sur le
     GPU via .to(cuda) ni en sequential -> seul enable_model_cpu_offload le pose sur le GPU
-    pendant le forward. On force donc 'model' pour un base GGUF, quel que soit le reglage."""
+    pendant le forward. On force donc 'model' pour un base GGUF, quel que soit le reglage.
+
+    ATTENTION: la sentinelle n'est PAS None. None est une valeur LEGITIME de tpath (= pas
+    d'override, on tourne sur le transformer du repo de base). Avec None comme sentinelle,
+    _effective_offload(None) retombait sur ZIMAGE_TRANSFORMER, c'est-a-dire le NOUVEAU
+    transformer: le garde-fou de _swap_transformer comparait alors le nouveau a lui-meme
+    et laissait passer un echange a chaud repo de base -> GGUF, qui change pourtant
+    l'offload effectif ('none' -> 'model') et exige un reload complet."""
     off = OFFLOAD_MODE
-    t = ZIMAGE_TRANSFORMER if tpath is None else tpath
+    t = ZIMAGE_TRANSFORMER if tpath is _CURRENT_TRANSFORMER else tpath
     if DEVICE == "cuda" and _is_gguf_path(t) and off != "model":
         off = "model"
     return off

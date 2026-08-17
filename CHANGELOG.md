@@ -3,6 +3,17 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — `_effective_offload(None)` ambiguity re-fixed after the revert
+
+Re-lands a real fix that was swept away by the ControlNet revert (dc66910). `None` is a
+*legitimate* value for `tpath` (no override → the base repo's transformer), but it also
+served as the "use the current transformer" sentinel — so `_effective_offload(None)`
+silently evaluated `ZIMAGE_TRANSFORMER`. `_swap_transformer`'s guard therefore compared
+the **new** transformer with itself and let a base-repo → GGUF hot-swap through, even
+though the effective offload changes (`none` → `model`, forced for every GGUF) and a
+full reload is required. Now uses a dedicated sentinel object; regression test in
+`tests/test_model_swap.py`.
+
 ## Unreleased — mosaic corruption SOLVED: the hand detector poisoned the GPU
 
 The mystery corruption that plagued 2026-08-16/17 — renders coming out as mosaic
