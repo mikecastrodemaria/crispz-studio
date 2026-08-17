@@ -23,7 +23,10 @@ memory** — never used — the weights read 7.341337e7 right after the refines 
 drifting on every subsequent call (7.3456e7, 7.3686e7): **the offload transfers
 corrupt the shared model weights in memory**, progressively — which is exactly why
 renders degrade from subtle drift to mosaic to NaN/black, why the damage survives
-checkbox toggles, and why only a restart cures it. Reproduced identically on Q6_K.
+checkbox toggles, and why only a restart cures it. Reproduced identically on Q6_K,
+**and on a safetensors checkpoint (sickOllie) with offload `model` forced** — so this
+is not a GGUF bug: the trigger is the **offload path** (GGUF merely forces it), and a
+GGUF was simply the only configuration running offload `model` in daily use.
 No torch global flag, no thread, no env var changes: the corruption vector is the mere
 presence of the ultralytics-built module during transfers (allocator-layout /
 transfer-race sensitivity; exact torch/WDDM internals not pinned down).
