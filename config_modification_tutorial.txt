@@ -141,6 +141,12 @@ face_detailer_denoise   Strength of the per-face refine (0.1-0.7, default 0.35).
                         live slider in Advanced > Generation. Higher = sharper but starts
                         changing the identity.
 face_detailer_max_faces Max faces per image (default 4, biggest first).
+face_detailer_prompt    "" (default). Prompt for the refine of each face CROP. Empty =
+                        the pass only sharpens the face the crop contains. With the
+                        scene prompt, whatever it describes gets painted ONTO the
+                        face (observed: a 'CRISPZ STUDIO' sign prompt came back with
+                        the words written on the cheeks). Same principle as
+                        hand_detailer_prompt and refine_tile_prompt.
 hand_detailer           false (default). true -> '🖐 Detail hands' checked at startup:
                         same circuit as faces (crop -> refine -> feathered paste) on
                         hands detected by YOLOv8. Needs the OPTIONAL 'ultralytics'

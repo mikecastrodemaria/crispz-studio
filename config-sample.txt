@@ -98,6 +98,8 @@
     "hand_detailer_device": "cpu",
     "_hand_detailer_prompt_help": "Prompt used to refine each hand CROP. Empty (default) = the img2img pass only sharpens what the source crop already contains - the right behaviour, for the same reason as refine_tile_prompt: feeding the SCENE prompt to a local crop makes the model repaint the subject inside it (observed: a tiny face embedded between thumb and index). Set a short generic string like 'detailed hand, natural fingers' if you want light guidance; never the scene description.",
     "hand_detailer_prompt": "",
+    "_face_detailer_prompt_help": "Prompt used to refine each face CROP. Empty (default), same principle as hand_detailer_prompt and refine_tile_prompt: with the SCENE prompt, whatever the prompt describes gets painted onto the face - observed with a prompt featuring a 'CRISPZ STUDIO' sign, the refined face came back with the words written on the cheeks. A short generic string ('detailed face, sharp eyes') is fine; never the scene description.",
+    "face_detailer_prompt": "",
     "_gpu_busy_warn_gb_help": "Warn when another process (a second crispz instance, ComfyUI, a game) already holds this many GB of VRAM: sharing the GPU pushes renders into shared RAM and turns seconds into minutes per step, with no error message. 0 = no warning.",
     "gpu_busy_warn_gb": 2.0,
     "loras_dir": "",
