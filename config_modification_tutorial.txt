@@ -125,6 +125,18 @@ lora_weight_max         NEGATIVE weights are allowed and useful: the LoRA then p
                         negatives. Bad values or min >= max -> falls back to -2..2.
 lora_slots              Number of LoRA slots shown in Models > LoRA (1..10, default 3).
                         Each slot = a dropdown + weight; all combine at generation.
+prompt_lora_tags        true (default): <lora:name> / <lora:name:weight> tags written
+                        IN THE PROMPT (A1111 syntax) are parsed: the tag is removed
+                        before text encoding, the file is looked up in loras_dir
+                        (case-insensitive; file name, stem, or unique partial match)
+                        and applied on top of the LoRA slots for that run (same file
+                        in a slot and in the prompt: the prompt weight wins). Weight
+                        omitted -> default_lora_weight; out-of-range -> clamped.
+                        If the file is NOT found locally, nothing is generated: the
+                        app names the missing LoRA and pre-fills Models > LoRA >
+                        "Search CivitAI" (search by name, Z-Image versions first,
+                        download into loras_dir with SHA256 check + preview/triggers).
+                        false: tags are still stripped from the prompt, never applied.
 zimage_omni_model       HF repo id OR local diffusers folder of a Z-Image Omni/Edit
                         model (with a SigLIP encoder). REQUIRED for the Reference
                         (Omni) multi-image mode. The Turbo/Base text-to-image models

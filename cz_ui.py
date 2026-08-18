@@ -150,7 +150,7 @@ PERFORMANCE = {
 import cz_prompt
 from cz_prompt import (  # noqa: E402,F401
     STYLES, _seed_rng, list_wildcards, _apply_wildcards, _pick_styles, _apply_styles,
-    set_wildcards_dir, set_wildcards_in_order,
+    set_wildcards_dir, set_wildcards_in_order, strip_lora_tags,
 )
 
 # Real-ESRGAN (spandrel) + upscale tuile/overlap-add -> cz_esrgan.py. L'etat mutable
@@ -265,7 +265,7 @@ import cz_detailer
 from cz_pipeline import (  # noqa: E402,F401
     set_guidance, request_stop, set_zimage_model, set_zimage_transformer,
     list_checkpoints, list_loras, set_checkpoints_dir, set_checkpoints_extra_dir,
-    resolve_checkpoint, set_loras_dir, lora_keywords,
+    resolve_checkpoint, set_loras_dir, lora_keywords, consume_prompt_loras,
     set_omni_model, check_omni_available, set_offload_mode, free_vram, set_loras,
     set_sampler, SAMPLER_CHOICES, set_schedule, SCHEDULE_CHOICES, SCHEDULE_INPUTS,
     _norm_schedule, set_force_ratio,
@@ -851,6 +851,90 @@ def _ui_kw_to_prompt(prompt_text, keywords):
     return gr.update(value=base + kw)
 
 
+# ----- LoRA appelees dans le prompt (<lora:nom[:poids]>) + recherche CivitAI -----
+# Derniers noms introuvables (dernier run): pre-remplit la recherche CivitAI du panneau
+# 'Search CivitAI' (onglet Models > LoRA) — le handler Generate ne peut pas ecrire
+# directement dans ce champ (sorties Gradio figees), on passe par ce relais module.
+_LAST_MISSING_LORAS = []
+
+
+def _consume_prompt_loras_ui(prompt_text):
+    """Wrapper UI de cz_pipeline.consume_prompt_loras: extrait/resout/active les tags
+    <lora:...> et memorise les noms introuvables pour la recherche CivitAI."""
+    global _LAST_MISSING_LORAS
+    clean, missing = consume_prompt_loras(prompt_text)
+    if missing:
+        _LAST_MISSING_LORAS = list(missing)
+    return clean, missing
+
+
+def _missing_lora_report(missing):
+    """Message d'echec propre quand un <lora:...> du prompt est introuvable localement:
+    quoi, ou chercher sur le disque, et comment la telecharger depuis CivitAI."""
+    names = ", ".join(f"`{n}`" for n in missing)
+    return (f"⚠ **LoRA not found locally:** {names}.  \n"
+            f"Nothing was generated (folder: `{cz_pipeline.LORAS_DIR}`). Fix the name in "
+            f"the `<lora:...>` tag, drop the file into the LoRA folder, or open "
+            f"**Models > \U0001F9E9 LoRA > \U0001F50E Search CivitAI**: the missing name is "
+            f"pre-filled — Search, pick a candidate (Z-Image base first) and Download.")
+
+
+def _ui_civitai_lora_search(query, z_only):
+    """Recherche une LoRA par nom sur CivitAI. Champ vide -> reprend le dernier nom
+    introuvable d'un prompt (<lora:...>). Renvoie (champ, candidats, state, statut):
+    le state porte les dicts candidats (label -> candidat) pour le bouton Download."""
+    q = (query or "").strip() or (_LAST_MISSING_LORAS[0] if _LAST_MISSING_LORAS else "")
+    if not q:
+        return (gr.update(), gr.update(choices=[], value=None), {},
+                "Type a LoRA name to search (or use a `<lora:...>` tag in the prompt first).")
+    cands = cz_civitai.search_loras(q, limit=10, base_model="Z-Image")
+    if z_only:
+        _zi = cz_civitai._norm_base("Z-Image")
+        cands = [c for c in cands if cz_civitai._norm_base(c["baseModel"]) == _zi]
+    if not cands:
+        hint = (" with a Z-Image base — untick 'Z-Image only' to see other bases (they "
+                "won't run on Z-Image)." if z_only else
+                ". Check the spelling, or the model may not be on CivitAI.")
+        return (gr.update(value=q), gr.update(choices=[], value=None), {},
+                f"No CivitAI result for **{q}**{hint}")
+    state, labels = {}, []
+    for c in cands:
+        size = f"{c['sizeKB'] / 1024:.0f} MB" if c.get("sizeKB") else "size ?"
+        label = (f"{c['modelName']} — {c['versionName']} [{c['baseModel'] or 'base ?'}] "
+                 f"— {size}"
+                 + (f" — by {c['creator']}" if c.get("creator") else "")
+                 + (" — NSFW" if c.get("nsfw") else ""))
+        if label in state:                       # deux versions au meme libelle
+            label += f" (v{c['versionId']})"
+        state[label] = c
+        labels.append(label)
+    return (gr.update(value=q), gr.update(choices=labels, value=labels[0]), state,
+            f"{len(labels)} candidate(s) for **{q}** — pick one, then Download. "
+            f"[Open on CivitAI]({cands[0]['url']})")
+
+
+def _ui_civitai_lora_download(label, state, progress=gr.Progress()):
+    """Telecharge le candidat choisi dans LORAS_DIR (SHA256 verifie + preview/triggers),
+    puis rafraichit les choix de TOUS les slots LoRA. Echec = message, jamais de crash."""
+    cand = (state or {}).get(label)
+    if not cand:
+        return tuple(gr.update() for _ in range(MAX_LORA_SLOTS)) \
+            + ("Search first, then pick a candidate to download.",)
+
+    def _prog(_phase, frac, text):
+        progress(frac if frac is not None else 0.0, desc=text)
+
+    res = cz_civitai.download_model_file(cand, cz_pipeline.LORAS_DIR, progress=_prog)
+    if not res.get("success"):
+        return tuple(gr.update() for _ in range(MAX_LORA_SLOTS)) + ("❌ " + res.get("message", "download failed"),)
+    rel = os.path.relpath(res["path"], cz_pipeline.LORAS_DIR).replace(os.sep, "/")
+    stem = os.path.splitext(os.path.basename(rel))[0]
+    msg = (f"✅ {res['message']}  \nSelect **{rel}** in a LoRA slot, or call it from the "
+           f"prompt with `<lora:{stem}>` (weight: `<lora:{stem}:0.8>`).")
+    lr = ["None"] + list_loras()
+    return tuple(gr.update(choices=lr) for _ in range(MAX_LORA_SLOTS)) + (msg,)
+
+
 def _ui_check_omni():
     return check_omni_available()
 
@@ -1048,6 +1132,13 @@ def _ui_edit(mode, editor_value, dirs, ratio, fit, auto_describe, harmonize, har
             return [], "Load an image first.", history, history
         set_offload_mode(offload_mode)
         set_guidance(guidance)
+        # Tags <lora:...> du prompt: memes regles que Generate (resolus + actives avant
+        # tout chargement; introuvable -> echec propre + recherche CivitAI pre-remplie).
+        prompt, _missing_loras = _consume_prompt_loras_ui(prompt)
+        if _missing_loras:
+            gr.Warning("LoRA not found: " + ", ".join(_missing_loras)
+                       + " — see Models > LoRA > Search CivitAI")
+            return [], _missing_lora_report(_missing_loras), history, history
         m = str(mode).lower()
         eff_prompt = prompt or ""
         # Auto-describe (captioner local, pas d'Ollama): utile pour outpaint/reframe -> le
@@ -1582,7 +1673,18 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
     try:
         set_offload_mode(offload_mode)
         set_guidance(guidance)
-        base_prompt = _apply_wildcards(prompt, _seed_rng(seed), index=0)  # __name__ -> line
+        # Tags <lora:nom[:poids]> du prompt: extraits + resolus + actives AVANT tout
+        # chargement de modele. Introuvable -> echec propre (message + recherche CivitAI
+        # pre-remplie), on ne genere rien plutot que de generer sans la LoRA demandee.
+        prompt, _missing_loras = _consume_prompt_loras_ui(prompt)
+        if _missing_loras:
+            gr.Warning("LoRA not found: " + ", ".join(_missing_loras)
+                       + " — see Models > LoRA > Search CivitAI")
+            return _done([], _missing_lora_report(_missing_loras))
+        # strip_lora_tags apres les wildcards: un tag <lora:...> injecte par un wildcard
+        # n'est PAS active (les LoRA du run sont fixees avant), mais il ne doit surtout
+        # pas partir a l'encodeur de texte comme du texte de scene.
+        base_prompt = strip_lora_tags(_apply_wildcards(prompt, _seed_rng(seed), index=0))
         picked_styles = _pick_styles(styles, style_random)        # noms de styles -> meta
         full_prompt, full_negative = _apply_styles(base_prompt, negative, picked_styles)
         mode = "img2img/upscale" if (use_input and input_image is not None) else "txt2img"
@@ -1643,7 +1745,7 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                 s = base_seed if cz_pipeline._NO_SEED_INCREMENT else base_seed + i
                 progress(i / n, desc=f"Image {i + 1}/{n}")
                 chosen = _pick_styles(styles, style_random)
-                p_i = _apply_wildcards(prompt, _seed_rng(s), index=i)
+                p_i = strip_lora_tags(_apply_wildcards(prompt, _seed_rng(s), index=i))
                 fp, _fn = _apply_styles(p_i, negative, chosen)
                 if style_random:
                     _log(f"random style #{i + 1}: {chosen}")
@@ -1682,7 +1784,7 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
             progress(i / n, desc=f"Image {i + 1}/{n}")
             # Wildcards (__name__) + style aleatoire, par image (seed -> reproductible)
             chosen = _pick_styles(styles, style_random)
-            p_i = _apply_wildcards(prompt, _seed_rng(s), index=i)
+            p_i = strip_lora_tags(_apply_wildcards(prompt, _seed_rng(s), index=i))
             fp, fn = _apply_styles(p_i, negative, chosen)
             if style_random:
                 _log(f"random style #{i + 1}: {chosen}")
@@ -3420,6 +3522,28 @@ def build_ui():
                                 lora_kw_btn = gr.Button("Get keywords", size="sm")
                                 lora_kw_to_prompt_btn = gr.Button("Add to prompt", size="sm", variant="primary")
                             lora_status = gr.Markdown("")
+                            with gr.Accordion("\U0001F50E Search CivitAI (download a missing LoRA)",
+                                              open=False):
+                                gr.Markdown(
+                                    "*Search a LoRA by name on CivitAI. A `<lora:name>` tag "
+                                    "missing from the prompt pre-fills the search (leave the "
+                                    "field empty). Download goes to the LoRA folder, with "
+                                    "SHA256 check + preview/trigger words fetched.*")
+                                with gr.Row():
+                                    civ_lora_q = gr.Textbox(
+                                        show_label=False, scale=3, container=False,
+                                        placeholder="LoRA name (empty = last missing <lora:...> tag)")
+                                    civ_lora_zonly = gr.Checkbox(value=True, label="Z-Image only",
+                                                                 scale=1)
+                                    civ_lora_search_btn = gr.Button("Search", size="sm",
+                                                                    variant="primary", scale=1,
+                                                                    min_width=90)
+                                civ_lora_dd = gr.Dropdown(choices=[], value=None,
+                                                          label="Candidates (base model in brackets)")
+                                civ_lora_state = gr.State({})
+                                civ_lora_dl_btn = gr.Button("⬇ Download to LoRA folder",
+                                                            size="sm")
+                                civ_lora_status = gr.Markdown("")
 
                         with gr.Accordion("\U0001F3B2 Wildcards", open=False):
                             gr.Markdown("*`__name__` in the prompt -> a random line from name.txt "
@@ -3635,6 +3759,12 @@ def build_ui():
         lora_kw_btn.click(_ui_loras_keywords, lora_dds,
                           [lora_keywords_tb, lora_status])
         lora_kw_to_prompt_btn.click(_ui_kw_to_prompt, [prompt, lora_keywords_tb], [prompt])
+        # Recherche CivitAI par nom (LoRA manquante d'un <lora:...> ou saisie libre) +
+        # telechargement dans LORAS_DIR -> rafraichit les choix de tous les slots.
+        civ_lora_search_btn.click(_ui_civitai_lora_search, [civ_lora_q, civ_lora_zonly],
+                                  [civ_lora_q, civ_lora_dd, civ_lora_state, civ_lora_status])
+        civ_lora_dl_btn.click(_ui_civitai_lora_download, [civ_lora_dd, civ_lora_state],
+                              lora_dds + [civ_lora_status])
         # ----- Presets (Settings) -----
         _preset_scalars = [prompt, negative, styles, width, height, gen_steps, guidance,
                            sampler_dd, schedule_dd, image_number, ckpt_dd, transformer_tb]

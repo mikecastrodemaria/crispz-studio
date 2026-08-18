@@ -8,6 +8,7 @@ hors de ce module utilisent `cz_prompt.WILDCARDS_DIR` pour voir la valeur a jour
 """
 
 import os
+import re
 import json
 import random
 
@@ -54,6 +55,52 @@ def set_wildcards_dir(path):
     global WILDCARDS_DIR
     if path:
         WILDCARDS_DIR = path
+
+
+# Tags LoRA dans le prompt, syntaxe A1111/ComfyUI: <lora:nom> ou <lora:nom:poids>.
+# Le nom peut etre un chemin relatif ('perso/ma_lora.safetensors'), avec ou sans
+# extension. Ces tags ne doivent JAMAIS atteindre l'encodeur de texte: ils sont
+# extraits ici et resolus/actives par cz_pipeline.consume_prompt_loras.
+LORA_TAG_RE = re.compile(r"<\s*lora\s*:\s*([^:<>]+?)\s*(?::\s*([-+]?\d*\.?\d+)\s*)?>",
+                         re.IGNORECASE)
+
+
+def extract_lora_tags(text):
+    """Extrait les tags <lora:nom[:poids]> d'un prompt. Renvoie (texte_nettoye, tags)
+    avec tags = liste de (nom, poids_ou_None) dans l'ordre d'apparition (doublons de nom
+    dedoublonnes, la derniere occurrence gagne — comme A1111). Le texte nettoye ne garde
+    ni les tags ni les doubles virgules/espaces qu'ils laissent derriere eux."""
+    if not text or "<" not in text:
+        return text, []
+    tags = {}
+    for m in LORA_TAG_RE.finditer(text):
+        name = m.group(1).strip()
+        if not name:
+            continue
+        w = None
+        if m.group(2) is not None:
+            try:
+                w = float(m.group(2))
+            except ValueError:
+                w = None
+        tags[name] = w
+    clean = LORA_TAG_RE.sub("", text)
+    # Nettoyage des restes la ou etait le tag: espaces doubles, espace avant virgule,
+    # virgules consecutives ('a, <tag>, b' -> 'a, b').
+    clean = re.sub(r"\s{2,}", " ", clean)
+    clean = re.sub(r"\s+,", ",", clean)
+    clean = re.sub(r"(?:,\s*){2,}", ", ", clean)
+    clean = clean.strip(" ,")
+    return clean, [(n, w) for n, w in tags.items()]
+
+
+def strip_lora_tags(text):
+    """Retire les tags <lora:...> restants (ex. injectes par un wildcard) sans les
+    activer: un fragment de syntaxe ne doit jamais partir a l'encodeur de texte."""
+    if not text or "<" not in text:
+        return text
+    clean, _tags = extract_lora_tags(text)
+    return clean
 
 
 def _seed_rng(seed):
