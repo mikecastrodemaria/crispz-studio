@@ -2633,12 +2633,16 @@ def _parse_a1111_params(text):
     return out
 
 
-def _ui_read_meta(path):
+def _ui_read_meta(path, check_wm=False):
     """PNG Info: lit le prompt + les parametres embarques d'une image (crispz JSON,
-    A1111/Civitai 'parameters', ComfyUI, ou EXIF). Renvoie (markdown, dict parse)."""
+    A1111/Civitai 'parameters', ComfyUI, ou EXIF) + section Provenance (manifeste
+    C2PA auto; watermark TrustMark seulement si check_wm — ~4s au 1er appel).
+    Renvoie (markdown, dict parse)."""
     empty = "*Upload an image to read its embedded prompt & parameters.*"
     if not path or not os.path.isfile(path):
         return empty, {}
+    import cz_provenance
+    prov = cz_provenance.provenance_markdown(path, check_wm=check_wm)
     meta = dict(_read_image_meta(path) or {})   # sidecar + chunk 'crispz' + EXIF
     scheme = "crispz" if meta.get("prompt") else None
     if not meta.get("prompt"):
@@ -2654,7 +2658,7 @@ def _ui_read_meta(path):
             meta["prompt"] = str(info.get("prompt"))[:2000]
             scheme = "comfyui"
     if not meta.get("prompt") and not meta.get("negative"):
-        return "*No embedded prompt/metadata found in this image.*", {}
+        return "*No embedded prompt/metadata found in this image.*\n\n" + prov, {}
     lines = [f"*Detected scheme: **{scheme or 'unknown'}***"]
     if meta.get("prompt"):
         lines.append(f"**Prompt**\n\n{meta['prompt']}")
@@ -2664,6 +2668,7 @@ def _ui_read_meta(path):
           if meta.get(k) not in (None, "")]
     if kv:
         lines.append("**Params** — " + "  ·  ".join(kv))
+    lines.append(prov)
     return "\n\n".join(lines), meta
 
 
@@ -3060,6 +3065,8 @@ def build_ui():
                                     meta_to_prompt_btn = gr.Button("→ Send prompt", size="sm",
                                                                    variant="primary")
                                     meta_to_seed_btn = gr.Button("→ Send seed", size="sm")
+                                    meta_wm_btn = gr.Button("🔍 Check invisible watermark",
+                                                            size="sm")
                             with gr.Accordion("ESRGAN tiling (VRAM)", open=False):
                                 tile = gr.Slider(0, 1024, value=DEFAULT_TILE, step=8, label="Tile (0 = off)")
                                 overlap = gr.Slider(0, 128, value=DEFAULT_OVERLAP, step=8, label="Overlap")
@@ -3549,6 +3556,9 @@ def build_ui():
         use_input.change(lambda v: gr.update(visible=bool(v)), use_input, input_group)
         # PNG Info: lire les meta d'une image + les envoyer aux champs
         meta_reader.change(_ui_read_meta, [meta_reader], [input_meta_md, meta_state])
+        # Decodage TrustMark a la demande (CPU, ~4s au 1er appel puis ~0.1s)
+        meta_wm_btn.click(lambda p: _ui_read_meta(p, check_wm=True),
+                          [meta_reader], [input_meta_md, meta_state])
         meta_to_prompt_btn.click(
             lambda m: (gr.update(value=(m or {}).get("prompt", "")),
                        gr.update(value=(m or {}).get("negative", ""))),

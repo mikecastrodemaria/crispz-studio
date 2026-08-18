@@ -136,7 +136,15 @@ def _a1111_parameters(meta):
 def save_image(img, dst_path, output_format, meta=None):
     """Sauve avec le bon format Pillow. Si meta (dict): embarque dans le PNG (chunk
     'crispz', + chunk 'parameters' A1111 si metadata_scheme=a1111), en EXIF
-    (ImageDescription) pour jpg/webp, ET ecrit un sidecar .json."""
+    (ImageDescription) pour jpg/webp, ET ecrit un sidecar .json.
+    Si provenance_watermark=on (et trustmark installe): watermark invisible
+    TrustMark applique aux pixels AVANT l'encodage (voir cz_provenance)."""
+    try:
+        import cz_provenance
+        if cz_provenance.wm_enabled():
+            img = cz_provenance.wm_apply(img)
+    except Exception as e:
+        _dbg(f"provenance hook skipped: {e}")
     fmt = output_format.lower().lstrip(".")
     if fmt in ("jpg", "jpeg"):
         kw = {"quality": 95}
