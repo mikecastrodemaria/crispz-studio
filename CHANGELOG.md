@@ -3,6 +3,34 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — AI provenance: C2PA reading + TrustMark invisible watermark (EU AI Act art. 50)
+
+New optional brick `cz_provenance.py` (CPU only, the GPU is never touched), for
+machine-readable AI disclosure as required by EU AI Act Article 50 (applicable
+Aug 2 2026; systems already on the market have until Dec 2 2026):
+
+- **Read** (PNG Info + CLI `--provenance -i img.png`): a **Provenance** section shows
+  any embedded **C2PA / Content Credentials** manifest (issuer, claim generator,
+  signature state — Firefly/ChatGPT/Gemini outputs carry these), automatically and for
+  free; the **🔍 Check invisible watermark** button decodes a **TrustMark** watermark
+  on demand (lazy model init ~4 s once, then ~0.1 s/image). The UI wording is
+  deliberate: *absence of marks proves nothing* — it never claims "not AI"/"authentic".
+- **Write** (`save_image()`, the single choke point all saves go through — txt2img,
+  upscale, inpaint, reframe, queue, CLI, HTTP endpoints): with
+  `provenance_watermark: "on"` every saved image gets an invisible TrustMark watermark
+  carrying `provenance_wm_id` (**max 9 ASCII chars** — the error-corrected payload is
+  ~68 bits; longer ids are truncated). Verified by test to survive PNG **and JPEG q95**
+  re-encoding. Default **off**.
+- Deps: `trustmark` + `c2pa-python` in `requirements-extra.txt` (graceful degradation
+  when absent, same pattern as rembg). Windows note: install trustmark with
+  `PYTHONUTF8=1` (its sdist crashes on cp1252). Tests: `tests/test_provenance.py`
+  (7 cases, skip-if-missing so CI stays light). C2PA *writing* (signed manifests) is
+  deliberately not included yet — it needs a signing-certificate decision first.
+- Caution: TrustMark loads a small torch model **in-process** (CPU). Given the
+  resident-YOLO offload-corruption precedent below, watch the first renders with
+  `provenance_watermark: on` + GGUF/offload `model`; the watermark hook runs at save
+  time only, and stays off by default.
+
 ## Unreleased — the REAL mechanism: a resident torch YOLO model corrupts offload transfers
 
 The CPU-detection fix was not the end of it. On the GGUF path (offload `model`, forced

@@ -10,4 +10,10 @@ ultralytics            # 🖐 Detail hands: used ONCE, in a subprocess, to expor
                        # NOT need it (insightface handles faces).
 onnx                   # needed by that one-time ONNX export (subprocess).
 pillow-avif-plugin     # read .avif input images (else PIL.UnidentifiedImageError)
+trustmark              # AI provenance: invisible watermark (write on save if
+                       # provenance_watermark=on + read in PNG Info / --provenance).
+                       # CPU only (~0.1s/img). Windows: install with PYTHONUTF8=1
+                       # (the sdist setup.py crashes on cp1252 otherwise).
+c2pa-python            # AI provenance: read C2PA / Content Credentials manifests
+                       # (Firefly, ChatGPT, Gemini outputs...) in PNG Info.
 # Auto-describe captioner (BLIP) needs only transformers (already installed).

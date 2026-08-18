@@ -498,6 +498,9 @@ def cli_main(argv=None):
     parser.add_argument("--loras-dir", help="Override the LoRA folder (for --lora names)")
     parser.add_argument("--remove-bg", action="store_true",
                         help="Remove the background of -i (rembg) -> transparent PNG, then exit.")
+    parser.add_argument("--provenance", action="store_true",
+                        help="Read AI provenance of -i (C2PA manifest + TrustMark invisible "
+                             "watermark, CPU only) then exit. No mark never means 'not AI'.")
     parser.add_argument("--reframe", metavar="W:H",
                         help="Reframe -i to a target aspect ratio (e.g. 16:9 / 9:16), then exit. "
                              "--prompt guides the fill; --gen-steps sets the steps.")
@@ -643,6 +646,20 @@ def cli_main(argv=None):
             except Exception as e:
                 _log(f"faceswap skipped: {e}")
         return img
+
+    # --provenance : lit la provenance IA de -i (C2PA + watermark) puis termine.
+    # Aucun modele de diffusion charge, tout est CPU.
+    if args.provenance:
+        if not args.input or not os.path.isfile(args.input):
+            parser.error("--provenance requires -i <image>")
+        import cz_provenance
+        txt = (cz_provenance.provenance_markdown(args.input, check_wm=True)
+               .replace("**", "").replace("  \n", "\n  ")
+               .replace("✅", "[OK]").replace("⚠️", "[!]")
+               .replace("ℹ️", "[i]").replace("—", "-"))
+        # console Windows souvent cp1252: on reste ASCII-safe
+        print(txt.encode("ascii", "replace").decode("ascii"))
+        return 0
 
     # --remove-bg : detoure -i puis termine
     if args.remove_bg:

@@ -90,6 +90,14 @@ SwarmUI. On top of crispz's upscaler it adds:
   (crispz, **A1111/Civitai**, or ComfyUI) — **✨ Apply all** loads everything in one click
   (prompt, negative, seed, steps, CFG, size, sampler/schedule with A1111-name mapping),
   or send just the prompt / seed.
+- **AI provenance (EU AI Act art. 50)**: PNG Info also shows a **Provenance** section —
+  **C2PA / Content Credentials** manifests are read automatically (Firefly, ChatGPT,
+  Gemini outputs carry them; signature state shown), and **🔍 Check invisible watermark**
+  decodes a **TrustMark** watermark on demand (CPU, ~4 s first call then ~0.1 s). Set
+  `provenance_watermark: "on"` to embed your own invisible TrustMark id (max 9 ASCII
+  chars, `provenance_wm_id`) in every saved image — survives JPEG/WebP re-encoding.
+  CLI: `--provenance -i img.png`. Both need `trustmark` / `c2pa-python`
+  (`requirements-extra.txt`); absence of marks never means "not AI".
 - **Ollama (optional)**: **Describe** (image→prompt), **Improve prompt**, and **Vision
   Mix** (blend several reference images into one prompt). Models unload from VRAM after
   use. Without Ollama, **Describe** uses a local BLIP captioner and **Improve prompt**
