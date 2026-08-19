@@ -131,6 +131,23 @@ SwarmUI. On top of crispz's upscaler it adds:
   `project.json` is saved after every panel, so a crash costs nothing. Config
   `comic.enabled`; the engine (`cz_comic.py`) is pure geometry — no torch, no GPU —
   and fully unit-tested.
+- **🎬 Comic Studio** (`cz_comicstudio` + `assets/comicstudio/`): a full-page
+  **visual editor** for comic projects, opened in its own tab from the 🎞 Comic
+  accordion (same mechanics as the Asset Browser: a vanilla HTML/JS SPA written
+  into the project folder and served by the app — no extra server). **Book view**:
+  page thumbnails in publication order with role badge and folio; click a page to
+  edit it. **Page view**: the composed page with **clickable panels** (the layout
+  rects) and a side editor — panel text (@Name casting), dialogue (same one-line
+  syntax as the accordion), seed, *Generate panel*, *Missing panels*, *Compose
+  page/book*. **Draggable balloons** — the thing Gradio can't do: drag a bubble to
+  pin it exactly where you want (`pos`, clamped inside its panel, red outline =
+  manually placed, double-click resets to auto), drag the yellow dot to re-aim the
+  tail at a mouth or an object (`anchor`); the page recomposes immediately.
+  Positions live in `project.json` (fractions of the panel) and **survive dialogue
+  edits** (they are re-attached to unchanged lines on save). Stateless like the
+  accordion: every action re-reads/re-writes `project.json`, so the Studio, the
+  accordion, manual edits and the CLI can all work on the same project at once.
+  Gated by the same `comic.enabled`.
 - **Ollama (optional)**: **Describe** (image→prompt), **Improve prompt**, and **Vision
   Mix** (blend several reference images into one prompt). Models unload from VRAM after
   use. Without Ollama, **Describe** uses a local BLIP captioner and **Improve prompt**

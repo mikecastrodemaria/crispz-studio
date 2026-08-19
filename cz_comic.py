@@ -771,6 +771,24 @@ def _place_rect(panel_rect, bw, bh, forbidden, taken, prefer):
     return (best or (cols[0], y + pad, bw, bh)), False
 
 
+def _pos_rect(d, panel_rect, bw, bh, forbidden):
+    """Position MANUELLE d'une bulle: d['pos'] = coin haut-gauche en FRACTIONS
+    de case, ecrit par Comic Studio quand l'utilisateur deplace la bulle.
+    Prioritaire sur le placement automatique (_place_rect), clampee dans la
+    case. clean=False si elle recouvre un visage: on ne la re-deplace PAS
+    (l'utilisateur l'a posee la volontairement), on le signale seulement.
+    Renvoie ((x, y, w, h), clean) ou None si pas de position manuelle."""
+    pos = d.get("pos")
+    if not pos:
+        return None
+    x, y, w, h = panel_rect
+    bx = max(x + 2, min(x + int(float(pos[0]) * w), x + w - bw - 2))
+    by = max(y + 2, min(y + int(float(pos[1]) * h), y + h - bh - 2))
+    r = (bx, by, bw, bh)
+    clean = all(_overlap_area(r, f) == 0 for f in forbidden)
+    return r, clean
+
+
 def _tail_tip(bubble_center, mouth, face_box):
     """Pointe de la queue: A HAUTEUR DE BOUCHE, juste a cote du visage, du cote
     de la bulle. C'est la convention BD lisible: la pointe designe la bouche
@@ -837,6 +855,11 @@ def render_lettering(project, page, sheet, face_detector=None,
                      char_embeddings=None):
     """Dessine les dialogues sur la planche composee (in place) et renvoie la
     liste des placements [{panel, kind, rect, tip, clean}].
+
+    Une replique peut porter d['pos'] = [fx, fy] (coin haut-gauche en fractions
+    de case, ecrit par Comic Studio au drag): la bulle est alors posee LA,
+    clampee dans la case, au lieu du placement automatique. d['anchor'] (deja
+    en v1) pilote de la meme facon la POINTE de la queue.
 
     Avec `face_detector` (callable image -> [{'box': (x1,y1,x2,y2),
     'mouth': (x,y)|None}], voir cz_face.detect_faces_full):
@@ -908,8 +931,8 @@ def render_lettering(project, page, sheet, face_detector=None,
                     sfx_font = _font(_SFX_FONTS, size)
                     bb = draw.textbbox((0, 0), text, font=sfx_font, stroke_width=4)
                 bw_, bh_ = bb[2] - bb[0], bb[3] - bb[1]
-                (rx, ry, _, _), clean = _place_rect(rect, bw_, bh_, forbidden,
-                                                    taken, "center")
+                (rx, ry, _, _), clean = _pos_rect(d, rect, bw_, bh_, forbidden) \
+                    or _place_rect(rect, bw_, bh_, forbidden, taken, "center")
                 draw.text((rx, ry), text, font=sfx_font, fill="#ffffff",
                           stroke_width=max(3, fpx // 5), stroke_fill="#000000")
                 taken.append((rx, ry, bw_, bh_))
@@ -926,8 +949,8 @@ def render_lettering(project, page, sheet, face_detector=None,
 
             if kind == "caption":
                 bw_, bh_ = text_w + pad * 2, text_h + pad * 2
-                (bx0, by0, _, _), clean = _place_rect(rect, bw_, bh_, forbidden,
-                                                      taken, "left")
+                (bx0, by0, _, _), clean = _pos_rect(d, rect, bw_, bh_, forbidden) \
+                    or _place_rect(rect, bw_, bh_, forbidden, taken, "left")
                 draw.rectangle([bx0, by0, bx0 + bw_, by0 + bh_],
                                fill="#fdf6d8", outline="#000000", width=3)
                 ty = by0 + pad
@@ -957,8 +980,8 @@ def render_lettering(project, page, sheet, face_detector=None,
             if fc:  # pres du locuteur: colonne du cote de son visage
                 prefer = "left" if (fc["box"][0] + fc["box"][2]) / 2 < x + w / 2 \
                     else "right"
-            (bx0, by0, _, _), clean = _place_rect(rect, bw_, bh_, forbidden,
-                                                  taken, prefer)
+            (bx0, by0, _, _), clean = _pos_rect(d, rect, bw_, bh_, forbidden) \
+                or _place_rect(rect, bw_, bh_, forbidden, taken, prefer)
             cx, cy = bx0 + bw_ // 2, by0 + bh_ // 2
 
             # pointe de la queue: anchor explicite > bouche du locuteur > bord

@@ -165,7 +165,7 @@
     },
 
     "comic": {"enabled": true},
-    "_comic_help": "🎞 Comic accordion (cz_comic): comic-book projects - page layouts, @Name casting (description + refs + LoRAs per character), per-panel generation at the panel ratio, vector lettering (speech/thought bubbles, captions, SFX - text is drawn AFTER composition, never asked to the model), PDF/CBZ export. enabled=false hides the accordion (zero cost). CLI: --comic <dir> --comic-render / --comic-compose / --comic-export pdf|cbz|both.",
+    "_comic_help": "🎞 Comic accordion (cz_comic): comic-book projects - page layouts, @Name casting (description + refs + LoRAs per character), per-panel generation at the panel ratio, vector lettering (speech/thought bubbles, captions, SFX - text is drawn AFTER composition, never asked to the model), PDF/CBZ export. Also gates 🎬 Comic Studio (cz_comicstudio): the visual editor SPA opened in its own tab from the accordion - book view in publication order, clickable panels, draggable balloons (drag the bubble to pin it, the yellow dot to re-aim the tail; double-click resets to auto). enabled=false hides both (zero cost). CLI: --comic <dir> --comic-render / --comic-compose / --comic-export pdf|cbz|both.",
 
     "provenance_watermark": "off",
     "_provenance_watermark_help": "on = embed an invisible TrustMark watermark (Adobe, open source) in every saved image, for machine-readable AI disclosure (EU AI Act art. 50, applicable Aug 2 2026). Needs 'pip install trustmark' (see requirements-extra.txt); model (~40 MB) downloads on first use, then ~0.1s/image on CPU (the GPU is never touched). off (default) = no watermark. Read watermarks anytime via PNG Info > Check invisible watermark, or cz.bat --provenance -i img.png.",
