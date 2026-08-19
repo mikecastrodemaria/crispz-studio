@@ -3109,13 +3109,32 @@ def _comic_generate(dir_txt, pnid, only_missing):
     return f"🎨 {len(done)} panel(s) rendered: {', '.join(done)}", imgs
 
 
+def _comic_face_detector():
+    """Detecteur de visages pour le lettrage (insightface, celui du face
+    detailer). None si indisponible -> placement v1 sans zones interdites."""
+    try:
+        from cz_face import detect_faces_full
+    except Exception:
+        return None
+
+    def det(img):
+        try:
+            return detect_faces_full(img)
+        except Exception as e:
+            _log(f"[comic] face detection skipped: {e}")
+            return []
+    return det
+
+
 def _comic_compose(dir_txt, letter=True):
     import cz_comic
     d = _comic_dir(dir_txt)
     project = cz_comic.load_project(d)
+    fd = _comic_face_detector() if letter else None
     paths = []
     for ch in project["chapters"]:
-        paths += cz_comic.compose_chapter(project, d, ch["id"], letter=letter)
+        paths += cz_comic.compose_chapter(project, d, ch["id"], letter=letter,
+                                          face_detector=fd)
     return f"🧩 {len(paths)} page(s) composed (lettering {'on' if letter else 'off'}).", paths
 
 

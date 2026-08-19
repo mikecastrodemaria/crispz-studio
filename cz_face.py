@@ -134,6 +134,24 @@ def detect_faces(image):
     return [tuple(float(v) for v in f.bbox) for f in app.get(arr)]
 
 
+def detect_faces_full(image):
+    """Visages avec la position de la BOUCHE: [{'box': (x1,y1,x2,y2),
+    'mouth': (x,y) | None}]. mouth = milieu des deux coins de bouche des 5
+    keypoints insightface (kps[3]/kps[4]). Utilise par le lettrage BD: la queue
+    d'une bulle vise la bouche du locuteur, jamais un point arbitraire."""
+    app = _ensure_face_detector()
+    arr = np.asarray(image.convert("RGB"))[:, :, ::-1].copy()   # RGB -> BGR
+    out = []
+    for f in app.get(arr):
+        mouth = None
+        kps = getattr(f, "kps", None)
+        if kps is not None and len(kps) >= 5:
+            mouth = (float((kps[3][0] + kps[4][0]) / 2.0),
+                     float((kps[3][1] + kps[4][1]) / 2.0))
+        out.append({"box": tuple(float(v) for v in f.bbox), "mouth": mouth})
+    return out
+
+
 def _resolve_faceswap_model(checkpoints_dir=None):
     """Trouve le modele inswapper: faceswap_model_path, sinon recherche dans des
     emplacements usuels, sinon telechargement si faceswap_model_url est defini."""
