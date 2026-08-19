@@ -3174,7 +3174,10 @@ def _comic_char_embeddings(project, project_dir):
     out = {}
     for name, char in (project.get("casting") or {}).items():
         for r in char.get("refs") or []:
-            p = r if os.path.isabs(r) else os.path.join(project_dir, r)
+            # refs stockees en POSIX ('refs/lea.png'): on re-decoupe pour que le
+            # chemin marche aussi bien sous Windows que sous Linux/macOS.
+            p = r if os.path.isabs(r) else os.path.join(project_dir,
+                                                        *str(r).replace("\\", "/").split("/"))
             if os.path.isfile(p):
                 try:
                     emb = ref_embedding(p)
@@ -3335,8 +3338,11 @@ def _comic_sheet(dir_txt, name):
     prompt, negative = cz_comic.sheet_prompt(char, project.get("style"))
     img, _t = txt2img_run(prompt, 1024, 1024,
                           int(CONFIG.get("default_gen_steps", 8)), -1, negative)
-    rel = os.path.join("refs", f"{name.lower()}.png")
-    dst = os.path.join(d, rel)
+    # Chemin POSIX dans le project.json: il doit rester lisible si le projet
+    # est ouvert ailleurs (Linux/macOS) ou partage. os.path.join mettrait un
+    # antislash Windows, qui n'est pas un separateur hors Windows.
+    rel = f"refs/{name.lower()}.png"
+    dst = os.path.join(d, *rel.split("/"))
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     img.save(dst)
     refs = [r for r in (char.get("refs") or []) if r != rel]
