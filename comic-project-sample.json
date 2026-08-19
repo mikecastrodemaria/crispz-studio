@@ -10,7 +10,8 @@
     "gutter": 28,
     "background": "#f4ead8",
     "border": 4,
-    "border_color": "#1a1208"
+    "border_color": "#1a1208",
+    "page_numbers": true
   },
   "style": {
     "prompt_suffix": "european graphic novel art, ligne claire, warm autumn palette, delicate ink outlines, soft watercolor shading",
@@ -80,7 +81,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "role": "cover"
         },
         {
           "id": "p02",
@@ -419,7 +421,8 @@
                 }
               ]
             }
-          ]
+          ],
+          "role": "back"
         }
       ]
     }

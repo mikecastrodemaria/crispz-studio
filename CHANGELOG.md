@@ -3,6 +3,27 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Comic: chapters in the UI, page roles (cover/title/story/back), book order, folio
+
+A comic is a BOOK, not a list of pages. Pages now carry a `role`:
+
+- **`cover` opens the album, `back` closes it** — whatever the document order, and
+  even if story pages are added after the back cover. `title` = a chapter title
+  page. Legacy pages without a role read as `story` (stable sort keeps their
+  document order). `book_order()` gives the publication order; `compose_book()`
+  composes the whole album in that order (UI Compose/Export and CLI now use it).
+- **Folio**: with `page_numbers: true` in the project's page settings, `story`
+  pages get a small centred page number in the bottom margin (ink picked from the
+  background luminance) — covers, title pages and backs are never numbered.
+  Default off so existing albums do not change by a pixel (verified by test).
+- **Chapters from the UI**: the Pages accordion becomes *Chapters, pages &
+  layouts* — chapter selector, **➕ Add chapter** (name + synopsis), *Add page*
+  targets the selected chapter and takes a **role**, and **🏷 Set role** retags an
+  existing page. The page selector shows non-story roles (`ch01.p01 (splash,
+  cover)`).
+- The sample projects (`comic-project-sample.json`, `comics/exemple-winding-hour`)
+  now declare their cover/back roles and enable the folio.
+
 ## Unreleased — Comic: build a whole album from the UI (pages, casting, style) + sample project
 
 The Comic accordion covered the panel loop but not the BOOK: layouts, casting and

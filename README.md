@@ -118,8 +118,12 @@ SwarmUI. On top of crispz's upscaler it adds:
   the casting reference portraits (embeddings, `refs[0]`), with reading-order
   fallback — and off-panel voices (narrator, shout from behind) get a generic
   bubble pointing to the panel edge. Page composition with gutters/borders and
-  **PDF / CBZ export**. Everything is editable from the UI — **📐 Pages & layouts**
-  (add page, change layout, removed panels always reported), **🎭 Casting** (with
+  **PDF / CBZ export**. Pages carry a **role in the book** — `cover` opens the
+  album, `back` closes it (even if pages are added later), `title` = chapter title
+  page — and `story` pages can get an automatic **folio** (`page_numbers: true`).
+  Everything is editable from the UI — **📐 Chapters, pages & layouts**
+  (add chapter with synopsis, add page with role, change layout — removed panels
+  always reported, 🏷 set role), **🎭 Casting** (with
   **🪪 Generate reference sheet**, the portrait that lets the lettering recognize
   the speaker) and **🎨 Style & page format**. Start from
   `comic-project-sample.json` (a full worked album: cover, 4 pages, back cover),

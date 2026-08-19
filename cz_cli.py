@@ -733,11 +733,10 @@ def cli_main(argv=None):
                     emb = cz_ui._comic_char_embeddings(project, pdir)
                 except Exception:
                     _log("[comic] insightface absent: lettering without face avoidance")
-            paths = []
-            for chapter in project["chapters"]:
-                paths += cz_comic.compose_chapter(project, pdir, chapter["id"],
-                                                  letter=letter, face_detector=fd,
-                                                  char_embeddings=emb)
+            # compose_book: ordre de publication (covers d'abord, back en
+            # dernier) + folio des pages story si page_numbers est actif.
+            paths = cz_comic.compose_book(project, pdir, letter=letter,
+                                          face_detector=fd, char_embeddings=emb)
             print(f"{len(paths)} page(s) composed -> {os.path.join(pdir, 'pages')}")
             dpi = int(cz_comic.page_size(project.get("page")).get("dpi", 300))
             if args.comic_export in ("pdf", "both"):

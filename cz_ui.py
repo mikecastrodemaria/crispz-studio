@@ -3007,8 +3007,10 @@ try:
     import cz_comic as _czc
     cz_comic_layouts = _czc.layout_names()
     cz_comic_bubbles = _czc.BUBBLE_STYLES
+    cz_comic_roles = _czc.PAGE_ROLES
 except Exception:                       # module absent: le panneau reste inerte
     cz_comic_layouts, cz_comic_bubbles = ["4-grid"], ("round",)
+    cz_comic_roles = ("cover", "title", "story", "back")
 
 
 def _comic_dir(d):
@@ -3195,10 +3197,10 @@ def _comic_compose(dir_txt, letter=True):
     project = cz_comic.load_project(d)
     fd = _comic_face_detector() if letter else None
     emb = _comic_char_embeddings(project, d) if fd else None
-    paths = []
-    for ch in project["chapters"]:
-        paths += cz_comic.compose_chapter(project, d, ch["id"], letter=letter,
-                                          face_detector=fd, char_embeddings=emb)
+    # compose_book = ordre de publication (covers, chapitres, back en dernier)
+    # + folio des pages 'story' si page_numbers est actif dans le projet.
+    paths = cz_comic.compose_book(project, d, letter=letter,
+                                  face_detector=fd, char_embeddings=emb)
     return f"🧩 {len(paths)} page(s) composed (lettering {'on' if letter else 'off'}).", paths
 
 
@@ -3220,12 +3222,54 @@ def _comic_export(dir_txt, fmt):
 
 
 def _comic_pages_choices(project):
-    """['ch01.p01 (splash)', ...] pour le selecteur de planche."""
+    """['ch01.p01 (splash, cover)', 'ch01.p02 (4-grid)', ...]."""
     out = []
     for ch in project["chapters"]:
         for pg in ch["pages"]:
-            out.append(f"{ch['id']}.{pg['id']} ({pg['layout']})")
+            role = pg.get("role", "story")
+            tag = f", {role}" if role != "story" else ""
+            out.append(f"{ch['id']}.{pg['id']} ({pg['layout']}{tag})")
     return out
+
+
+def _comic_chapter_choices(project):
+    return [f"{ch['id']} — {ch.get('name') or 'Chapter'}"
+            for ch in project["chapters"]]
+
+
+def _comic_add_chapter(dir_txt, name, synopsis):
+    import cz_comic
+    d = _comic_dir(dir_txt)
+    project = cz_comic.load_project(d)
+    ch = cz_comic.add_chapter(project, (name or "").strip() or "Chapter",
+                              (synopsis or "").strip())
+    cz_comic.save_project(project, d)
+    return (f"➕ chapter {ch['id']} '{ch['name']}' added — add its pages from "
+            f"Pages & layouts.",
+            gr.update(choices=_comic_chapter_choices(project),
+                      value=f"{ch['id']} — {ch['name']}"))
+
+
+def _comic_set_role(dir_txt, page_label, role):
+    """Role d'une planche dans le livre: cover en tete d'album, back en queue,
+    title = page de garde de chapitre (jamais foliotee)."""
+    import cz_comic
+    d = _comic_dir(dir_txt)
+    cid, pid = _comic_page_ids(page_label)
+    if not cid:
+        return "⚠️ Pick a page first.", gr.update()
+    project = cz_comic.load_project(d)
+    try:
+        cz_comic.set_page_role(project, cid, pid, role)
+    except (ValueError, KeyError) as e:
+        return f"⚠️ {e}", gr.update()
+    cz_comic.save_project(project, d)
+    pg = cz_comic.find_page(project, cid, pid)
+    return (f"🏷 {cid}.{pid} role -> {role} (book order: covers first, back "
+            f"pages last, 'story' pages get the folio).",
+            gr.update(choices=_comic_pages_choices(project),
+                      value=f"{cid}.{pid} ({pg['layout']}"
+                            f"{', ' + role if role != 'story' else ''})"))
 
 
 def _comic_page_ids(label):
@@ -3235,18 +3279,27 @@ def _comic_page_ids(label):
     return (parts[0], parts[1]) if len(parts) >= 2 else (None, None)
 
 
-def _comic_add_page(dir_txt, layout, chapter_label):
-    """Ajoute une planche au chapitre de la planche selectionnee (ou au premier)."""
+def _comic_add_page(dir_txt, layout, chapter_label, role="story"):
+    """Ajoute une planche au chapitre selectionne (ou au premier), avec un role
+    dans le livre (cover / title / story / back)."""
     import cz_comic
     d = _comic_dir(dir_txt)
     project = cz_comic.load_project(d)
-    cid = _comic_page_ids(chapter_label)[0] or project["chapters"][0]["id"]
-    pg = cz_comic.add_page(project, cid, layout or "4-grid")
+    cid = (chapter_label or "").split(" ")[0] or project["chapters"][0]["id"]
+    if cid not in [c["id"] for c in project["chapters"]]:
+        cid = project["chapters"][0]["id"]
+    try:
+        pg = cz_comic.add_page(project, cid, layout or "4-grid",
+                               role=role or "story")
+    except ValueError as e:
+        return f"⚠️ {e}", gr.update(), [], gr.update()
     cz_comic.save_project(project, d)
     md, dd, gal = _comic_load(dir_txt)
-    return (f"➕ page {cid}.{pg['id']} added ({layout}, {len(pg['panels'])} panels). " + md,
+    tag = f", {role}" if role and role != "story" else ""
+    return (f"➕ page {cid}.{pg['id']} added ({layout}{tag}, "
+            f"{len(pg['panels'])} panels). " + md,
             dd, gal, gr.update(choices=_comic_pages_choices(project),
-                               value=f"{cid}.{pg['id']} ({pg['layout']})"))
+                               value=f"{cid}.{pg['id']} ({pg['layout']}{tag})"))
 
 
 def _comic_set_layout(dir_txt, page_label, layout):
@@ -3398,12 +3451,16 @@ def _comic_refresh_editors(dir_txt):
         project = cz_comic.load_project(_comic_dir(dir_txt))
     except Exception:
         return (gr.update(choices=[], value=None), gr.update(choices=[], value=None),
+                gr.update(choices=[], value=None),
                 "", "", "round", 2480, 3508, 96, 48, "#ffffff", 0)
     pages = _comic_pages_choices(project)
     cast = _comic_cast_choices(project)
+    chapters = _comic_chapter_choices(project)
     st = _comic_style_pick(dir_txt)
     return (gr.update(choices=pages, value=(pages[0] if pages else None)),
-            gr.update(choices=cast, value=(cast[0] if cast else None)), *st)
+            gr.update(choices=cast, value=(cast[0] if cast else None)),
+            gr.update(choices=chapters, value=(chapters[0] if chapters else None)),
+            *st)
 
 
 def build_ui():
@@ -3790,21 +3847,37 @@ def build_ui():
                         comic_cbz_btn = gr.Button("📦 Export CBZ", size="sm")
                     comic_gallery = gr.Gallery(label="Panels / pages", columns=3,
                                                height=420)
-                    with gr.Accordion("📐 Pages & layouts", open=False):
+                    with gr.Accordion("📐 Chapters, pages & layouts", open=False):
+                        with gr.Row():
+                            comic_chapter_dd = gr.Dropdown([], label="Chapter",
+                                                           scale=2)
+                            comic_chname_tb = gr.Textbox(
+                                label="New chapter (name — synopsis optional below)",
+                                scale=2)
+                            comic_addch_btn = gr.Button("➕ Add chapter", size="sm",
+                                                        scale=1)
+                        comic_chsyn_tb = gr.Textbox(label="Synopsis", lines=1)
                         with gr.Row():
                             comic_page_dd = gr.Dropdown([], label="Page", scale=3)
                             comic_layout_dd = gr.Dropdown(
                                 cz_comic_layouts, value="4-grid", label="Layout",
                                 scale=2)
+                            comic_role_dd = gr.Dropdown(
+                                list(cz_comic_roles), value="story",
+                                label="Role in the book", scale=2)
                         with gr.Row():
                             comic_addpage_btn = gr.Button("➕ Add page", size="sm")
                             comic_setlayout_btn = gr.Button("🔲 Change layout",
                                                             size="sm")
+                            comic_setrole_btn = gr.Button("🏷 Set role", size="sm")
                         gr.Markdown(
-                            "*Shrinking a layout reports the removed panels and "
-                            "their text in the status line — nothing is dropped "
-                            "silently. `splash` = one full-page panel (cover / "
-                            "back cover).*")
+                            "*Roles order the BOOK: `cover` pages open it, `back` "
+                            "pages close it (even if story pages are added later), "
+                            "`title` = a chapter title page. Only `story` pages get "
+                            "the folio (enable `page_numbers` in the project's page "
+                            "settings). Shrinking a layout reports the removed "
+                            "panels and their text — nothing is dropped silently. "
+                            "`splash` = one full-page panel.*")
                     with gr.Accordion("🎭 Casting (@Name)", open=False):
                         with gr.Row():
                             comic_cast_dd = gr.Dropdown([], label="Entry", scale=2)
@@ -3861,13 +3934,15 @@ def build_ui():
                                                              variant="primary")
                     comic_load_btn.click(_comic_load, [comic_dir_tb],
                                          [comic_status, comic_panel_dd, comic_gallery])                         .then(_comic_refresh_editors, [comic_dir_tb],
-                              [comic_page_dd, comic_cast_dd, comic_style_suffix,
+                              [comic_page_dd, comic_cast_dd, comic_chapter_dd,
+                               comic_style_suffix,
                                comic_style_neg, comic_style_bubble, comic_pg_w,
                                comic_pg_h, comic_pg_margin, comic_pg_gutter,
                                comic_pg_bg, comic_pg_border])
                     comic_new_btn.click(_comic_new, [comic_dir_tb],
                                         [comic_status, comic_panel_dd, comic_gallery])                         .then(_comic_refresh_editors, [comic_dir_tb],
-                              [comic_page_dd, comic_cast_dd, comic_style_suffix,
+                              [comic_page_dd, comic_cast_dd, comic_chapter_dd,
+                               comic_style_suffix,
                                comic_style_neg, comic_style_bubble, comic_pg_w,
                                comic_pg_h, comic_pg_margin, comic_pg_gutter,
                                comic_pg_bg, comic_pg_border])
@@ -3895,8 +3970,16 @@ def build_ui():
                                         [comic_status, comic_gallery])
                     # --- editeurs de structure (pages, casting, style) ---
                     comic_addpage_btn.click(
-                        _comic_add_page, [comic_dir_tb, comic_layout_dd, comic_page_dd],
+                        _comic_add_page,
+                        [comic_dir_tb, comic_layout_dd, comic_chapter_dd, comic_role_dd],
                         [comic_status, comic_panel_dd, comic_gallery, comic_page_dd])
+                    comic_addch_btn.click(
+                        _comic_add_chapter,
+                        [comic_dir_tb, comic_chname_tb, comic_chsyn_tb],
+                        [comic_status, comic_chapter_dd])
+                    comic_setrole_btn.click(
+                        _comic_set_role, [comic_dir_tb, comic_page_dd, comic_role_dd],
+                        [comic_status, comic_page_dd])
                     comic_setlayout_btn.click(
                         _comic_set_layout, [comic_dir_tb, comic_page_dd, comic_layout_dd],
                         [comic_status, comic_panel_dd, comic_gallery, comic_page_dd])
