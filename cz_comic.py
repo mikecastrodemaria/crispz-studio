@@ -726,17 +726,19 @@ def _place_rect(panel_rect, bw, bh, forbidden, taken, prefer):
 
 
 def _tail_tip(bubble_center, mouth, face_box):
-    """Pointe de la queue: sur le segment bouche -> bulle, juste a la SORTIE de
-    la bbox du visage (la queue designe la bouche sans jamais la couvrir)."""
+    """Pointe de la queue: A HAUTEUR DE BOUCHE, juste a cote du visage, du cote
+    de la bulle. C'est la convention BD lisible: la pointe designe la bouche
+    depuis la joue, sans jamais traverser ni couvrir le visage.
+
+    (v1 arretait la queue a la sortie de la bbox sur le segment bouche->bulle:
+    avec une bulle au-dessus, ca sortait par le FRONT et la queue semblait
+    designer le haut du crane -- corrige.)"""
     mx, my = mouth
-    cx, cy = bubble_center
+    cx, _cy = bubble_center
     x1, y1, x2, y2 = face_box
-    for t in range(0, 21):
-        t /= 20.0
-        px, py = mx + (cx - mx) * t, my + (cy - my) * t
-        if not (x1 <= px <= x2 and y1 <= py <= y2):
-            return (int(px), int(py))
-    return (int(mx), int(my))
+    margin = max(6, 0.12 * (x2 - x1))
+    tip_x = x1 - margin if cx < mx else x2 + margin
+    return (int(tip_x), int(my))
 
 
 def render_lettering(project, page, sheet, face_detector=None):
@@ -854,28 +856,35 @@ def render_lettering(project, page, sheet, face_detector=None):
                 ax, ay = d["anchor"]
                 tip = (max(x + 2, min(x + int(ax * w), x + w - 2)),
                        max(y + 2, min(y + int(ay * h), y + h - 2)))
-            elif fc and fc.get("mouth"):
-                tip = _tail_tip((cx, cy), fc["mouth"], fc["box"])
             elif fc:
                 bx1, by1, bx2, by2 = fc["box"]
-                tip = _tail_tip((cx, cy), ((bx1 + bx2) / 2, by2), fc["box"])
+                # sans keypoints: la bouche est ~au 4/5 de la hauteur du visage
+                mouth = fc.get("mouth") or ((bx1 + bx2) / 2,
+                                            by1 + 0.82 * (by2 - by1))
+                tip = _tail_tip((cx, cy), mouth, fc["box"])
+                tip = (max(x + 2, min(tip[0], x + w - 2)),
+                       max(y + 2, min(tip[1], y + h - 2)))
             else:
                 # voix hors-champ (bruit de fond, cri derriere, narrateur):
                 # queue vers le bord vertical le plus proche de la bulle
                 edge_x = x + 4 if cx < x + w / 2 else x + w - 4
                 tip = (edge_x, min(y + h - 4, cy + bh_))
 
+            # base de la queue: bord de la bulle COTE pointe (bas si la pointe
+            # est dessous, haut si elle est au-dessus de la bulle)
+            tail_up = tip[1] < by0
+            base_y = by0 + int(bh_ * (0.18 if tail_up else 0.82))
+            base_out = base_y + (3 if tail_up else -3)
             if kind == "speech":
-                base_y = by0 + int(bh_ * 0.82)
                 draw.polygon([(cx - fpx // 2, base_y), (cx + fpx // 2, base_y),
                               tip], fill="#ffffff", outline="#000000")
             draw.ellipse([bx0, by0, bx0 + bw_, by0 + bh_],
                          fill="#ffffff", outline="#000000", width=3)
             if kind == "speech":
-                base_y = by0 + int(bh_ * 0.82)
-                draw.polygon([(cx - fpx // 2 + 3, base_y - 3),
-                              (cx + fpx // 2 - 3, base_y - 3),
-                              (tip[0], tip[1] - 4)], fill="#ffffff")
+                draw.polygon([(cx - fpx // 2 + 3, base_out),
+                              (cx + fpx // 2 - 3, base_out),
+                              (tip[0], tip[1] + (4 if tail_up else -4))],
+                             fill="#ffffff")
             else:
                 for k, r in ((0.35, max(3, fpx // 3)), (0.65, max(2, fpx // 5))):
                     px_ = int(cx + (tip[0] - cx) * k)
