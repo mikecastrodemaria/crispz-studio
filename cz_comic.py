@@ -76,6 +76,14 @@ DEFAULT_PAGE = {
 
 PANEL_STATUS = ("draft", "locked")
 
+# Role d'une planche dans le LIVRE. L'ordre de publication est trie par rang:
+# les 'cover' ouvrent l'album, les 'back' le ferment - meme si des planches
+# d'histoire sont ajoutees apres coup. 'title' = page de garde d'un chapitre
+# (traitee comme l'histoire pour l'ordre, mais exclue de la numerotation).
+# Les anciens project.json sans 'role' sont lus comme 'story'.
+PAGE_ROLES = ("cover", "title", "story", "back")
+_ROLE_RANK = {"cover": 0, "title": 1, "story": 1, "back": 2}
+
 
 def layout_names():
     return sorted(LAYOUTS)
@@ -313,20 +321,25 @@ def new_panel(pid, text=""):
             "image": None, "refs": [], "loras": [], "notes": ""}
 
 
-def add_page(project, chapter_id, layout="4-grid", texts=None):
+def add_page(project, chapter_id, layout="4-grid", texts=None, role="story"):
     """Ajoute une planche a un chapitre. Cree autant de panneaux que le gabarit a
     de cases; `texts` (optionnel) pre-remplit les textes dans l'ordre de lecture.
+    `role` (PAGE_ROLES) place la planche dans le livre: cover en tete, back en
+    queue, title/story dans l'ordre du document.
 
     Plus de textes que de cases = ERREUR, pas une troncature silencieuse: le
     decoupage d'un scenariste ne doit jamais disparaitre sans un mot. L'appelant
     choisit un gabarit plus grand ou coupe la planche en deux."""
+    if role not in PAGE_ROLES:
+        raise ValueError(f"role must be one of {PAGE_ROLES}, got {role!r}")
     chapter = find_chapter(project, chapter_id)
     cells = layout_cells(layout)
     if texts and len(texts) > len(cells):
         raise ValueError(
             f"{len(texts)} texts for layout '{layout}' ({len(cells)} cells): "
             f"pick a larger layout or split the page - texts are never dropped")
-    page = {"id": _next_id(chapter["pages"], "p"), "layout": layout, "panels": []}
+    page = {"id": _next_id(chapter["pages"], "p"), "layout": layout,
+            "role": role, "panels": []}
     for i in range(len(cells)):
         txt = texts[i] if texts and i < len(texts) else ""
         page["panels"].append(new_panel(f"pn{i + 1}", txt))
@@ -1098,6 +1111,74 @@ def render_project(project, project_dir, engine, only=None, force=False,
         save_project(project, project_dir)
         rendered.append(pnid)
     return rendered
+
+
+def set_page_role(project, chapter_id, page_id, role):
+    """Change le role d'une planche dans le livre (PAGE_ROLES)."""
+    if role not in PAGE_ROLES:
+        raise ValueError(f"role must be one of {PAGE_ROLES}, got {role!r}")
+    page = find_page(project, chapter_id, page_id)
+    page["role"] = role
+    return page
+
+
+def book_order(project):
+    """(chapter, page) dans l'ORDRE DE PUBLICATION: les 'cover' d'abord, puis
+    title/story chapitre par chapitre dans l'ordre du document, les 'back' en
+    dernier - meme si des planches ont ete ajoutees apres le dos. Tri STABLE:
+    a rang egal, l'ordre du document est conserve."""
+    flat = [(ch, pg) for ch in project["chapters"] for pg in ch["pages"]]
+    return sorted(flat, key=lambda t: _ROLE_RANK.get(t[1].get("role", "story"), 1))
+
+
+def _draw_page_number(sheet, pg, number):
+    """Folio bas-centre, dans la marge (jamais sur les cases)."""
+    draw = ImageDraw.Draw(sheet)
+    margin = int(pg.get("margin") or 0)
+    fpx = max(14, min(36, margin - 8)) if margin >= 24 else 0
+    if not fpx:
+        return                                  # pas de marge = pas de folio
+    font = _font(_BUBBLE_FONTS, fpx)
+    text = str(number)
+    tw = draw.textlength(text, font=font)
+    try:                                        # encre selon la luminance du fond
+        from PIL import ImageColor
+        r, g, b = ImageColor.getrgb(pg.get("background", "#ffffff"))[:3]
+        ink = "#000000" if (0.299 * r + 0.587 * g + 0.114 * b) > 128 else "#e8e8e8"
+    except Exception:
+        ink = "#000000"
+    draw.text(((pg["width"] - tw) // 2, pg["height"] - margin + (margin - fpx) // 2),
+              text, font=font, fill=ink)
+
+
+def compose_book(project, project_dir, letter=True, fit="cover",
+                 face_detector=None, char_embeddings=None, numbers=None):
+    """Compose et sauve TOUT le livre dans l'ordre de publication (book_order):
+    couvertures, chapitres, dos. Renvoie la liste des chemins, prete pour
+    export_pdf / export_cbz.
+
+    numbers: None = suit project['page']['page_numbers'] (defaut False, pour ne
+    pas alterer les albums existants); True/False force. Seules les planches
+    'story' sont foliotees (1, 2, ...) - couvertures, pages de garde et dos
+    n'ont jamais de numero."""
+    pg_conf = page_size(project.get("page"))
+    if numbers is None:
+        numbers = bool(pg_conf.get("page_numbers", False))
+    paths, folio = [], 0
+    for chapter, page in book_order(project):
+        sheet = compose_page(project, page, fit=fit)
+        if letter:
+            render_lettering(project, page, sheet, face_detector=face_detector,
+                             char_embeddings=char_embeddings)
+        if page.get("role", "story") == "story":
+            folio += 1
+            if numbers:
+                _draw_page_number(sheet, pg_conf, folio)
+        dst = page_path(project_dir, chapter["id"], page["id"])
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        sheet.save(dst)
+        paths.append(dst)
+    return paths
 
 
 def compose_chapter(project, project_dir, chapter_id, letter=True, fit="cover",
