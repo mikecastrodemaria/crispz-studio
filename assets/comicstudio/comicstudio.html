@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Comic Studio</title>
+<style>
+:root{--bg:#14171d;--pan:#1d2129;--pan2:#232834;--bd:#323a48;--fg:#dfe5ee;--mut:#8b94a5;
+--acc:#4d82c4;--ok:#5fba7d;--warn:#ffd27a;--err:#ff8a8a}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+font:14px/1.45 "Segoe UI",system-ui,sans-serif}
+button{background:var(--pan2);color:var(--fg);border:1px solid var(--bd);
+border-radius:6px;padding:6px 12px;cursor:pointer;font:inherit}
+button:hover{border-color:var(--acc)}
+button.primary{background:#2c4a6e;border-color:#3a6ea5}
+button:disabled{opacity:.5;cursor:default}
+input,textarea{background:#121722;color:var(--fg);border:1px solid var(--bd);
+border-radius:6px;padding:6px 8px;font:inherit;width:100%}
+textarea{resize:vertical;min-height:56px}
+header{display:flex;align-items:center;gap:10px;padding:8px 14px;
+background:var(--pan);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:30}
+header h1{font-size:15px;margin:0;font-weight:600;white-space:nowrap}
+header .mut{color:var(--mut);font-size:12px;overflow:hidden;text-overflow:ellipsis;
+white-space:nowrap}
+#status{margin-left:auto;font-size:12px;color:var(--mut);max-width:46%;
+overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#status.ok{color:var(--ok)}#status.err{color:var(--err)}#status.warn{color:var(--warn)}
+.spin{display:inline-block;width:11px;height:11px;border:2px solid var(--mut);
+border-top-color:transparent;border-radius:50%;margin-right:6px;
+animation:sp 1s linear infinite;vertical-align:-1px}
+@keyframes sp{to{transform:rotate(360deg)}}
+/* ---------- vue livre ---------- */
+#book{padding:16px;display:none}
+#book.on{display:block}
+#book .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px}
+.card{background:var(--pan);border:1px solid var(--bd);border-radius:8px;overflow:hidden;
+cursor:pointer;position:relative;transition:border-color .12s}
+.card:hover{border-color:var(--acc)}
+.card .thumb{width:100%;aspect-ratio:210/297;object-fit:cover;display:block;background:#fff}
+.card .empty{width:100%;aspect-ratio:210/297;display:flex;align-items:center;
+justify-content:center;color:var(--mut);background:repeating-linear-gradient(45deg,
+#1a1e26,#1a1e26 12px,#1e2330 12px,#1e2330 24px);font-size:12px}
+.card .cap{padding:6px 9px;font-size:12px;color:var(--mut);display:flex;
+justify-content:space-between;gap:6px}
+.badge{position:absolute;top:6px;left:6px;font-size:11px;padding:1px 8px;border-radius:10px;
+background:#000a;color:#fff;text-transform:uppercase;letter-spacing:.4px}
+.badge.cover{background:#7a4dc4cc}.badge.title{background:#3a6ea5cc}
+.badge.back{background:#555c;}.badge.story{display:none}
+.folio{position:absolute;top:6px;right:6px;font-size:11px;padding:1px 7px;
+border-radius:10px;background:#000a;color:#ffd27a}
+/* ---------- vue planche ---------- */
+#page{display:none;padding:12px;gap:14px}
+#page.on{display:flex}
+#stagewrap{flex:1;min-width:0;display:flex;justify-content:center;align-items:flex-start}
+#stage{position:relative;background:#fff;box-shadow:0 4px 24px #0008;user-select:none;
+touch-action:none}
+#sheet{position:absolute;inset:0;width:100%;height:100%;display:block}
+.pn{position:absolute;border:1px dashed #4d82c455;cursor:pointer}
+.pn:hover{border-color:var(--acc);background:#4d82c414}
+.pn.sel{border:2px solid var(--acc);background:#4d82c41c}
+.pn .tag{position:absolute;top:2px;left:2px;font-size:10px;color:#fff;background:#4d82c4cc;
+padding:0 5px;border-radius:3px;opacity:0;pointer-events:none}
+.pn:hover .tag,.pn.sel .tag{opacity:1}
+.pn img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.bub{position:absolute;border:1.5px solid #4d82c4;border-radius:6px;cursor:grab;
+background:#4d82c40d;z-index:12}
+.bub:hover{background:#4d82c422}
+.bub.drag{cursor:grabbing;border-color:var(--warn)}
+.bub.dirty{border-color:var(--err);border-style:dashed}
+.tipdot{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;
+background:var(--warn);border:2px solid #000;cursor:move;z-index:13}
+#side{width:340px;flex-shrink:0;display:flex;flex-direction:column;gap:10px}
+.box{background:var(--pan);border:1px solid var(--bd);border-radius:8px;padding:10px 12px}
+.box h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.5px;
+color:var(--mut)}
+.box label{display:block;font-size:11px;color:var(--mut);margin:8px 0 3px}
+.row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.hint{font-size:11px;color:var(--mut);margin-top:8px}
+.hint b{color:var(--fg)}
+kbd{background:#121722;border:1px solid var(--bd);border-radius:4px;padding:0 5px;
+font-size:11px}
+@media (max-width:900px){#page.on{flex-direction:column}#side{width:auto}}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎬 Comic Studio</h1>
+  <span class="mut" id="pname"></span>
+  <button id="backbtn" style="display:none">📖 Book</button>
+  <button id="prevbtn" style="display:none">◀</button>
+  <button id="nextbtn" style="display:none">▶</button>
+  <span id="status"></span>
+  <button id="reloadbtn" title="Reload project.json">↻</button>
+</header>
+
+<div id="book">
+  <div class="row" style="margin-bottom:12px">
+    <button id="composeall" class="primary">🧩 Compose book</button>
+    <span class="hint" style="align-self:center">Publication order (covers first,
+    back pages last). Click a page to edit its panels and bubbles.</span>
+  </div>
+  <div class="grid" id="bookgrid"></div>
+</div>
+
+<div id="page">
+  <div id="stagewrap"><div id="stage"></div></div>
+  <div id="side">
+    <div class="box">
+      <h3 id="pagehead">Page</h3>
+      <div class="row">
+        <button id="composebtn" class="primary">🧩 Compose page</button>
+        <button id="genallbtn" title="Generate every panel of this page that has no image yet">🎨 Missing panels</button>
+      </div>
+      <div class="hint">Panels are clickable on the sheet. Drag a <b>bubble</b> to pin
+      it (its outline turns red = manually placed, double-click to reset), drag the
+      <b>yellow dot</b> to re-aim the tail (the anchor).</div>
+    </div>
+    <div class="box" id="editor" style="display:none">
+      <h3 id="edhead">Panel</h3>
+      <label>Panel text (@Name casting)</label>
+      <textarea id="edtext" rows="3"></textarea>
+      <label>Dialogue — one per line (Kira: … / Rook (think): … / CAP: … / SFX: …)</label>
+      <textarea id="eddlg" rows="4"></textarea>
+      <label>Seed (-1 = random)</label>
+      <input id="edseed" type="number" step="1" value="-1">
+      <div class="row">
+        <button id="savebtn">💾 Save panel</button>
+        <button id="genbtn" class="primary">🎨 Generate panel</button>
+      </div>
+      <div class="hint" id="edcast"></div>
+    </div>
+    <div class="box hint" id="help">
+      <kbd>←</kbd>/<kbd>→</kbd> previous / next page · <kbd>Esc</kbd> book view.
+      Every change is written to <b>project.json</b> — the Gradio accordion and the
+      CLI see it immediately.
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+const DIR = __CZ_DIR__;
+let STATE = null;          // reponse de l'op 'state'
+let CUR = -1;              // index dans STATE.book
+let SEL = null;            // panel id selectionne
+let BUSY = false;
+
+const $ = id => document.getElementById(id);
+const esc = s => (s == null ? '' : String(s)).replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function status(msg, cls, spin){
+  const s = $('status');
+  s.className = cls || '';
+  s.innerHTML = (spin ? '<span class="spin"></span>' : '') + esc(msg || '');
+}
+
+/* Appel d'un endpoint Gradio (POST event_id -> GET stream -> 1re sortie),
+   meme mecanique que l'Asset Browser. */
+async function gcall(name, data){
+  const r = await fetch('/gradio_api/call/' + name, {method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({data:data})});
+  const j = await r.json();
+  const eid = j.event_id || j.hash;
+  if(!eid) throw new Error('no event id (endpoint missing?)');
+  const t = await (await fetch('/gradio_api/call/' + name + '/' + eid)).text();
+  const m = t.match(/data:\s*(\[[\s\S]*?\])\s*(?:\n|$)/);
+  if(!m) throw new Error('empty API response');
+  return JSON.parse(m[1])[0];
+}
+
+async function api(op, payload, busyMsg){
+  if(BUSY) return null;
+  BUSY = true;
+  if(busyMsg) status(busyMsg, '', true);
+  try{
+    const raw = await gcall('comic_studio', [op, DIR, JSON.stringify(payload || {})]);
+    const res = (typeof raw === 'string') ? JSON.parse(raw) : raw;
+    if(!res || res.ok === false) throw new Error((res && res.error) || 'unknown error');
+    return res;
+  }catch(err){
+    status('⚠️ ' + err.message, 'err');
+    return null;
+  }finally{
+    BUSY = false;
+  }
+}
+
+/* ---------- chargement ---------- */
+async function load(keepView){
+  const res = await api('state', {}, 'Loading project…');
+  if(!res) return;
+  STATE = res;
+  $('pname').textContent = res.name + ' — ' + DIR;
+  document.title = 'Comic Studio — ' + res.name;
+  if(keepView && CUR >= 0 && CUR < STATE.book.length){ showPage(CUR); }
+  else { showBook(); }
+  status(STATE.book.length + ' page(s) loaded', 'ok');
+}
+
+/* ---------- vue livre ---------- */
+function showBook(){
+  CUR = -1; SEL = null;
+  $('book').classList.add('on'); $('page').classList.remove('on');
+  $('backbtn').style.display = $('prevbtn').style.display =
+    $('nextbtn').style.display = 'none';
+  const g = $('bookgrid');
+  g.innerHTML = '';
+  STATE.book.forEach((p, i) => {
+    const c = document.createElement('div');
+    c.className = 'card';
+    const img = p.url
+      ? '<img class="thumb" loading="lazy" src="' + encodeURI(p.url) + '?t=' + p.mtime + '">'
+      : '<div class="empty">not composed</div>';
+    c.innerHTML = img +
+      '<span class="badge ' + esc(p.role) + '">' + esc(p.role) + '</span>' +
+      (p.folio ? '<span class="folio">p.' + p.folio + '</span>' : '') +
+      '<div class="cap"><span>' + esc(p.cid + '.' + p.pid) + ' · ' + esc(p.layout) +
+      '</span><span>' + esc(p.chapter) + '</span></div>';
+    c.onclick = () => showPage(i);
+    g.appendChild(c);
+  });
+}
+
+/* ---------- vue planche ---------- */
+function pageOf(i){ return STATE.book[i]; }
+
+function showPage(i){
+  CUR = Math.max(0, Math.min(i, STATE.book.length - 1));
+  SEL = null;
+  $('book').classList.remove('on'); $('page').classList.add('on');
+  $('backbtn').style.display = $('prevbtn').style.display =
+    $('nextbtn').style.display = '';
+  renderStage();
+  renderEditor();
+}
+
+function stageSize(){
+  const W = STATE.page.width, H = STATE.page.height;
+  const availW = $('stagewrap').clientWidth || 800;
+  const availH = window.innerHeight - 110;
+  const k = Math.min(availW / W, availH / H, 1);
+  return [Math.max(280, Math.round(W * k)), Math.max(280, Math.round(H * k))];
+}
+
+function renderStage(){
+  const p = pageOf(CUR);
+  const [sw, sh] = stageSize();
+  const st = $('stage');
+  st.style.width = sw + 'px'; st.style.height = sh + 'px';
+  st.innerHTML = '';
+  $('pagehead').textContent = p.cid + '.' + p.pid + ' — ' + p.layout +
+    (p.role !== 'story' ? ' · ' + p.role : '') + (p.folio ? ' · folio ' + p.folio : '');
+  const composed = !!p.url;
+  if(composed){
+    const img = document.createElement('img');
+    img.id = 'sheet';
+    img.src = encodeURI(p.url) + '?t=' + p.mtime;
+    st.appendChild(img);
+  }
+  // cases cliquables (rects du layout, en fractions de page)
+  p.panels.forEach(pn => {
+    if(!pn.rect) return;
+    const d = document.createElement('div');
+    d.className = 'pn' + (SEL === pn.id ? ' sel' : '');
+    d.dataset.pn = pn.id;
+    place(d, pn.rect, sw, sh);
+    d.innerHTML = '<span class="tag">' + esc(pn.id) +
+      (pn.seed >= 0 ? ' · seed ' + pn.seed : '') + '</span>';
+    if(!composed && pn.img){
+      const im = document.createElement('img');
+      im.src = encodeURI(pn.img) + '?t=' + pn.img_mtime;
+      d.prepend(im);
+    }
+    d.onclick = () => { SEL = pn.id; renderStage(); renderEditor(); };
+    st.appendChild(d);
+  });
+  // bulles (placements du dernier compose) — seulement sur la planche composee,
+  // sinon elles ne correspondraient a rien
+  if(composed && p.placements){
+    p.placements.forEach(pl => {
+      const pn = p.panels.find(x => x.id === pl.panel);
+      const dlg = pn && pn.dialogue ? pn.dialogue[pl.index] : null;
+      const b = document.createElement('div');
+      b.className = 'bub' + (dlg && dlg.pos ? ' dirty' : '');
+      b.title = (dlg ? (dlg.speaker ? dlg.speaker + ': ' : '') + dlg.text : pl.kind) +
+        (pl.clean ? '' : '  ⚠ overlaps a face');
+      place(b, pl.rect, sw, sh);
+      makeDraggable(b, pl, 'pos');
+      b.ondblclick = ev => { ev.stopPropagation(); resetBubble(pl); };
+      st.appendChild(b);
+      if(pl.tip && dlg && (dlg.kind === 'speech' || dlg.kind === 'thought')){
+        const t = document.createElement('div');
+        t.className = 'tipdot';
+        t.title = 'tail anchor — drag to re-aim (' + (dlg.speaker || pl.kind) + ')';
+        t.style.left = (pl.tip[0] * sw) + 'px';
+        t.style.top = (pl.tip[1] * sh) + 'px';
+        makeDraggable(t, pl, 'anchor');
+        st.appendChild(t);
+      }
+    });
+  }
+}
+
+function place(el, r, sw, sh){
+  el.style.left = (r[0] * sw) + 'px';
+  el.style.top = (r[1] * sh) + 'px';
+  el.style.width = (r[2] * sw) + 'px';
+  el.style.height = (r[3] * sh) + 'px';
+}
+
+/* drag d'une bulle (mode 'pos': coin haut-gauche) ou de la pointe de queue
+   (mode 'anchor': un point). Les deux s'ecrivent en FRACTIONS DE CASE. */
+function makeDraggable(el, pl, mode){
+  el.addEventListener('pointerdown', ev => {
+    if(BUSY) return;
+    ev.preventDefault(); ev.stopPropagation();
+    const st = $('stage');
+    const srect = st.getBoundingClientRect();
+    const start = el.getBoundingClientRect();
+    const offX = ev.clientX - start.left, offY = ev.clientY - start.top;
+    el.classList.add('drag');
+    el.setPointerCapture(ev.pointerId);
+    let moved = false;
+    const mv = e => {
+      moved = true;
+      el.style.left = (e.clientX - srect.left - (mode === 'anchor' ? 0 : offX)) + 'px';
+      el.style.top = (e.clientY - srect.top - (mode === 'anchor' ? 0 : offY)) + 'px';
+    };
+    const up = e => {
+      el.removeEventListener('pointermove', mv);
+      el.removeEventListener('pointerup', up);
+      el.classList.remove('drag');
+      if(!moved) return;
+      const p = pageOf(CUR);
+      const pn = p.panels.find(x => x.id === pl.panel);
+      if(!pn || !pn.rect) return;
+      const sw = st.clientWidth, sh = st.clientHeight;
+      const px = pn.rect[0] * sw, py = pn.rect[1] * sh;
+      const pw = pn.rect[2] * sw, ph = pn.rect[3] * sh;
+      const ex = parseFloat(el.style.left), ey = parseFloat(el.style.top);
+      const fx = Math.max(0, Math.min(1, (ex - px) / pw));
+      const fy = Math.max(0, Math.min(1, (ey - py) / ph));
+      const payload = {cid: p.cid, pid: p.pid, pnid: pl.panel, index: pl.index};
+      payload[mode] = [fx, fy];
+      api('set_bubble', payload, 'Recomposing page…').then(res => {
+        if(res){ STATE.book[CUR] = res.page; renderStage();
+                 status('Bubble ' + (mode === 'pos' ? 'pinned' : 're-aimed'), 'ok'); }
+        else renderStage();               // echec: on remet l'etat connu
+      });
+    };
+    el.addEventListener('pointermove', mv);
+    el.addEventListener('pointerup', up);
+  });
+}
+
+function resetBubble(pl){
+  const p = pageOf(CUR);
+  api('set_bubble', {cid: p.cid, pid: p.pid, pnid: pl.panel, index: pl.index,
+                     clear: ['pos', 'anchor']}, 'Recomposing page…')
+    .then(res => { if(res){ STATE.book[CUR] = res.page; renderStage();
+                            status('Bubble back to auto placement', 'ok'); } });
+}
+
+/* ---------- editeur de panneau ---------- */
+function renderEditor(){
+  const p = pageOf(CUR);
+  const pn = p.panels.find(x => x.id === SEL);
+  $('editor').style.display = pn ? '' : 'none';
+  if(!pn) return;
+  $('edhead').textContent = 'Panel ' + p.cid + '.' + p.pid + '.' + pn.id +
+    ' (' + pn.status + ')';
+  $('edtext').value = pn.text;
+  $('eddlg').value = pn.dialogue_text;
+  $('edseed').value = pn.seed;
+  $('edcast').innerHTML = STATE.casting.length
+    ? 'Casting: ' + STATE.casting.map(n => '<b>@' + esc(n) + '</b>').join(', ')
+    : 'Casting is empty — add characters in the 🎞 Comic accordion.';
+}
+
+async function savePanel(){
+  const p = pageOf(CUR);
+  if(!SEL) return;
+  const res = await api('save_panel', {cid: p.cid, pid: p.pid, pnid: SEL,
+    text: $('edtext').value, dialogue: $('eddlg').value,
+    seed: parseInt($('edseed').value || '-1', 10)}, 'Saving panel…');
+  if(!res) return;
+  STATE.book[CUR] = res.page;
+  renderStage(); renderEditor();
+  const warn = (res.unknown && res.unknown.length)
+    ? '  ⚠ unknown casting: ' + res.unknown.join(', ') : '';
+  status('Panel saved — recompose to letter the new dialogue.' + warn,
+         warn ? 'warn' : 'ok');
+}
+
+async function generatePanel(pnid){
+  const p = pageOf(CUR);
+  const res = await api('generate', {cid: p.cid, pid: p.pid, pnid: pnid},
+    'Generating ' + pnid + '… (uses the app’s current model, can take a while)');
+  if(!res) return;
+  STATE.book[CUR] = res.page;
+  renderStage(); renderEditor();
+  status('Panel ' + pnid + ' rendered and page recomposed', 'ok');
+}
+
+async function generateMissing(){
+  const p = pageOf(CUR);
+  const missing = p.panels.filter(pn => !pn.img).map(pn => pn.id);
+  if(!missing.length){ status('All panels of this page already have an image', 'ok'); return; }
+  for(const id of missing){
+    await generatePanel(id);
+  }
+}
+
+async function composePage(){
+  const p = pageOf(CUR);
+  const res = await api('compose', {cid: p.cid, pid: p.pid}, 'Composing page…');
+  if(!res) return;
+  STATE.book[CUR] = res.page;
+  renderStage();
+  status('Page composed (' + ((res.page.placements || []).length) + ' balloon(s))', 'ok');
+}
+
+async function composeBook(){
+  const res = await api('compose_book', {}, 'Composing the whole book…');
+  if(!res) return;
+  STATE = res.state;
+  if(CUR >= 0) showPage(CUR); else showBook();
+  status('Book composed: ' + STATE.book.length + ' page(s)', 'ok');
+}
+
+/* ---------- navigation ---------- */
+$('backbtn').onclick = showBook;
+$('prevbtn').onclick = () => { if(CUR > 0) showPage(CUR - 1); };
+$('nextbtn').onclick = () => { if(CUR < STATE.book.length - 1) showPage(CUR + 1); };
+$('reloadbtn').onclick = () => load(true);
+$('composeall').onclick = composeBook;
+$('composebtn').onclick = composePage;
+$('genallbtn').onclick = generateMissing;
+$('savebtn').onclick = savePanel;
+$('genbtn').onclick = () => { if(SEL) generatePanel(SEL); };
+document.addEventListener('keydown', ev => {
+  if(ev.target.tagName === 'TEXTAREA' || ev.target.tagName === 'INPUT') return;
+  if(CUR < 0) return;
+  if(ev.key === 'Escape') showBook();
+  else if(ev.key === 'ArrowLeft' && CUR > 0) showPage(CUR - 1);
+  else if(ev.key === 'ArrowRight' && CUR < STATE.book.length - 1) showPage(CUR + 1);
+});
+window.addEventListener('resize', () => { if(CUR >= 0) renderStage(); });
+
+load();
+</script>
+</body>
+</html>

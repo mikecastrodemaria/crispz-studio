@@ -3463,6 +3463,37 @@ def _comic_refresh_editors(dir_txt):
             *st)
 
 
+def _comic_studio_open(dir_txt):
+    """Bouton 🎬 Comic Studio: ecrit studio.html dans le dossier du projet et
+    renvoie (statut, url) — l'onglet s'ouvre via le meme window.open que
+    l'Asset Browser. Le dossier est ajoute aux allowed_paths a la volee pour
+    que Gradio serve la page et les images du projet."""
+    import cz_comicstudio
+    d = _comic_dir(dir_txt)
+    if not os.path.isfile(os.path.join(d, "project.json")):
+        return "⚠️ No project.json here — 📂 Load or ✨ New first.", ""
+    _allow_runtime_path(d)
+    try:
+        path = cz_comicstudio.open_studio(d, (dir_txt or "").strip())
+    except Exception as e:
+        return f"⚠️ Comic Studio open failed: {e}", ""
+    url = "/gradio_api/file=" + os.path.abspath(path).replace("\\", "/")
+    return "🎬 Opening Comic Studio in a new tab…", url
+
+
+def _comic_studio_api(op, dir_txt, payload):
+    """Endpoint generique de la SPA Comic Studio (api_name='comic_studio').
+    Injecte le moteur de generation et le lettrage face-aware de l'app; le
+    dossier est re-autorise a chaque appel (survit a un restart de l'onglet)."""
+    import cz_comicstudio
+    d = _comic_dir(dir_txt)
+    _allow_runtime_path(d)
+    return cz_comicstudio.studio_api(
+        op, d, payload, engine=_comic_engine_spec,
+        face_detector_factory=_comic_face_detector,
+        char_embeddings_factory=_comic_char_embeddings)
+
+
 def build_ui():
     models = list_esrgan_models()
     default_model = DEFAULT_MODEL if DEFAULT_MODEL in models else (models[0] if models else None)
@@ -3508,6 +3539,16 @@ def build_ui():
         tr_out = gr.Textbox(visible=False)
         tr_btn = gr.Button(visible=False)
         tr_btn.click(_api_thumbs_rebuild, tr_in, tr_out, api_name="thumbs_rebuild")
+        # Endpoint Comic Studio (SPA BD: state / save_panel / set_bubble / compose /
+        # compose_book / generate — un seul endpoint, dispatch dans cz_comicstudio)
+        if COMIC_ENABLED:
+            cs_op = gr.Textbox(visible=False)
+            cs_dir = gr.Textbox(visible=False)
+            cs_payload = gr.Textbox(visible=False)
+            cs_out = gr.Textbox(visible=False)
+            cs_btn = gr.Button(visible=False)
+            cs_btn.click(_comic_studio_api, [cs_op, cs_dir, cs_payload], cs_out,
+                         api_name="comic_studio")
 
         with gr.Row():
             # ===== Colonne principale (apercu en haut, prompt + Generate, negative, input) =====
@@ -3830,6 +3871,8 @@ def build_ui():
                                                   label="Project folder", scale=3)
                         comic_load_btn = gr.Button("📂 Load", size="sm")
                         comic_new_btn = gr.Button("✨ New", size="sm")
+                        comic_studio_btn = gr.Button("🎬 Comic Studio", size="sm",
+                                                     variant="primary")
                     comic_status = gr.Markdown("*No project loaded.*")
                     comic_panel_dd = gr.Dropdown([], label="Panel (chapter.page.panel)")
                     comic_text_tb = gr.Textbox(lines=2, label="Panel text (@Name casting)")
@@ -4011,6 +4054,13 @@ def build_ui():
                          comic_pg_margin, comic_pg_gutter, comic_pg_bg,
                          comic_pg_border],
                         [comic_status])
+                    # SPA plein ecran (vue livre, cases cliquables, bulles
+                    # deplacables) — ouverte dans un onglet, comme l'Asset Browser.
+                    comic_studio_btn.click(
+                        _comic_studio_open, [comic_dir_tb],
+                        [comic_status, gallery_url]) \
+                        .then(None, [gallery_url], None,
+                              js="(u) => { if (u) window.open(u, '_blank'); }")
 
             # ===== Colonne Advanced (a droite, masquee par defaut comme Fooocus) =====
             with gr.Column(scale=2, visible=False) as advanced_col:
