@@ -80,3 +80,6 @@ tags/
 
 # --- Cache local de miniatures Asset Browser (reconstructible) ---
 cache/
+
+# Comic projects (your own books: pages, panels, exports)
+comics/

@@ -1,0 +1,427 @@
+{
+  "schema": 1,
+  "name": "The Winding Hour (sample)",
+  "description": "A couple inherits a time-rewinding pocket watch from an ancestor - found, tamed, lost.",
+  "page": {
+    "width": 2048,
+    "height": 2896,
+    "dpi": 300,
+    "margin": 64,
+    "gutter": 28,
+    "background": "#f4ead8",
+    "border": 4,
+    "border_color": "#1a1208"
+  },
+  "style": {
+    "prompt_suffix": "european graphic novel art, ligne claire, warm autumn palette, delicate ink outlines, soft watercolor shading",
+    "negative": "photorealistic, 3d render, text, watermark, speech bubbles",
+    "loras": [],
+    "bubble": "rounded"
+  },
+  "casting": {
+    "Lea": {
+      "desc": "Lea, a young woman with an auburn bob haircut and freckles, wearing a mustard yellow wool coat over a cream sweater, silver locket necklace",
+      "refs": [],
+      "loras": [],
+      "negative": "",
+      "kind": "character"
+    },
+    "Marco": {
+      "desc": "Marco, a young man with dark curly hair and round glasses, light stubble, wearing a worn denim jacket over a green flannel shirt",
+      "refs": [],
+      "loras": [],
+      "negative": "",
+      "kind": "character"
+    },
+    "Watch": {
+      "desc": "an ornate brass pocket watch with a crescent moon engraving, exposed clockwork, hands that glow faint blue",
+      "refs": [],
+      "loras": [],
+      "negative": "",
+      "kind": "setting"
+    },
+    "Manor": {
+      "desc": "a dusty ancestral manor study, tall oak bookshelves, heavy drapes, amber lamplight, dust motes in the air",
+      "refs": [],
+      "loras": [],
+      "negative": "",
+      "kind": "setting"
+    }
+  },
+  "chapters": [
+    {
+      "id": "ch01",
+      "name": "The Winding Hour",
+      "synopsis": "Inheritance, discovery, golden days, the loss.",
+      "pages": [
+        {
+          "id": "p01",
+          "layout": "splash",
+          "panels": [
+            {
+              "id": "pn1",
+              "text": "dramatic book cover composition: @Lea and @Marco standing back to back, looking up, dwarfed by a giant glowing pocket watch face with a crescent moon engraving filling the sky, swirling clock hands, autumn leaves spiraling upward, deep blue and amber night",
+              "seed": 1900,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "",
+                  "text": "THE WINDING HOUR",
+                  "kind": "sfx"
+                },
+                {
+                  "speaker": "",
+                  "text": "a crispz-studio comic",
+                  "kind": "caption"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "p02",
+          "layout": "3-classic",
+          "panels": [
+            {
+              "id": "pn1",
+              "text": "a notary office interior, @Lea and @Marco sitting side by side across a mahogany desk from an elderly notary in a bow tie who slides a small wooden box toward them",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "",
+                  "text": "Great-uncle Almos left them exactly one thing.",
+                  "kind": "caption"
+                },
+                {
+                  "speaker": "Notary",
+                  "text": "He was very specific. It goes to you both. Never to one alone.",
+                  "kind": "speech"
+                }
+              ]
+            },
+            {
+              "id": "pn2",
+              "text": "@Lea opening the small wooden box, revealing @Watch nestled in faded blue velvet, @Marco leaning over her shoulder, eyes wide",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "Lea",
+                  "text": "A watch?",
+                  "kind": "speech"
+                },
+                {
+                  "speaker": "Marco",
+                  "text": "It's beautiful...",
+                  "kind": "speech"
+                }
+              ]
+            },
+            {
+              "id": "pn3",
+              "text": "close-up of @Watch resting in an open palm, a yellowed letter folded four times tucked under it in the box",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "",
+                  "text": "And a letter, folded four times.",
+                  "kind": "caption"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "p03",
+          "layout": "4-grid",
+          "panels": [
+            {
+              "id": "pn1",
+              "text": "@Marco reading a yellowed letter by a tall window in @Manor, @Lea holding @Watch up to her ear, listening",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "Marco",
+                  "text": "'Wind it backwards, and the minute unwinds.'",
+                  "kind": "speech"
+                },
+                {
+                  "speaker": "Marco",
+                  "text": "...who writes that in a will?",
+                  "kind": "thought"
+                }
+              ]
+            },
+            {
+              "id": "pn2",
+              "text": "a ceramic coffee cup knocked off a desk edge, coffee splashing mid-air, @Lea recoiling, hand outstretched",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "",
+                  "text": "CRASH",
+                  "kind": "sfx"
+                }
+              ]
+            },
+            {
+              "id": "pn3",
+              "text": "@Lea winding @Watch backwards between her fingers, the whole room washed in faint blue light, the shattered cup un-breaking, coffee droplets floating upward back into it",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "",
+                  "text": "TICK... TICK...",
+                  "kind": "sfx"
+                },
+                {
+                  "speaker": "Watch",
+                  "text": "One minute. No more.",
+                  "kind": "speech",
+                  "style": "angular"
+                }
+              ]
+            },
+            {
+              "id": "pn4",
+              "text": "the coffee cup standing intact on the desk, @Lea and @Marco staring at each other wide-eyed across it",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "Lea",
+                  "text": "Tell me you saw that.",
+                  "kind": "speech"
+                },
+                {
+                  "speaker": "Marco",
+                  "text": "I saw that.",
+                  "kind": "speech"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "p04",
+          "layout": "5-hero",
+          "panels": [
+            {
+              "id": "pn1",
+              "text": "@Lea and @Marco laughing in the overgrown garden of @Manor at golden hour, tiny blue sparks of rewound seconds drifting around them like fireflies",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "",
+                  "text": "For one autumn, every small disaster could be undone.",
+                  "kind": "caption"
+                }
+              ]
+            },
+            {
+              "id": "pn2",
+              "text": "@Marco catching a falling stack of plates frozen mid-air in a blue glow, grinning",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "Marco",
+                  "text": "Got it!",
+                  "kind": "speech"
+                }
+              ]
+            },
+            {
+              "id": "pn3",
+              "text": "@Lea grinning as fallen autumn leaves rise from the grass back onto their branches around her",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "Lea",
+                  "text": "Again. One more.",
+                  "kind": "speech"
+                }
+              ]
+            },
+            {
+              "id": "pn4",
+              "text": "the yellowed letter open on a desk in candlelight, the last line underlined twice in heavy ink",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "",
+                  "text": "But the letter had one more line.",
+                  "kind": "caption"
+                }
+              ]
+            },
+            {
+              "id": "pn5",
+              "text": "extreme close-up of aged handwriting on paper, one sentence underlined, candle flame reflected in the ink",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "",
+                  "text": "'The watch keeps what it unwinds.'",
+                  "kind": "caption"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "p05",
+          "layout": "3-strip",
+          "panels": [
+            {
+              "id": "pn1",
+              "text": "night storm on an old stone bridge, @Marco slipping on wet cobblestones, @Watch flying out of his coat pocket in the rain, @Lea lunging to catch it, terrified",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "Lea",
+                  "text": "MARCO!",
+                  "kind": "speech"
+                }
+              ]
+            },
+            {
+              "id": "pn2",
+              "text": "@Watch spinning end over end in the air above the bridge railing, black river water below, rain streaks, slow-motion feel",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "Marco",
+                  "text": "WIND IT BACK! WIND IT-",
+                  "kind": "speech",
+                  "style": "angular"
+                }
+              ]
+            },
+            {
+              "id": "pn3",
+              "text": "the black river surface swallowing a small splash that glows faint blue then fades, @Lea and @Marco gripping the wet railing side by side, soaked, staring down",
+              "seed": -1,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "",
+                  "text": "plic",
+                  "kind": "sfx"
+                },
+                {
+                  "speaker": "",
+                  "text": "Some minutes refuse to be given back.",
+                  "kind": "caption"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "p06",
+          "layout": "splash",
+          "panels": [
+            {
+              "id": "pn1",
+              "text": "underwater view of a dark riverbed at night, @Watch resting among smooth stones, its hands spinning backwards, faint blue glow lighting rising bubbles, moonlight filtering down through the water",
+              "seed": 1901,
+              "status": "draft",
+              "image": null,
+              "refs": [],
+              "loras": [],
+              "notes": "",
+              "dialogue": [
+                {
+                  "speaker": "",
+                  "text": "Somewhere below, it is still unwinding.",
+                  "kind": "caption"
+                },
+                {
+                  "speaker": "",
+                  "text": "supersonique-studio - crispz family",
+                  "kind": "caption"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

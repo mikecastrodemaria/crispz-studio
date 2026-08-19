@@ -3003,6 +3003,12 @@ def _ui_apply_transformer_silent(repo):
 # robuste aux edits manuels du fichier et au travail simultane en CLI.
 # ----------------------------------------------------------------------------
 COMIC_ENABLED = bool((CONFIG.get("comic") or {}).get("enabled", True))
+try:
+    import cz_comic as _czc
+    cz_comic_layouts = _czc.layout_names()
+    cz_comic_bubbles = _czc.BUBBLE_STYLES
+except Exception:                       # module absent: le panneau reste inerte
+    cz_comic_layouts, cz_comic_bubbles = ["4-grid"], ("round",)
 
 
 def _comic_dir(d):
@@ -3208,6 +3214,190 @@ def _comic_export(dir_txt, fmt):
         out = cz_comic.export_cbz(paths, os.path.join(d, "book.cbz"))
     return f"📦 exported: {out}", paths
 
+
+
+def _comic_pages_choices(project):
+    """['ch01.p01 (splash)', ...] pour le selecteur de planche."""
+    out = []
+    for ch in project["chapters"]:
+        for pg in ch["pages"]:
+            out.append(f"{ch['id']}.{pg['id']} ({pg['layout']})")
+    return out
+
+
+def _comic_page_ids(label):
+    """'ch01.p02 (4-grid)' -> ('ch01', 'p02')."""
+    head = (label or "").split(" ")[0]
+    parts = head.split(".")
+    return (parts[0], parts[1]) if len(parts) >= 2 else (None, None)
+
+
+def _comic_add_page(dir_txt, layout, chapter_label):
+    """Ajoute une planche au chapitre de la planche selectionnee (ou au premier)."""
+    import cz_comic
+    d = _comic_dir(dir_txt)
+    project = cz_comic.load_project(d)
+    cid = _comic_page_ids(chapter_label)[0] or project["chapters"][0]["id"]
+    pg = cz_comic.add_page(project, cid, layout or "4-grid")
+    cz_comic.save_project(project, d)
+    md, dd, gal = _comic_load(dir_txt)
+    return (f"➕ page {cid}.{pg['id']} added ({layout}, {len(pg['panels'])} panels). " + md,
+            dd, gal, gr.update(choices=_comic_pages_choices(project),
+                               value=f"{cid}.{pg['id']} ({pg['layout']})"))
+
+
+def _comic_set_layout(dir_txt, page_label, layout):
+    """Change le gabarit d'une planche. Les cases retirees (reduction) sont
+    RENDUES par set_layout: on ne les jette pas en silence, on les recapitule
+    dans le statut pour que le texte perdu soit recuperable."""
+    import cz_comic
+    d = _comic_dir(dir_txt)
+    cid, pid = _comic_page_ids(page_label)
+    if not cid:
+        return ("⚠️ Pick a page first.", gr.update(), [], gr.update())
+    project = cz_comic.load_project(d)
+    _pg, removed = cz_comic.set_layout(project, cid, pid, layout)
+    cz_comic.save_project(project, d)
+    md, dd, gal = _comic_load(dir_txt)
+    note = ""
+    if removed:
+        lost = "; ".join(f"{p['id']}: {(p.get('text') or '(empty)')[:40]}"
+                         for p in removed)
+        note = f"  ⚠️ {len(removed)} panel(s) removed — text was: {lost}"
+    return (f"🔲 {cid}.{pid} -> {layout}.{note}  \n" + md, dd, gal,
+            gr.update(choices=_comic_pages_choices(project),
+                      value=f"{cid}.{pid} ({layout})"))
+
+
+# ---- casting ----
+def _comic_cast_choices(project):
+    return sorted(project.get("casting") or {})
+
+
+def _comic_cast_pick(dir_txt, name):
+    import cz_comic
+    if not name:
+        return "", "character", "", "", ""
+    try:
+        project = cz_comic.load_project(_comic_dir(dir_txt))
+    except Exception:
+        return "", "character", "", "", ""
+    c = (project.get("casting") or {}).get(name) or {}
+    return (c.get("desc", ""), c.get("kind", "character"),
+            c.get("negative", ""), ", ".join(c.get("loras") or []),
+            ", ".join(c.get("refs") or []))
+
+
+def _comic_cast_save(dir_txt, name, desc, kind, negative, loras, refs):
+    """Cree ou met a jour une fiche de casting."""
+    import cz_comic
+    name = (name or "").strip()
+    if not name:
+        return "⚠️ Give the character a name (the @Name used in panel texts).", gr.update()
+    d = _comic_dir(dir_txt)
+    project = cz_comic.load_project(d)
+    try:
+        char = cz_comic.new_character(
+            desc, refs=[r.strip() for r in (refs or "").split(",") if r.strip()],
+            lora=[l.strip() for l in (loras or "").split(",") if l.strip()],
+            negative=negative, kind=kind or "character")
+    except ValueError as e:
+        return f"⚠️ {e}", gr.update()
+    project.setdefault("casting", {})[name] = char
+    cz_comic.save_project(project, d)
+    return (f"💾 casting '{name}' saved ({kind}). Use @{name} in panel texts.",
+            gr.update(choices=_comic_cast_choices(project), value=name))
+
+
+def _comic_cast_delete(dir_txt, name):
+    import cz_comic
+    if not name:
+        return "⚠️ Pick a casting entry first.", gr.update()
+    d = _comic_dir(dir_txt)
+    project = cz_comic.load_project(d)
+    project.get("casting", {}).pop(name, None)
+    cz_comic.save_project(project, d)
+    return (f"🗑 casting '{name}' removed (panel texts still mention @{name}).",
+            gr.update(choices=_comic_cast_choices(project), value=None))
+
+
+def _comic_sheet(dir_txt, name):
+    """Genere le PORTRAIT DE REFERENCE d'une fiche et l'enregistre dans refs[0]:
+    c'est lui qui sert ensuite a reconnaitre le locuteur au lettrage."""
+    import cz_comic
+    if not name:
+        return "⚠️ Pick a casting entry first.", []
+    d = _comic_dir(dir_txt)
+    project = cz_comic.load_project(d)
+    char = (project.get("casting") or {}).get(name)
+    if not char:
+        return f"⚠️ '{name}' is not in the casting.", []
+    prompt, negative = cz_comic.sheet_prompt(char, project.get("style"))
+    img, _t = txt2img_run(prompt, 1024, 1024,
+                          int(CONFIG.get("default_gen_steps", 8)), -1, negative)
+    rel = os.path.join("refs", f"{name.lower()}.png")
+    dst = os.path.join(d, rel)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    img.save(dst)
+    refs = [r for r in (char.get("refs") or []) if r != rel]
+    char["refs"] = [rel] + refs               # le portrait passe en tete
+    cz_comic.save_project(project, d)
+    return (f"🪪 reference sheet for '{name}' -> {rel} (used to recognize the "
+            f"speaker when lettering).", [dst])
+
+
+# ---- style & page ----
+def _comic_style_pick(dir_txt):
+    import cz_comic
+    try:
+        project = cz_comic.load_project(_comic_dir(dir_txt))
+    except Exception:
+        return "", "", "round", 2480, 3508, 96, 48, "#ffffff", 0
+    st = project.get("style") or {}
+    pg = cz_comic.page_size(project.get("page"))
+    return (st.get("prompt_suffix", ""), st.get("negative", ""),
+            st.get("bubble", "round"), pg["width"], pg["height"],
+            pg["margin"], pg["gutter"], pg["background"], pg.get("border", 0))
+
+
+def _comic_style_save(dir_txt, suffix, negative, bubble, w, h, margin, gutter,
+                      background, border):
+    import cz_comic
+    d = _comic_dir(dir_txt)
+    project = cz_comic.load_project(d)
+    st = project.setdefault("style", {})
+    st["prompt_suffix"] = (suffix or "").strip()
+    st["negative"] = (negative or "").strip()
+    st["bubble"] = bubble or "round"
+    pg = dict(cz_comic.page_size(project.get("page")))
+    pg.update({"width": int(w), "height": int(h), "margin": int(margin),
+               "gutter": int(gutter), "background": background or "#ffffff",
+               "border": int(border)})
+    try:                       # garde-fou: marges/gouttieres impossibles
+        cz_comic.panel_rects(cz_comic.layout_cells("9-grid"), pg["width"],
+                             pg["height"], pg["margin"], pg["gutter"])
+    except ValueError as e:
+        return f"⚠️ page rejected: {e}"
+    project["page"] = pg
+    cz_comic.save_project(project, d)
+    return (f"💾 style + page saved ({pg['width']}x{pg['height']}, bubble "
+            f"{st['bubble']}). Applies to the NEXT generate/compose.")
+
+
+def _comic_refresh_editors(dir_txt):
+    """Remplit les editeurs (pages, casting, style & page) apres Load/New.
+    Stateless comme le reste du panneau: tout est relu du project.json."""
+    import cz_comic
+    try:
+        project = cz_comic.load_project(_comic_dir(dir_txt))
+    except Exception:
+        return (gr.update(choices=[], value=None), gr.update(choices=[], value=None),
+                "", "", "round", 2480, 3508, 96, 48, "#ffffff", 0)
+    pages = _comic_pages_choices(project)
+    cast = _comic_cast_choices(project)
+    st = _comic_style_pick(dir_txt)
+    return (gr.update(choices=pages, value=(pages[0] if pages else None)),
+            gr.update(choices=cast, value=(cast[0] if cast else None)), *st)
 
 
 def build_ui():
@@ -3594,10 +3784,87 @@ def build_ui():
                         comic_cbz_btn = gr.Button("📦 Export CBZ", size="sm")
                     comic_gallery = gr.Gallery(label="Panels / pages", columns=3,
                                                height=420)
+                    with gr.Accordion("📐 Pages & layouts", open=False):
+                        with gr.Row():
+                            comic_page_dd = gr.Dropdown([], label="Page", scale=3)
+                            comic_layout_dd = gr.Dropdown(
+                                cz_comic_layouts, value="4-grid", label="Layout",
+                                scale=2)
+                        with gr.Row():
+                            comic_addpage_btn = gr.Button("➕ Add page", size="sm")
+                            comic_setlayout_btn = gr.Button("🔲 Change layout",
+                                                            size="sm")
+                        gr.Markdown(
+                            "*Shrinking a layout reports the removed panels and "
+                            "their text in the status line — nothing is dropped "
+                            "silently. `splash` = one full-page panel (cover / "
+                            "back cover).*")
+                    with gr.Accordion("🎭 Casting (@Name)", open=False):
+                        with gr.Row():
+                            comic_cast_dd = gr.Dropdown([], label="Entry", scale=2)
+                            comic_cast_name = gr.Textbox(label="Name (@Name)",
+                                                         scale=2)
+                            comic_cast_kind = gr.Radio(
+                                ["character", "setting"], value="character",
+                                label="Kind", scale=2)
+                        comic_cast_desc = gr.Textbox(
+                            lines=2, label="Description (substituted in prompts)")
+                        with gr.Row():
+                            comic_cast_neg = gr.Textbox(label="Negative", scale=2)
+                            comic_cast_loras = gr.Textbox(
+                                label="LoRAs (file.safetensors:0.8, ...)", scale=2)
+                        comic_cast_refs = gr.Textbox(
+                            label="Reference images (relative paths, comma-separated)")
+                        with gr.Row():
+                            comic_cast_save_btn = gr.Button("💾 Save entry",
+                                                            size="sm",
+                                                            variant="primary")
+                            comic_cast_sheet_btn = gr.Button(
+                                "🪪 Generate reference sheet", size="sm")
+                            comic_cast_del_btn = gr.Button("🗑 Delete", size="sm")
+                        gr.Markdown(
+                            "*A `setting` (place, object) substitutes like a "
+                            "character but is never picked as the subject of a "
+                            "face-detail pass. The reference sheet is what lets "
+                            "the lettering RECOGNIZE who is speaking.*")
+                    with gr.Accordion("🎨 Style & page format", open=False):
+                        comic_style_suffix = gr.Textbox(
+                            lines=2, label="Style suffix (appended to every panel prompt)")
+                        with gr.Row():
+                            comic_style_neg = gr.Textbox(label="Negative (all panels)",
+                                                         scale=3)
+                            comic_style_bubble = gr.Dropdown(
+                                list(cz_comic_bubbles), value="round",
+                                label="Default bubble", scale=1)
+                        with gr.Row():
+                            comic_pg_w = gr.Number(value=2480, label="Page width",
+                                                   precision=0)
+                            comic_pg_h = gr.Number(value=3508, label="Page height",
+                                                   precision=0)
+                            comic_pg_margin = gr.Number(value=96, label="Margin",
+                                                        precision=0)
+                            comic_pg_gutter = gr.Number(value=48, label="Gutter",
+                                                        precision=0)
+                        with gr.Row():
+                            comic_pg_bg = gr.Textbox(value="#ffffff",
+                                                     label="Background", scale=2)
+                            comic_pg_border = gr.Number(value=0, label="Panel border",
+                                                        precision=0, scale=1)
+                            comic_style_save_btn = gr.Button("💾 Save style & page",
+                                                             size="sm",
+                                                             variant="primary")
                     comic_load_btn.click(_comic_load, [comic_dir_tb],
-                                         [comic_status, comic_panel_dd, comic_gallery])
+                                         [comic_status, comic_panel_dd, comic_gallery])                         .then(_comic_refresh_editors, [comic_dir_tb],
+                              [comic_page_dd, comic_cast_dd, comic_style_suffix,
+                               comic_style_neg, comic_style_bubble, comic_pg_w,
+                               comic_pg_h, comic_pg_margin, comic_pg_gutter,
+                               comic_pg_bg, comic_pg_border])
                     comic_new_btn.click(_comic_new, [comic_dir_tb],
-                                        [comic_status, comic_panel_dd, comic_gallery])
+                                        [comic_status, comic_panel_dd, comic_gallery])                         .then(_comic_refresh_editors, [comic_dir_tb],
+                              [comic_page_dd, comic_cast_dd, comic_style_suffix,
+                               comic_style_neg, comic_style_bubble, comic_pg_w,
+                               comic_pg_h, comic_pg_margin, comic_pg_gutter,
+                               comic_pg_bg, comic_pg_border])
                     comic_panel_dd.change(_comic_pick, [comic_dir_tb, comic_panel_dd],
                                           [comic_text_tb, comic_dlg_tb])
                     comic_save_btn.click(_comic_save_panel,
@@ -3620,6 +3887,41 @@ def build_ui():
                     comic_cbz_btn.click(lambda d: _comic_export(d, "cbz"),
                                         [comic_dir_tb],
                                         [comic_status, comic_gallery])
+                    # --- editeurs de structure (pages, casting, style) ---
+                    comic_addpage_btn.click(
+                        _comic_add_page, [comic_dir_tb, comic_layout_dd, comic_page_dd],
+                        [comic_status, comic_panel_dd, comic_gallery, comic_page_dd])
+                    comic_setlayout_btn.click(
+                        _comic_set_layout, [comic_dir_tb, comic_page_dd, comic_layout_dd],
+                        [comic_status, comic_panel_dd, comic_gallery, comic_page_dd])
+                    comic_cast_dd.change(
+                        _comic_cast_pick, [comic_dir_tb, comic_cast_dd],
+                        [comic_cast_desc, comic_cast_kind, comic_cast_neg,
+                         comic_cast_loras, comic_cast_refs]) \
+                        .then(lambda n: gr.update(value=n), [comic_cast_dd],
+                              [comic_cast_name])
+                    comic_cast_save_btn.click(
+                        _comic_cast_save,
+                        [comic_dir_tb, comic_cast_name, comic_cast_desc,
+                         comic_cast_kind, comic_cast_neg, comic_cast_loras,
+                         comic_cast_refs],
+                        [comic_status, comic_cast_dd])
+                    comic_cast_del_btn.click(
+                        _comic_cast_delete, [comic_dir_tb, comic_cast_dd],
+                        [comic_status, comic_cast_dd])
+                    comic_cast_sheet_btn.click(
+                        _comic_sheet, [comic_dir_tb, comic_cast_dd],
+                        [comic_status, comic_gallery]) \
+                        .then(_comic_cast_pick, [comic_dir_tb, comic_cast_dd],
+                              [comic_cast_desc, comic_cast_kind, comic_cast_neg,
+                               comic_cast_loras, comic_cast_refs])
+                    comic_style_save_btn.click(
+                        _comic_style_save,
+                        [comic_dir_tb, comic_style_suffix, comic_style_neg,
+                         comic_style_bubble, comic_pg_w, comic_pg_h,
+                         comic_pg_margin, comic_pg_gutter, comic_pg_bg,
+                         comic_pg_border],
+                        [comic_status])
 
             # ===== Colonne Advanced (a droite, masquee par defaut comme Fooocus) =====
             with gr.Column(scale=2, visible=False) as advanced_col:
