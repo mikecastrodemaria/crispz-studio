@@ -100,6 +100,17 @@ SwarmUI. On top of crispz's upscaler it adds:
   chars, `provenance_wm_id`) in every saved image — survives JPEG/WebP re-encoding.
   CLI: `--provenance -i img.png`. Both need `trustmark` / `c2pa-python`
   (`requirements-extra.txt`); absence of marks never means "not AI".
+- **🎞 Comic (comic-book projects)** (`cz_comic` + Comic accordion + CLI `--comic`):
+  chapters → pages → panels with **page layouts** (splash, 4-grid, 5-hero, 9-grid…),
+  an **@Name casting** (a character bundles description + Omni refs + LoRAs +
+  negatives; a character LoRA wins over the style LoRA; `kind: setting` for
+  places), per-panel generation at the panel's **exact ratio** (~1 MP, 32-aligned),
+  **vector lettering** drawn AFTER composition (speech/thought bubbles with tails,
+  captions, SFX — the model never renders text, it invents letters), page
+  composition with gutters/borders and **PDF / CBZ export**. Resume-safe:
+  `project.json` is saved after every panel, so a crash costs nothing. Config
+  `comic.enabled`; the engine (`cz_comic.py`) is pure geometry — no torch, no GPU —
+  and fully unit-tested.
 - **Ollama (optional)**: **Describe** (image→prompt), **Improve prompt**, and **Vision
   Mix** (blend several reference images into one prompt). Models unload from VRAM after
   use. Without Ollama, **Describe** uses a local BLIP captioner and **Improve prompt**

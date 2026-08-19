@@ -588,3 +588,284 @@ def load_project(project_dir):
                 base["id"] = base["id"] or f"pn{i + 1}"
                 page["panels"][i] = base
     return data
+
+
+# ----------------------------------------------------------------------------
+# Lettrage: dialogues, bulles, cartouches, onomatopees
+# ----------------------------------------------------------------------------
+# Le texte n'est JAMAIS demande au modele (Z-Image invente des lettres:
+# 'Mendian Station'), il est dessine vectoriellement APRES la composition:
+# editable sans regenerer l'image, traduisible, net a l'impression.
+DIALOGUE_KINDS = ("speech", "thought", "caption", "sfx")
+
+# Polices essayees dans l'ordre (Windows puis fallbacks libres).
+_BUBBLE_FONTS = ("comicbd.ttf", "comic.ttf", "segoeui.ttf", "arial.ttf",
+                 "DejaVuSans.ttf")
+_SFX_FONTS = ("impact.ttf", "arialbd.ttf", "comicbd.ttf", "DejaVuSans-Bold.ttf")
+
+
+def add_dialogue(panel, text, speaker=None, kind="speech", anchor=None):
+    """Ajoute une replique a une case. `anchor` = (fx, fy) en fractions de la
+    case, vers quoi pointe la queue de la bulle (defaut: bas de la bulle)."""
+    if kind not in DIALOGUE_KINDS:
+        raise ValueError(f"kind must be one of {DIALOGUE_KINDS}, got {kind!r}")
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("empty dialogue text")
+    d = {"speaker": (speaker or "").strip(), "text": text, "kind": kind}
+    if anchor:
+        d["anchor"] = [float(anchor[0]), float(anchor[1])]
+    panel.setdefault("dialogue", []).append(d)
+    return d
+
+
+def parse_dialogue(block):
+    """Syntaxe scenariste -> liste de repliques, une par ligne:
+         Kira: On y va.               -> speech (speaker Kira)
+         Kira (think): Trop tard.     -> thought
+         CAP: Trois heures plus tot.  -> caption (narration)
+         SFX: KRAK                    -> onomatopee
+       Une ligne sans ':' est une caption. Lignes vides ignorees."""
+    out = []
+    for line in (block or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        head, sep, text = line.partition(":")
+        if not sep or not text.strip():
+            out.append({"speaker": "", "text": line, "kind": "caption"})
+            continue
+        head, text = head.strip(), text.strip()
+        low = head.lower()
+        if low == "cap":
+            out.append({"speaker": "", "text": text, "kind": "caption"})
+        elif low == "sfx":
+            out.append({"speaker": "", "text": text, "kind": "sfx"})
+        else:
+            kind = "speech"
+            m = re.match(r"^(.*?)\s*\((think|thought|pense)\)$", head, re.I)
+            if m:
+                head, kind = m.group(1).strip(), "thought"
+            out.append({"speaker": head, "text": text, "kind": kind})
+    return out
+
+
+def _font(candidates, px):
+    from PIL import ImageFont
+    for name in candidates:
+        try:
+            return ImageFont.truetype(name, px)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def _wrap(draw, text, font, max_w):
+    """Coupe le texte en lignes tenant dans max_w pixels (par mots)."""
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        cand = (cur + " " + w).strip()
+        if cur and draw.textlength(cand, font=font) > max_w:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = cand
+    if cur:
+        lines.append(cur)
+    return lines or [""]
+
+
+def render_lettering(project, page, sheet):
+    """Dessine les dialogues de chaque case sur la planche composee (in place).
+
+    Placement v1, deterministe: les repliques s'empilent depuis le haut de la
+    case dans l'ordre d'ecriture, en alternant gauche/droite (sens de lecture);
+    les captions s'alignent a gauche; les SFX se centrent en grand. La queue
+    des bulles pointe vers `anchor` (fractions de case) ou vers le bas."""
+    pg = page_size(project.get("page"))
+    cells = layout_cells(page["layout"])
+    rects = panel_rects(cells, pg["width"], pg["height"], pg["margin"], pg["gutter"])
+    draw = ImageDraw.Draw(sheet)
+
+    for i, rect in enumerate(rects):
+        if i >= len(page["panels"]):
+            break
+        panel = page["panels"][i]
+        dialogue = panel.get("dialogue") or []
+        if not dialogue:
+            continue
+        x, y, w, h = rect
+        fpx = max(16, min(44, h // 22))
+        font = _font(_BUBBLE_FONTS, fpx)
+        pad = max(8, fpx // 2)
+        cur_y = y + pad
+        side = 0  # 0 = gauche, 1 = droite (alterne par bulle, sens de lecture)
+
+        for d in dialogue:
+            kind = d.get("kind", "speech")
+            text = d.get("text") or ""
+            if kind == "sfx":
+                sfx_font = _font(_SFX_FONTS, max(fpx * 2, h // 8))
+                bb = draw.textbbox((0, 0), text, font=sfx_font, stroke_width=4)
+                tx = x + (w - (bb[2] - bb[0])) // 2
+                ty = y + (h - (bb[3] - bb[1])) // 2
+                draw.text((tx, ty), text, font=sfx_font, fill="#ffffff",
+                          stroke_width=max(3, fpx // 5), stroke_fill="#000000")
+                continue
+
+            max_text_w = int(w * (0.86 if kind == "caption" else 0.58))
+            lines = _wrap(draw, text, font, max_text_w)
+            line_h = fpx + 4
+            text_w = max(int(draw.textlength(l, font=font)) for l in lines)
+            text_h = line_h * len(lines)
+
+            if kind == "caption":
+                bx0 = x + pad
+                bw, bh = text_w + pad * 2, text_h + pad * 2
+                by0 = cur_y
+                draw.rectangle([bx0, by0, bx0 + bw, by0 + bh],
+                               fill="#fdf6d8", outline="#000000", width=3)
+                ty = by0 + pad
+                for l in lines:
+                    draw.text((bx0 + pad, ty), l, font=font, fill="#000000")
+                    ty += line_h
+                cur_y = by0 + bh + pad
+                continue
+
+            # speech / thought: bulle ellipse, plus large que le bloc de texte
+            bw = int((text_w + pad * 2) * 1.25)
+            bh = int((text_h + pad * 2) * 1.45)
+            bx0 = x + pad if side == 0 else x + w - pad - bw
+            bx0 = max(x + 2, min(bx0, x + w - bw - 2))
+            by0 = cur_y
+            anchor = d.get("anchor") or ((0.35, 0.9) if side == 0 else (0.65, 0.9))
+            tip = (max(x + 2, min(x + int(anchor[0] * w), x + w - 2)),
+                   max(y + 2, min(y + int(anchor[1] * h), y + h - 2)))
+            cx = bx0 + bw // 2
+            if kind == "speech":
+                base_y = by0 + int(bh * 0.82)
+                draw.polygon([(cx - fpx // 2, base_y), (cx + fpx // 2, base_y),
+                              tip], fill="#ffffff", outline="#000000")
+            draw.ellipse([bx0, by0, bx0 + bw, by0 + bh],
+                         fill="#ffffff", outline="#000000", width=3)
+            if kind == "speech":
+                # re-remplit la jonction queue/ellipse (gomme le trait dessous)
+                base_y = by0 + int(bh * 0.82)
+                draw.polygon([(cx - fpx // 2 + 3, base_y - 3),
+                              (cx + fpx // 2 - 3, base_y - 3),
+                              (tip[0], tip[1] - 4)], fill="#ffffff")
+            else:  # thought: petites bulles decroissantes vers l'ancrage
+                for k, r in ((0.35, max(3, fpx // 3)), (0.65, max(2, fpx // 5))):
+                    px_ = int(cx + (tip[0] - cx) * k)
+                    py_ = int((by0 + bh) + (tip[1] - (by0 + bh)) * k)
+                    draw.ellipse([px_ - r, py_ - r, px_ + r, py_ + r],
+                                 fill="#ffffff", outline="#000000", width=2)
+            ty = by0 + (bh - text_h) // 2
+            for l in lines:
+                lw = draw.textlength(l, font=font)
+                draw.text((bx0 + (bw - lw) // 2, ty), l, font=font, fill="#000000")
+                ty += line_h
+            cur_y = by0 + bh + pad
+            side = 1 - side
+    return sheet
+
+
+# ----------------------------------------------------------------------------
+# Character sheets & exports
+# ----------------------------------------------------------------------------
+def sheet_prompt(char, style=None):
+    """(prompt, negative) pour generer la planche de reference d'une fiche de
+    casting: un portrait canonique (seed fixe cote appelant) qui sert ensuite
+    de ref Omni. Pour un decor (kind 'setting'): un plan d'ensemble vide."""
+    desc = (char.get("desc") or "").strip()
+    style = style or {}
+    if char.get("kind", "character") == "setting":
+        base = f"{desc}, wide establishing shot, empty scene, no people"
+    else:
+        base = (f"character reference sheet of {desc}, front view portrait and "
+                f"full body, neutral grey background, consistent design")
+    suffix = (style.get("prompt_suffix") or "").strip()
+    prompt = ", ".join(p for p in (base, suffix) if p)
+    negs = [char.get("negative") or "", style.get("negative") or ""]
+    return prompt, ", ".join(n for n in negs if n)
+
+
+def export_cbz(pages, path):
+    """CBZ (format standard des liseuses BD): zip d'images numerotees.
+    `pages` = images PIL ou chemins de fichiers, dans l'ordre de pagination."""
+    import io
+    import zipfile
+    if not pages:
+        raise ValueError("export_cbz: no page to export")
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as z:
+        for i, p in enumerate(pages):
+            name = f"{i + 1:03d}.png"
+            if isinstance(p, str):
+                z.write(p, name)
+            else:
+                buf = io.BytesIO()
+                p.convert("RGB").save(buf, "PNG")
+                z.writestr(name, buf.getvalue())
+    return path
+
+
+# ----------------------------------------------------------------------------
+# Orchestration de rendu (le moteur est INJECTE: testable sans GPU)
+# ----------------------------------------------------------------------------
+def render_project(project, project_dir, engine, only=None, force=False,
+                   progress=None):
+    """Genere les cases du projet via `engine(spec) -> PIL.Image`.
+
+    spec = resolve_panel() + {'chapter','page','panel'} (les ids). Une case qui
+    a deja une image est sautee sauf `force`. `only` filtre par id complet
+    'ch01.p02.pn3' ou par prefixe ('ch01', 'ch01.p02'). L'image est sauvee via
+    panel_path() et le project.json est mis a jour apres CHAQUE case (un crash
+    au milieu ne perd rien). Renvoie la liste des ids rendus."""
+    only = set(only or [])
+
+    def _selected(cid, pid, pnid):
+        if not only:
+            return True
+        full = f"{cid}.{pid}.{pnid}"
+        return any(full == o or full.startswith(o + ".") for o in only)
+
+    rendered = []
+    for chapter, page, panel, i in iter_panels(project):
+        pnid = f"{chapter['id']}.{page['id']}.{panel['id']}"
+        if not _selected(chapter["id"], page["id"], panel["id"]):
+            continue
+        if panel.get("image") and os.path.isfile(panel["image"]) and not force:
+            continue
+        spec = resolve_panel(project, page, panel, index=i)
+        spec.update({"chapter": chapter["id"], "page": page["id"],
+                     "panel": panel["id"]})
+        if progress:
+            progress(pnid, spec)
+        img = engine(spec)
+        if img is None:
+            continue
+        dst = panel_path(project_dir, chapter["id"], page["id"], panel["id"])
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        img.save(dst)
+        panel["image"] = dst
+        panel["status"] = "rendered"
+        save_project(project, project_dir)
+        rendered.append(pnid)
+    return rendered
+
+
+def compose_chapter(project, project_dir, chapter_id, letter=True, fit="cover"):
+    """Compose et sauve toutes les planches d'un chapitre (+ lettrage), renvoie
+    la liste des chemins dans l'ordre de pagination."""
+    chapter = find_chapter(project, chapter_id)
+    paths = []
+    for page in chapter["pages"]:
+        sheet = compose_page(project, page, fit=fit)
+        if letter:
+            render_lettering(project, page, sheet)
+        dst = page_path(project_dir, chapter_id, page["id"])
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        sheet.save(dst)
+        paths.append(dst)
+    return paths

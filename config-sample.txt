@@ -164,6 +164,9 @@
         "_cache_dir_help": "Where thumbnails are cached. Empty (default) = <app>/cache (the app folder, gitignored - usually a fast disk, much faster than an HDD/NAS output folder). 'output' = next to the images (<out>/_index/thumbs, relative URLs). Any path = custom cache (e.g. an SSD): thumbnails go to <cache_dir>/crispz-thumbs/<slug>/. Also settable in the UI (Save > Asset Browser). Safe to delete at any time (rebuilt on demand)."
     },
 
+    "comic": {"enabled": true},
+    "_comic_help": "🎞 Comic accordion (cz_comic): comic-book projects - page layouts, @Name casting (description + refs + LoRAs per character), per-panel generation at the panel ratio, vector lettering (speech/thought bubbles, captions, SFX - text is drawn AFTER composition, never asked to the model), PDF/CBZ export. enabled=false hides the accordion (zero cost). CLI: --comic <dir> --comic-render / --comic-compose / --comic-export pdf|cbz|both.",
+
     "provenance_watermark": "off",
     "_provenance_watermark_help": "on = embed an invisible TrustMark watermark (Adobe, open source) in every saved image, for machine-readable AI disclosure (EU AI Act art. 50, applicable Aug 2 2026). Needs 'pip install trustmark' (see requirements-extra.txt); model (~40 MB) downloads on first use, then ~0.1s/image on CPU (the GPU is never touched). off (default) = no watermark. Read watermarks anytime via PNG Info > Check invisible watermark, or cz.bat --provenance -i img.png.",
     "provenance_wm_id": "crispzAI",

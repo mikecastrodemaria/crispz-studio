@@ -3,6 +3,40 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Comic mode: lettering, per-panel rendering, Comic accordion, CLI, PDF/CBZ
+
+The `cz_comic` engine grows into a full comic-book pipeline, field-tested on a
+3-page / 12-panel noir chapter rendered through a running instance:
+
+- **Vector lettering**: per-panel `dialogue` (writer syntax `Kira: ...`,
+  `Rook (think): ...`, `CAP: ...`, `SFX: ...` via `parse_dialogue`), drawn AFTER
+  page composition — speech/thought bubbles with tails aimed at an optional
+  per-line anchor, caption boxes, stroked SFX. The model never renders text (it
+  invents letters — 'Mendian Station'); bubbles stay editable and translatable.
+  Deterministic placement: stacked from the panel top, alternating left/right in
+  reading order.
+- **Render orchestration** (`render_project`): the generation engine is INJECTED
+  (`engine(spec) -> PIL.Image`), so the whole loop is unit-tested with a stub and
+  never needs a GPU in CI. Resume-safe: `project.json` is saved after EVERY panel;
+  `only=` filters by chapter/page/panel id; `force=` re-renders.
+- **Comic accordion** in the UI (config `comic.enabled`, on by default): create/load
+  a project, edit panel text + dialogue, generate one panel or all missing ones
+  (casting LoRAs hot-swapped per panel, current model settings), compose lettered
+  pages, export PDF/CBZ.
+- **CLI parity**: `--comic <dir>` + `--comic-render` / `--comic-force` /
+  `--comic-only ch01.p02.pn3` / `--comic-compose` / `--comic-export pdf|cbz|both` /
+  `--comic-no-letter`.
+- **Exports**: `export_cbz` (numbered zip, the e-reader standard) next to the
+  existing 300-dpi PDF; `compose_chapter` writes lettered pages to `<dir>/pages/`.
+- **Character sheets**: `sheet_prompt(char, style)` builds the reference-sheet
+  prompt for a casting entry (portrait+full body for characters, establishing shot
+  for settings) — generation glue lands with the Omni refs workflow.
+- Engine fixes from the field test: `add_page` raises instead of silently dropping
+  overflow texts; `set_layout` returns the removed panels instead of destroying
+  them; casting entries have a `kind` (character/setting) so `detail_prompt` never
+  picks a location as a face-detail subject; placeholders use a readable TrueType
+  font. Tests: 53 cases in tests/test_comic.py.
+
 ## Unreleased — AI provenance: C2PA reading + TrustMark invisible watermark (EU AI Act art. 50)
 
 New optional brick `cz_provenance.py` (CPU only, the GPU is never touched), for

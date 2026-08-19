@@ -2966,6 +2966,176 @@ def _ui_apply_transformer_silent(repo):
         return f"Transformer apply failed: {e}"
 
 
+# ----------------------------------------------------------------------------
+# Onglet Comic (cz_comic): projet BD, generation par case, lettrage, exports.
+# Stateless cote UI: chaque action recharge project.json depuis le dossier ->
+# robuste aux edits manuels du fichier et au travail simultane en CLI.
+# ----------------------------------------------------------------------------
+COMIC_ENABLED = bool((CONFIG.get("comic") or {}).get("enabled", True))
+
+
+def _comic_dir(d):
+    d = (d or "").strip() or "comics/my-comic"
+    return d if os.path.isabs(d) else os.path.join(HERE, d)
+
+
+def _comic_ids(project):
+    import cz_comic
+    return [f"{c['id']}.{pg['id']}.{pn['id']}"
+            for c, pg, pn, _ in cz_comic.iter_panels(project)]
+
+
+def _comic_pages_gallery(project, d):
+    import cz_comic
+    out = []
+    for ch in project["chapters"]:
+        for pg in ch["pages"]:
+            p = cz_comic.page_path(d, ch["id"], pg["id"])
+            if os.path.isfile(p):
+                out.append(p)
+    return out
+
+
+def _comic_load(dir_txt):
+    import cz_comic
+    d = _comic_dir(dir_txt)
+    try:
+        project = cz_comic.load_project(d)
+    except Exception as e:
+        return (f"⚠️ No project here: {e}", gr.update(choices=[], value=None), [])
+    ids = _comic_ids(project)
+    n_img = sum(1 for _, _, pn, _ in cz_comic.iter_panels(project)
+                if pn.get("image") and os.path.isfile(pn["image"]))
+    md = (f"**{project['name']}** — {len(project['chapters'])} chapter(s), "
+          f"{len(ids)} panel(s), {n_img} rendered. Casting: "
+          f"{', '.join(project.get('casting') or {}) or '(empty — edit project.json)'}")
+    return md, gr.update(choices=ids, value=(ids[0] if ids else None)), \
+        _comic_pages_gallery(project, d)
+
+
+def _comic_new(dir_txt):
+    import cz_comic
+    d = _comic_dir(dir_txt)
+    if os.path.isfile(cz_comic.project_json_path(d)):
+        return ("⚠️ project.json already exists here — loaded instead.",) + \
+            _comic_load(dir_txt)[1:]
+    project = cz_comic.new_project(os.path.basename(d) or "My comic",
+                                   page="A4 300dpi")
+    ch = cz_comic.add_chapter(project, "Chapter 1")
+    cz_comic.add_page(project, ch["id"], "4-grid")
+    cz_comic.save_project(project, d)
+    md, dd, gal = _comic_load(dir_txt)
+    return "✨ Project created. " + md, dd, gal
+
+
+def _comic_fmt_dialogue(dlg):
+    lines = []
+    for x in dlg or []:
+        k, t, s = x.get("kind", "speech"), x.get("text", ""), x.get("speaker", "")
+        if k == "caption":
+            lines.append(f"CAP: {t}")
+        elif k == "sfx":
+            lines.append(f"SFX: {t}")
+        elif k == "thought":
+            lines.append(f"{s} (think): {t}")
+        else:
+            lines.append(f"{s}: {t}")
+    return "\n".join(lines)
+
+
+def _comic_find(project, pnid):
+    import cz_comic
+    cid, pid, pnid2 = (pnid or "..").split(".")
+    return cz_comic.find_panel(project, cid, pid, pnid2)
+
+
+def _comic_pick(dir_txt, pnid):
+    import cz_comic
+    if not pnid:
+        return "", ""
+    try:
+        panel = _comic_find(cz_comic.load_project(_comic_dir(dir_txt)), pnid)
+    except Exception:
+        return "", ""
+    return panel.get("text") or "", _comic_fmt_dialogue(panel.get("dialogue"))
+
+
+def _comic_save_panel(dir_txt, pnid, text, dialogue):
+    import cz_comic
+    d = _comic_dir(dir_txt)
+    if not pnid:
+        return "⚠️ Pick a panel first."
+    project = cz_comic.load_project(d)
+    panel = _comic_find(project, pnid)
+    panel["text"] = (text or "").strip()
+    panel["dialogue"] = cz_comic.parse_dialogue(dialogue)
+    cz_comic.save_project(project, d)
+    unknown = cz_comic.resolve_casting(panel["text"],
+                                       project.get("casting"))["unknown"]
+    warn = f"  ⚠️ unknown casting: {', '.join(unknown)}" if unknown else ""
+    return f"💾 {pnid} saved ({len(panel['dialogue'])} balloon(s)).{warn}"
+
+
+def _comic_engine_spec(spec):
+    """Moteur des cases: LoRA du casting hot-swappees + txt2img aux reglages
+    UI courants (checkpoint/sampler/steps du moment)."""
+    slots = []
+    for s in spec.get("loras") or []:
+        head, _, tail = str(s).rpartition(":")
+        try:
+            slots.append((head, float(tail)))
+        except ValueError:
+            slots.append((str(s), cz_pipeline.LORA_WEIGHT))
+    cz_pipeline.set_loras(slots)
+    img, _t = txt2img_run(spec["prompt"], spec["width"], spec["height"],
+                          int(CONFIG.get("default_gen_steps", 8)), spec["seed"],
+                          spec["negative"])
+    return img
+
+
+def _comic_generate(dir_txt, pnid, only_missing):
+    import cz_comic
+    d = _comic_dir(dir_txt)
+    project = cz_comic.load_project(d)
+    only = None if only_missing else ([pnid] if pnid else None)
+    if not only_missing and not pnid:
+        return "⚠️ Pick a panel first.", []
+    done = cz_comic.render_project(project, d, _comic_engine_spec, only=only,
+                                   force=not only_missing)
+    if not done:
+        return "Nothing to render (all panels have images).", []
+    imgs = [pn.get("image") for _c, _p, pn, _i in cz_comic.iter_panels(project)
+            if pn.get("image") and os.path.isfile(pn.get("image"))]
+    return f"🎨 {len(done)} panel(s) rendered: {', '.join(done)}", imgs
+
+
+def _comic_compose(dir_txt, letter=True):
+    import cz_comic
+    d = _comic_dir(dir_txt)
+    project = cz_comic.load_project(d)
+    paths = []
+    for ch in project["chapters"]:
+        paths += cz_comic.compose_chapter(project, d, ch["id"], letter=letter)
+    return f"🧩 {len(paths)} page(s) composed (lettering {'on' if letter else 'off'}).", paths
+
+
+def _comic_export(dir_txt, fmt):
+    import cz_comic
+    d = _comic_dir(dir_txt)
+    project = cz_comic.load_project(d)
+    _msg, paths = _comic_compose(dir_txt)
+    if not paths:
+        return "⚠️ Nothing to export (no composed page).", []
+    dpi = int(cz_comic.page_size(project.get("page")).get("dpi", 300))
+    if fmt == "pdf":
+        out = cz_comic.export_pdf([Image.open(x) for x in paths],
+                                  os.path.join(d, "book.pdf"), dpi=dpi)
+    else:
+        out = cz_comic.export_cbz(paths, os.path.join(d, "book.cbz"))
+    return f"📦 exported: {out}", paths
+
+
+
 def build_ui():
     models = list_esrgan_models()
     default_model = DEFAULT_MODEL if DEFAULT_MODEL in models else (models[0] if models else None)
@@ -3318,6 +3488,62 @@ def build_ui():
                                     info="0 = maximum detail (more generative), "
                                          "1 = maximum fidelity to the swap. Ignored by GFPGAN.")
                                 faceswap_quality_status = gr.Markdown("")
+
+                with gr.Accordion("🎞 Comic (comic book projects)", open=False,
+                         visible=COMIC_ENABLED):
+                    gr.Markdown(
+                        "*Comic project (`cz_comic`). Panels render with the "
+                        "CURRENT model/sampler settings. Casting/style live in "
+                        "`project.json` (`@Name` in panel texts). CLI: "
+                        "`--comic <dir> --comic-render --comic-export pdf`.*")
+                    with gr.Row():
+                        comic_dir_tb = gr.Textbox(value="comics/my-comic",
+                                                  label="Project folder", scale=3)
+                        comic_load_btn = gr.Button("📂 Load", size="sm")
+                        comic_new_btn = gr.Button("✨ New", size="sm")
+                    comic_status = gr.Markdown("*No project loaded.*")
+                    comic_panel_dd = gr.Dropdown([], label="Panel (chapter.page.panel)")
+                    comic_text_tb = gr.Textbox(lines=2, label="Panel text (@Name casting)")
+                    comic_dlg_tb = gr.Textbox(
+                        lines=3, label="Dialogue — one per line",
+                        placeholder="Kira: On y va.\nRook (think): Trop tard.\nCAP: Trois heures plus tot.\nSFX: KRAK")
+                    with gr.Row():
+                        comic_save_btn = gr.Button("💾 Save panel", size="sm")
+                        comic_gen_btn = gr.Button("🎨 Generate panel", size="sm",
+                                                  variant="primary")
+                        comic_missing_btn = gr.Button("🎨 Generate missing", size="sm")
+                    with gr.Row():
+                        comic_compose_btn = gr.Button("🧩 Compose pages", size="sm")
+                        comic_pdf_btn = gr.Button("📄 Export PDF", size="sm")
+                        comic_cbz_btn = gr.Button("📦 Export CBZ", size="sm")
+                    comic_gallery = gr.Gallery(label="Panels / pages", columns=3,
+                                               height=420)
+                    comic_load_btn.click(_comic_load, [comic_dir_tb],
+                                         [comic_status, comic_panel_dd, comic_gallery])
+                    comic_new_btn.click(_comic_new, [comic_dir_tb],
+                                        [comic_status, comic_panel_dd, comic_gallery])
+                    comic_panel_dd.change(_comic_pick, [comic_dir_tb, comic_panel_dd],
+                                          [comic_text_tb, comic_dlg_tb])
+                    comic_save_btn.click(_comic_save_panel,
+                                         [comic_dir_tb, comic_panel_dd,
+                                          comic_text_tb, comic_dlg_tb],
+                                         [comic_status])
+                    comic_gen_btn.click(
+                        lambda d, p: _comic_generate(d, p, False),
+                        [comic_dir_tb, comic_panel_dd],
+                        [comic_status, comic_gallery])
+                    comic_missing_btn.click(
+                        lambda d: _comic_generate(d, None, True),
+                        [comic_dir_tb], [comic_status, comic_gallery])
+                    comic_compose_btn.click(
+                        lambda d: _comic_compose(d),
+                        [comic_dir_tb], [comic_status, comic_gallery])
+                    comic_pdf_btn.click(lambda d: _comic_export(d, "pdf"),
+                                        [comic_dir_tb],
+                                        [comic_status, comic_gallery])
+                    comic_cbz_btn.click(lambda d: _comic_export(d, "cbz"),
+                                        [comic_dir_tb],
+                                        [comic_status, comic_gallery])
 
             # ===== Colonne Advanced (a droite, masquee par defaut comme Fooocus) =====
             with gr.Column(scale=2, visible=False) as advanced_col:
