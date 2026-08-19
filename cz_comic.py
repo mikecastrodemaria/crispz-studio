@@ -598,34 +598,52 @@ def load_project(project_dir):
 # editable sans regenerer l'image, traduisible, net a l'impression.
 DIALOGUE_KINDS = ("speech", "thought", "caption", "sfx")
 
+# Formes de bulle: round = ellipse (classique), rounded = rectangle a coins
+# arrondis (compact, lecture dense), angular = polygone a pans coupes (voix
+# dure, mecanique, cri). Resolution: style de la replique > style.bubble du
+# projet > 'round'.
+BUBBLE_STYLES = ("round", "rounded", "angular")
+
 # Polices essayees dans l'ordre (Windows puis fallbacks libres).
 _BUBBLE_FONTS = ("comicbd.ttf", "comic.ttf", "segoeui.ttf", "arial.ttf",
                  "DejaVuSans.ttf")
 _SFX_FONTS = ("impact.ttf", "arialbd.ttf", "comicbd.ttf", "DejaVuSans-Bold.ttf")
 
 
-def add_dialogue(panel, text, speaker=None, kind="speech", anchor=None):
+def add_dialogue(panel, text, speaker=None, kind="speech", anchor=None,
+                 style=None):
     """Ajoute une replique a une case. `anchor` = (fx, fy) en fractions de la
-    case, vers quoi pointe la queue de la bulle (defaut: bas de la bulle)."""
+    case, vers quoi pointe la queue de la bulle (defaut: bouche du locuteur
+    detectee, sinon bas de la bulle). `style` = forme de bulle (BUBBLE_STYLES),
+    None = style du projet."""
     if kind not in DIALOGUE_KINDS:
         raise ValueError(f"kind must be one of {DIALOGUE_KINDS}, got {kind!r}")
+    if style is not None and style not in BUBBLE_STYLES:
+        raise ValueError(f"style must be one of {BUBBLE_STYLES}, got {style!r}")
     text = (text or "").strip()
     if not text:
         raise ValueError("empty dialogue text")
     d = {"speaker": (speaker or "").strip(), "text": text, "kind": kind}
     if anchor:
         d["anchor"] = [float(anchor[0]), float(anchor[1])]
+    if style:
+        d["style"] = style
     panel.setdefault("dialogue", []).append(d)
     return d
 
 
 def parse_dialogue(block):
     """Syntaxe scenariste -> liste de repliques, une par ligne:
-         Kira: On y va.               -> speech (speaker Kira)
-         Kira (think): Trop tard.     -> thought
-         CAP: Trois heures plus tot.  -> caption (narration)
-         SFX: KRAK                    -> onomatopee
-       Une ligne sans ':' est une caption. Lignes vides ignorees."""
+         Kira: On y va.                 -> speech (speaker Kira)
+         Kira (think): Trop tard.       -> thought
+         Rook (angular): The case stays -> speech, bulle a pans coupes
+         Kira (think, rounded): ...     -> thought, rectangle arrondi
+         CAP: Trois heures plus tot.    -> caption (narration)
+         SFX: KRAK                      -> onomatopee
+       Modificateurs entre parentheses (cumulables, virgule): think/thought =
+       pensee; round/rounded/angular = forme de bulle (BUBBLE_STYLES). Une
+       parenthese inconnue reste dans le nom du locuteur. Une ligne sans ':'
+       est une caption. Lignes vides ignorees."""
     out = []
     for line in (block or "").splitlines():
         line = line.strip()
@@ -642,11 +660,26 @@ def parse_dialogue(block):
         elif low == "sfx":
             out.append({"speaker": "", "text": text, "kind": "sfx"})
         else:
-            kind = "speech"
-            m = re.match(r"^(.*?)\s*\((think|thought|pense)\)$", head, re.I)
+            kind, style = "speech", None
+            m = re.match(r"^(.*?)\s*\(([^)]+)\)$", head)
             if m:
-                head, kind = m.group(1).strip(), "thought"
-            out.append({"speaker": head, "text": text, "kind": kind})
+                known = True
+                k2, s2 = kind, style
+                for tok in m.group(2).split(","):
+                    tok = tok.strip().lower()
+                    if tok in ("think", "thought", "pense"):
+                        k2 = "thought"
+                    elif tok in BUBBLE_STYLES:
+                        s2 = tok
+                    else:
+                        known = False
+                        break
+                if known:
+                    head, kind, style = m.group(1).strip(), k2, s2
+            d = {"speaker": head, "text": text, "kind": kind}
+            if style:
+                d["style"] = style
+            out.append(d)
     return out
 
 
@@ -741,7 +774,54 @@ def _tail_tip(bubble_center, mouth, face_box):
     return (int(tip_x), int(my))
 
 
-def render_lettering(project, page, sheet, face_detector=None):
+def _cos(a, b):
+    """Similarite cosinus de deux vecteurs (listes de floats)."""
+    num = sum(x * y for x, y in zip(a, b))
+    da = math.sqrt(sum(x * x for x in a))
+    db = math.sqrt(sum(x * x for x in b))
+    return num / (da * db) if da and db else 0.0
+
+
+def _match_speakers(speakers, faces, char_embeddings=None, threshold=0.2):
+    """Apparie les locuteurs (noms lower, ordre de citation) aux visages d'une
+    case -> {speaker: face}.
+
+    1. RECONNAISSANCE d'abord: si char_embeddings fournit l'embedding du
+       portrait de reference d'un locuteur et que les visages detectes portent
+       le leur, appariement glouton par meilleure similarite cosinus (>= threshold).
+    2. Les locuteurs restants prennent les visages restants dans le SENS DE
+       LECTURE (1er locuteur cite = visage le plus a gauche) - l'heuristique
+       v1, qui reste le fallback quand il n'y a pas de references."""
+    result = {}
+    remaining = list(range(len(faces)))
+    if char_embeddings:
+        pairs = []
+        for s in speakers:
+            emb = char_embeddings.get(s)
+            if not emb:
+                continue
+            for j in remaining:
+                fe = faces[j].get("embedding")
+                if fe:
+                    pairs.append((_cos(emb, fe), s, j))
+        for score, s, j in sorted(pairs, key=lambda t: -t[0]):
+            if score < threshold:
+                break
+            if s in result or j not in remaining:
+                continue
+            result[s] = faces[j]
+            remaining.remove(j)
+    for s in speakers:
+        if s in result:
+            continue
+        if not remaining:
+            break
+        result[s] = faces[remaining.pop(0)]
+    return result
+
+
+def render_lettering(project, page, sheet, face_detector=None,
+                     char_embeddings=None):
     """Dessine les dialogues sur la planche composee (in place) et renvoie la
     liste des placements [{panel, kind, rect, tip, clean}].
 
@@ -779,19 +859,21 @@ def render_lettering(project, page, sheet, face_detector=None):
                     faces.append({
                         "box": (x + bx1, y + by1, x + bx2, y + by2),
                         "mouth": ((x + f["mouth"][0], y + f["mouth"][1])
-                                  if f.get("mouth") else None)})
+                                  if f.get("mouth") else None),
+                        "embedding": f.get("embedding")})
             except Exception:
                 faces = []
         faces.sort(key=lambda f: f["box"][0])            # sens de lecture
         forbidden = [_face_zone(f["box"], rect) for f in faces]
 
-        # locuteur -> visage: 1er locuteur cite = visage le plus a gauche
+        # locuteur -> visage: reconnaissance par embeddings (portraits de
+        # reference du casting) puis fallback sens de lecture
         speakers = []
         for d in dialogue:
             s = (d.get("speaker") or "").strip().lower()
             if d.get("kind") in ("speech", "thought") and s and s not in speakers:
                 speakers.append(s)
-        face_of = {s: faces[j] for j, s in enumerate(speakers) if j < len(faces)}
+        face_of = _match_speakers(speakers, faces, char_embeddings)
 
         fpx = max(16, min(44, h // 22))
         font = _font(_BUBBLE_FONTS, fpx)
@@ -839,8 +921,16 @@ def render_lettering(project, page, sheet, face_detector=None):
                 continue
 
             # --- speech / thought ---
-            bw_ = int((text_w + pad * 2) * 1.25)
-            bh_ = int((text_h + pad * 2) * 1.45)
+            bstyle = d.get("style") or (project.get("style") or {}).get("bubble") \
+                or "round"
+            if bstyle not in BUBBLE_STYLES:
+                bstyle = "round"
+            if bstyle == "round":     # ellipse: le texte tient dans l'inscrite
+                bw_ = int((text_w + pad * 2) * 1.25)
+                bh_ = int((text_h + pad * 2) * 1.45)
+            else:                     # rectangle arrondi / pans coupes: compact
+                bw_ = text_w + pad * 3
+                bh_ = text_h + pad * 3
             prefer = "left" if side == 0 else "right"
             spk = (d.get("speaker") or "").strip().lower()
             fc = face_of.get(spk)
@@ -878,8 +968,21 @@ def render_lettering(project, page, sheet, face_detector=None):
             if kind == "speech":
                 draw.polygon([(cx - fpx // 2, base_y), (cx + fpx // 2, base_y),
                               tip], fill="#ffffff", outline="#000000")
-            draw.ellipse([bx0, by0, bx0 + bw_, by0 + bh_],
-                         fill="#ffffff", outline="#000000", width=3)
+            if bstyle == "rounded":
+                draw.rounded_rectangle([bx0, by0, bx0 + bw_, by0 + bh_],
+                                       radius=max(8, min(bh_ // 3, fpx)),
+                                       fill="#ffffff", outline="#000000", width=3)
+            elif bstyle == "angular":
+                c = max(6, min(bw_, bh_) // 5)
+                pts = [(bx0 + c, by0), (bx0 + bw_ - c, by0),
+                       (bx0 + bw_, by0 + c), (bx0 + bw_, by0 + bh_ - c),
+                       (bx0 + bw_ - c, by0 + bh_), (bx0 + c, by0 + bh_),
+                       (bx0, by0 + bh_ - c), (bx0, by0 + c)]
+                draw.polygon(pts, fill="#ffffff")
+                draw.line(pts + [pts[0]], fill="#000000", width=3, joint="curve")
+            else:
+                draw.ellipse([bx0, by0, bx0 + bw_, by0 + bh_],
+                             fill="#ffffff", outline="#000000", width=3)
             if kind == "speech":
                 draw.polygon([(cx - fpx // 2 + 3, base_out),
                               (cx + fpx // 2 - 3, base_out),
@@ -991,7 +1094,7 @@ def render_project(project, project_dir, engine, only=None, force=False,
 
 
 def compose_chapter(project, project_dir, chapter_id, letter=True, fit="cover",
-                    face_detector=None):
+                    face_detector=None, char_embeddings=None):
     """Compose et sauve toutes les planches d'un chapitre (+ lettrage), renvoie
     la liste des chemins dans l'ordre de pagination."""
     chapter = find_chapter(project, chapter_id)
@@ -999,7 +1102,8 @@ def compose_chapter(project, project_dir, chapter_id, letter=True, fit="cover",
     for page in chapter["pages"]:
         sheet = compose_page(project, page, fit=fit)
         if letter:
-            render_lettering(project, page, sheet, face_detector=face_detector)
+            render_lettering(project, page, sheet, face_detector=face_detector,
+                             char_embeddings=char_embeddings)
         dst = page_path(project_dir, chapter_id, page["id"])
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         sheet.save(dst)

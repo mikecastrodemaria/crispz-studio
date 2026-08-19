@@ -106,11 +106,16 @@ SwarmUI. On top of crispz's upscaler it adds:
   negatives; a character LoRA wins over the style LoRA; `kind: setting` for
   places), per-panel generation at the panel's **exact ratio** (~1 MP, 32-aligned),
   **vector lettering** drawn AFTER composition (speech/thought bubbles with tails,
-  captions, SFX — the model never renders text, it invents letters). Lettering is
+  captions, SFX — the model never renders text, it invents letters), with **three
+  bubble styles**: `round` (classic ellipse), `rounded` (compact rounded
+  rectangle), `angular` (cut corners — harsh/mechanical voice), per line
+  (`Rook (angular): ...`) or per project (`style.bubble`). Lettering is
   **face-aware** (insightface): bubbles never cover a face, tails aim at the
-  **speaker's mouth** (speakers matched to faces in reading order), and off-panel
-  voices (narrator, shout from behind) get a generic bubble pointing to the panel
-  edge. Page composition with gutters/borders and **PDF / CBZ export**. Resume-safe:
+  **speaker's mouth** — speakers are **recognized** by comparing panel faces to
+  the casting reference portraits (embeddings, `refs[0]`), with reading-order
+  fallback — and off-panel voices (narrator, shout from behind) get a generic
+  bubble pointing to the panel edge. Page composition with gutters/borders and
+  **PDF / CBZ export**. Resume-safe:
   `project.json` is saved after every panel, so a crash costs nothing. Config
   `comic.enabled`; the engine (`cz_comic.py`) is pure geometry — no torch, no GPU —
   and fully unit-tested.

@@ -15,6 +15,21 @@ The `cz_comic` engine grows into a full comic-book pipeline, field-tested on a
   invents letters — 'Mendian Station'); bubbles stay editable and translatable.
   Deterministic placement: stacked from the panel top, alternating left/right in
   reading order.
+- **Bubble styles**: three shapes for speech/thought balloons — `round` (ellipse,
+  the classic default), `rounded` (rounded rectangle, compact for dense pages),
+  `angular` (cut-corner polygon: harsh, mechanical or shouted voices). Resolved
+  per line > project (`style.bubble` in project.json) > `round`. Writer syntax:
+  `Rook (angular): The case stays.`, combinable with thought —
+  `Kira (think, rounded): ...`; unknown parentheticals stay in the speaker name.
+- **Speaker recognition** (insightface embeddings): when a casting entry has a
+  reference portrait on disk (`refs[0]`, path relative to the project dir), its
+  face embedding is compared to the faces detected in each panel and the speaker
+  is matched by cosine similarity (`cz_face.ref_embedding`, cached; greedy
+  best-match >= 0.2) — so the tail aims at the RIGHT character even when the
+  reading-order heuristic would guess wrong. Speakers without a match (profile
+  view, stylized face, no ref) fall back to reading order. Field-tested: Rook's
+  ref matched his face in the two-shot at cosine 0.317 while Kira (full profile)
+  cleanly fell back.
 - **Face-aware lettering**: `render_lettering` takes an injected `face_detector`
   (insightface via the new `cz_face.detect_faces_full`, which also returns the
   MOUTH point from the 5 keypoints — wired automatically in the UI and CLI, CPU

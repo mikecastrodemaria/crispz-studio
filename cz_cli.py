@@ -725,16 +725,19 @@ def cli_main(argv=None):
             acted = True
         if args.comic_compose or args.comic_export:
             letter = not args.comic_no_letter
-            fd = None
+            fd, emb = None, None
             if letter:
                 try:
                     from cz_face import detect_faces_full as fd
+                    import cz_ui
+                    emb = cz_ui._comic_char_embeddings(project, pdir)
                 except Exception:
                     _log("[comic] insightface absent: lettering without face avoidance")
             paths = []
             for chapter in project["chapters"]:
                 paths += cz_comic.compose_chapter(project, pdir, chapter["id"],
-                                                  letter=letter, face_detector=fd)
+                                                  letter=letter, face_detector=fd,
+                                                  char_embeddings=emb)
             print(f"{len(paths)} page(s) composed -> {os.path.join(pdir, 'pages')}")
             dpi = int(cz_comic.page_size(project.get("page")).get("dpi", 300))
             if args.comic_export in ("pdf", "both"):

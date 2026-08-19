@@ -3126,15 +3126,39 @@ def _comic_face_detector():
     return det
 
 
+def _comic_char_embeddings(project, project_dir):
+    """{nom_lower: embedding} des personnages du casting qui ont un portrait de
+    reference sur disque (premier chemin de refs[] existant, relatif au projet).
+    Sert a la RECONNAISSANCE locuteur->visage du lettrage. None si rien."""
+    try:
+        from cz_face import ref_embedding
+    except Exception:
+        return None
+    out = {}
+    for name, char in (project.get("casting") or {}).items():
+        for r in char.get("refs") or []:
+            p = r if os.path.isabs(r) else os.path.join(project_dir, r)
+            if os.path.isfile(p):
+                try:
+                    emb = ref_embedding(p)
+                except Exception:
+                    emb = None
+                if emb:
+                    out[name.strip().lower()] = emb
+                    break
+    return out or None
+
+
 def _comic_compose(dir_txt, letter=True):
     import cz_comic
     d = _comic_dir(dir_txt)
     project = cz_comic.load_project(d)
     fd = _comic_face_detector() if letter else None
+    emb = _comic_char_embeddings(project, d) if fd else None
     paths = []
     for ch in project["chapters"]:
         paths += cz_comic.compose_chapter(project, d, ch["id"], letter=letter,
-                                          face_detector=fd)
+                                          face_detector=fd, char_embeddings=emb)
     return f"🧩 {len(paths)} page(s) composed (lettering {'on' if letter else 'off'}).", paths
 
 
@@ -3525,7 +3549,7 @@ def build_ui():
                     comic_text_tb = gr.Textbox(lines=2, label="Panel text (@Name casting)")
                     comic_dlg_tb = gr.Textbox(
                         lines=3, label="Dialogue — one per line",
-                        placeholder="Kira: On y va.\nRook (think): Trop tard.\nCAP: Trois heures plus tot.\nSFX: KRAK")
+                        placeholder="Kira: On y va.\nRook (think): Trop tard.\nRook (angular): The case stays.\nCAP: Trois heures plus tot.\nSFX: KRAK")
                     with gr.Row():
                         comic_save_btn = gr.Button("💾 Save panel", size="sm")
                         comic_gen_btn = gr.Button("🎨 Generate panel", size="sm",

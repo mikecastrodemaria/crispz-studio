@@ -192,6 +192,11 @@ python app.py --comic comics/my-comic --comic-export both     # book.pdf + book.
 
 `<dir>/project.json` holds the whole book: chapters → pages (layout name) → panels
 (`text` with `@Name` casting tags, `dialogue`, `seed`, per-panel `loras`/`refs`).
+Dialogue lines: `Kira: ...` (speech), `Rook (think): ...` (thought),
+`Rook (angular): ...` (bubble style: `round`/`rounded`/`angular`, combinable —
+`Kira (think, rounded): ...`), `CAP: ...` (caption), `SFX: KRAK`. Give a casting
+entry a reference portrait (`refs[0]`) and the lettering recognizes WHICH face
+is speaking (insightface embeddings) instead of guessing by reading order.
 Casting LoRAs are hot-swapped per panel. `--comic-no-letter` composes mute pages;
 `--comic-compose` composes without exporting. Rendering uses the model selected
 via the usual flags (`--zimage-model`, `--sampler`, `--gen-steps`…).
