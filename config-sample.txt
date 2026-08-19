@@ -10,7 +10,7 @@
     "ollama_keep_alive": 0,
     "ollama_cpu": false,
     "job_queue": {"enabled": true},
-    "_job_queue_help": "Job queue panel ('+ Queue' snapshots all settings incl. model; 'Run queue' chains them; Stop pauses). enabled=false removes the UI entirely (zero cost).",
+    "_job_queue_help": "Job queue panel ('+ Queue' snapshots all settings incl. model; 'Run queue' chains them; ⏸ Pause finishes the current job then halts; Stop interrupts it mid-render and the interrupted job STAYS queued). The queue is saved to cache/queue.json after every change and every job, and restored at startup (persist=false to disable). enabled=false removes the UI entirely (zero cost).",
     "tag_autocomplete": {"enabled": true, "max_results": 8, "sources": ["https://raw.githubusercontent.com/DominikDoom/a1111-sd-webui-tagcomplete/main/tags/danbooru.csv"]},
     "_tag_autocomplete_help": "Prompt/negative autocomplete. CSVs in sources are downloaded once to tags/ (any .csv dropped there is also used, rich 'name,cat,count,aliases' or one word per line) + local __wildcards__. enabled=false: no download, no JS injected (zero cost).",
     "xyz_grid": {"enabled": true, "max_jobs": 100, "thumb": 512, "suggest": true},
