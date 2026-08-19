@@ -514,6 +514,23 @@ def cli_main(argv=None):
     parser.add_argument("--provenance", action="store_true",
                         help="Read AI provenance of -i (C2PA manifest + TrustMark invisible "
                              "watermark, CPU only) then exit. No mark never means 'not AI'.")
+    parser.add_argument("--comic", metavar="DIR",
+                        help="Comic mode: DIR holds a project.json (cz_comic). Combine "
+                             "with --comic-render / --comic-compose / --comic-export.")
+    parser.add_argument("--comic-render", action="store_true",
+                        help="Generate the MISSING panels of --comic (resume-safe: the "
+                             "project is saved after each panel).")
+    parser.add_argument("--comic-force", action="store_true",
+                        help="With --comic-render: re-render panels that already have an image.")
+    parser.add_argument("--comic-only", action="append", metavar="ID",
+                        help="Restrict the render to 'ch01', 'ch01.p02' or 'ch01.p02.pn3'. "
+                             "Repeatable. Implies --comic-render.")
+    parser.add_argument("--comic-compose", action="store_true",
+                        help="Compose the pages of --comic (panels + lettering) into DIR/pages/.")
+    parser.add_argument("--comic-export", choices=["pdf", "cbz", "both"],
+                        help="Export the composed pages (implies --comic-compose).")
+    parser.add_argument("--comic-no-letter", action="store_true",
+                        help="Compose without bubbles/captions (mute pages).")
     parser.add_argument("--reframe", metavar="W:H",
                         help="Reframe -i to a target aspect ratio (e.g. 16:9 / 9:16), then exit. "
                              "--prompt guides the fill; --gen-steps sets the steps.")
@@ -672,6 +689,58 @@ def cli_main(argv=None):
                .replace("ℹ️", "[i]").replace("—", "-"))
         # console Windows souvent cp1252: on reste ASCII-safe
         print(txt.encode("ascii", "replace").decode("ascii"))
+        return 0
+
+    # --comic : mode BD (cz_comic). Rend les cases manquantes (reprise gratuite:
+    # project.json sauve apres CHAQUE case), compose les planches lettrees et
+    # exporte PDF/CBZ. Les LoRA par case (casting + style) sont hot-swappees.
+    if args.comic:
+        import cz_comic
+        pdir = args.comic
+        try:
+            project = cz_comic.load_project(pdir)
+        except Exception as e:
+            parser.error(f"--comic: cannot load project.json in {pdir} ({e})")
+        acted = False
+        if args.comic_render or args.comic_only or args.comic_force:
+            def _comic_engine(spec):
+                slots = []
+                for s in spec.get("loras") or []:
+                    head, _, tail = str(s).rpartition(":")
+                    try:
+                        slots.append((head, float(tail)))
+                    except ValueError:
+                        slots.append((str(s), cz_pipeline.LORA_WEIGHT))
+                set_loras(slots)
+                img, _t = txt2img_run(spec["prompt"], spec["width"], spec["height"],
+                                      args.gen_steps, spec["seed"], spec["negative"])
+                return img
+
+            done = cz_comic.render_project(
+                project, pdir, _comic_engine, only=args.comic_only,
+                force=args.comic_force,
+                progress=lambda pnid, spec: _log(
+                    f"[comic] render {pnid} ({spec['width']}x{spec['height']})"))
+            print(f"{len(done)} panel(s) rendered")
+            acted = True
+        if args.comic_compose or args.comic_export:
+            letter = not args.comic_no_letter
+            paths = []
+            for chapter in project["chapters"]:
+                paths += cz_comic.compose_chapter(project, pdir, chapter["id"],
+                                                  letter=letter)
+            print(f"{len(paths)} page(s) composed -> {os.path.join(pdir, 'pages')}")
+            dpi = int(cz_comic.page_size(project.get("page")).get("dpi", 300))
+            if args.comic_export in ("pdf", "both"):
+                imgs = [Image.open(x) for x in paths]
+                print(os.path.abspath(cz_comic.export_pdf(
+                    imgs, os.path.join(pdir, "book.pdf"), dpi=dpi)))
+            if args.comic_export in ("cbz", "both"):
+                print(os.path.abspath(cz_comic.export_cbz(
+                    paths, os.path.join(pdir, "book.cbz"))))
+            acted = True
+        if not acted:
+            parser.error("--comic needs --comic-render, --comic-compose or --comic-export")
         return 0
 
     # --remove-bg : detoure -i puis termine

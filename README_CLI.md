@@ -179,6 +179,23 @@ So the expensive pass is the **first** one (it hashes the library). After that, 
 **CivitAI rate-limits** — keep the shard count modest and set a CivitAI API key (in the
 app's Advanced tab, or `--api-key`) for large runs.
 
+## Comic (BD)  — `--comic <dir>` (cz_comic project)
+
+```bash
+# generate the missing panels (resume-safe: project.json saved after each one)
+python app.py --comic comics/my-comic --comic-render
+# re-render one panel / one page / one chapter
+python app.py --comic comics/my-comic --comic-only ch01.p02.pn3 --comic-force
+# compose the lettered pages and export
+python app.py --comic comics/my-comic --comic-export both     # book.pdf + book.cbz
+```
+
+`<dir>/project.json` holds the whole book: chapters → pages (layout name) → panels
+(`text` with `@Name` casting tags, `dialogue`, `seed`, per-panel `loras`/`refs`).
+Casting LoRAs are hot-swapped per panel. `--comic-no-letter` composes mute pages;
+`--comic-compose` composes without exporting. Rendering uses the model selected
+via the usual flags (`--zimage-model`, `--sampler`, `--gen-steps`…).
+
 ## Remove background  — `--remove-bg` (local, rembg)
 
 ```bash
