@@ -885,8 +885,15 @@ def render_lettering(project, page, sheet, face_detector=None,
             kind = d.get("kind", "speech")
             text = d.get("text") or ""
             if kind == "sfx":
-                sfx_font = _font(_SFX_FONTS, max(fpx * 2, h // 8))
+                # auto-fit: un cri long ou un TITRE de couverture ne doit pas
+                # deborder la case -> la police retrecit jusqu'a tenir en largeur
+                size = max(fpx * 2, h // 8)
+                sfx_font = _font(_SFX_FONTS, size)
                 bb = draw.textbbox((0, 0), text, font=sfx_font, stroke_width=4)
+                while size > fpx and bb[2] - bb[0] > int(w * 0.92):
+                    size = int(size * 0.85)
+                    sfx_font = _font(_SFX_FONTS, size)
+                    bb = draw.textbbox((0, 0), text, font=sfx_font, stroke_width=4)
                 bw_, bh_ = bb[2] - bb[0], bb[3] - bb[1]
                 (rx, ry, _, _), clean = _place_rect(rect, bw_, bh_, forbidden,
                                                     taken, "center")
