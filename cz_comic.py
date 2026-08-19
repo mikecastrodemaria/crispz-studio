@@ -675,17 +675,89 @@ def _wrap(draw, text, font, max_w):
     return lines or [""]
 
 
-def render_lettering(project, page, sheet):
-    """Dessine les dialogues de chaque case sur la planche composee (in place).
+def _overlap_area(a, b):
+    """Aire d'intersection de deux rects (x, y, w, h)."""
+    ox = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
+    oy = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+    return max(0, ox) * max(0, oy)
 
-    Placement v1, deterministe: les repliques s'empilent depuis le haut de la
-    case dans l'ordre d'ecriture, en alternant gauche/droite (sens de lecture);
-    les captions s'alignent a gauche; les SFX se centrent en grand. La queue
-    des bulles pointe vers `anchor` (fractions de case) ou vers le bas."""
+
+def _face_zone(box, panel_rect, grow=0.15):
+    """Bbox visage (x1,y1,x2,y2) -> rect interdit (x,y,w,h), elargi de `grow`
+    et borne a la case."""
+    x1, y1, x2, y2 = box
+    gx, gy = (x2 - x1) * grow, (y2 - y1) * grow
+    x1, y1, x2, y2 = x1 - gx, y1 - gy, x2 + gx, y2 + gy
+    px, py, pw, ph = panel_rect
+    x1, y1 = max(px, x1), max(py, y1)
+    x2, y2 = min(px + pw, x2), min(py + ph, y2)
+    return (int(x1), int(y1), max(0, int(x2 - x1)), max(0, int(y2 - y1)))
+
+
+def _place_rect(panel_rect, bw, bh, forbidden, taken, prefer):
+    """Position d'un rect bw x bh dans la case: balaye du haut vers le bas,
+    ordre des colonnes selon `prefer` ('left' / 'right' / 'center').
+
+    Priorite absolue: ZERO recouvrement des zones visage (`forbidden`) et des
+    bulles deja posees (`taken`). Si aucune position propre n'existe, renvoie
+    celle qui recouvre le MOINS de visage (dernier recours, jamais silencieux:
+    le placement est signale clipped=True dans le retour du lettrage)."""
+    x, y, w, h = panel_rect
+    pad = 8
+    cols = {"left": [x + pad, x + w - bw - pad, x + (w - bw) // 2],
+            "right": [x + w - bw - pad, x + pad, x + (w - bw) // 2],
+            "center": [x + (w - bw) // 2, x + pad, x + w - bw - pad]}[prefer]
+    step = max(16, bh // 3)
+    best, best_ov = None, None
+    yy = y + pad
+    while yy + bh <= y + h - pad:
+        for xx in cols:
+            xx = max(x + 2, min(int(xx), x + w - bw - 2))
+            r = (xx, yy, bw, bh)
+            if any(_overlap_area(r, t) > 0 for t in taken):
+                continue
+            ov = sum(_overlap_area(r, f) for f in forbidden)
+            if ov == 0:
+                return r, True
+            if best is None or ov < best_ov:
+                best, best_ov = r, ov
+        yy += step
+    return (best or (cols[0], y + pad, bw, bh)), False
+
+
+def _tail_tip(bubble_center, mouth, face_box):
+    """Pointe de la queue: sur le segment bouche -> bulle, juste a la SORTIE de
+    la bbox du visage (la queue designe la bouche sans jamais la couvrir)."""
+    mx, my = mouth
+    cx, cy = bubble_center
+    x1, y1, x2, y2 = face_box
+    for t in range(0, 21):
+        t /= 20.0
+        px, py = mx + (cx - mx) * t, my + (cy - my) * t
+        if not (x1 <= px <= x2 and y1 <= py <= y2):
+            return (int(px), int(py))
+    return (int(mx), int(my))
+
+
+def render_lettering(project, page, sheet, face_detector=None):
+    """Dessine les dialogues sur la planche composee (in place) et renvoie la
+    liste des placements [{panel, kind, rect, tip, clean}].
+
+    Avec `face_detector` (callable image -> [{'box': (x1,y1,x2,y2),
+    'mouth': (x,y)|None}], voir cz_face.detect_faces_full):
+      - les bulles ne recouvrent JAMAIS un visage (zones interdites elargies;
+        si la case est trop pleine, recouvrement minimal et clean=False);
+      - la queue d'une bulle vise la BOUCHE de son locuteur: les locuteurs
+        sont apparies aux visages dans le sens de lecture (1er locuteur =
+        visage le plus a gauche), un `anchor` explicite gagne toujours;
+      - un locuteur SANS visage (voix hors-champ, cri derriere, narrateur)
+        recoit une bulle generique: queue vers le bord de case le plus proche.
+    Sans detecteur: comportement v1 (empilage haut, alternance gauche/droite)."""
     pg = page_size(project.get("page"))
     cells = layout_cells(page["layout"])
     rects = panel_rects(cells, pg["width"], pg["height"], pg["margin"], pg["gutter"])
     draw = ImageDraw.Draw(sheet)
+    placements = []
 
     for i, rect in enumerate(rects):
         if i >= len(page["panels"]):
@@ -695,11 +767,35 @@ def render_lettering(project, page, sheet):
         if not dialogue:
             continue
         x, y, w, h = rect
+
+        # --- visages de la case (coordonnees planche) ---
+        faces = []
+        if face_detector is not None:
+            try:
+                for f in face_detector(sheet.crop((x, y, x + w, y + h))) or []:
+                    bx1, by1, bx2, by2 = f["box"]
+                    faces.append({
+                        "box": (x + bx1, y + by1, x + bx2, y + by2),
+                        "mouth": ((x + f["mouth"][0], y + f["mouth"][1])
+                                  if f.get("mouth") else None)})
+            except Exception:
+                faces = []
+        faces.sort(key=lambda f: f["box"][0])            # sens de lecture
+        forbidden = [_face_zone(f["box"], rect) for f in faces]
+
+        # locuteur -> visage: 1er locuteur cite = visage le plus a gauche
+        speakers = []
+        for d in dialogue:
+            s = (d.get("speaker") or "").strip().lower()
+            if d.get("kind") in ("speech", "thought") and s and s not in speakers:
+                speakers.append(s)
+        face_of = {s: faces[j] for j, s in enumerate(speakers) if j < len(faces)}
+
         fpx = max(16, min(44, h // 22))
         font = _font(_BUBBLE_FONTS, fpx)
         pad = max(8, fpx // 2)
-        cur_y = y + pad
-        side = 0  # 0 = gauche, 1 = droite (alterne par bulle, sens de lecture)
+        taken = []
+        side = 0
 
         for d in dialogue:
             kind = d.get("kind", "speech")
@@ -707,10 +803,15 @@ def render_lettering(project, page, sheet):
             if kind == "sfx":
                 sfx_font = _font(_SFX_FONTS, max(fpx * 2, h // 8))
                 bb = draw.textbbox((0, 0), text, font=sfx_font, stroke_width=4)
-                tx = x + (w - (bb[2] - bb[0])) // 2
-                ty = y + (h - (bb[3] - bb[1])) // 2
-                draw.text((tx, ty), text, font=sfx_font, fill="#ffffff",
+                bw_, bh_ = bb[2] - bb[0], bb[3] - bb[1]
+                (rx, ry, _, _), clean = _place_rect(rect, bw_, bh_, forbidden,
+                                                    taken, "center")
+                draw.text((rx, ry), text, font=sfx_font, fill="#ffffff",
                           stroke_width=max(3, fpx // 5), stroke_fill="#000000")
+                taken.append((rx, ry, bw_, bh_))
+                placements.append({"panel": panel["id"], "kind": kind,
+                                   "rect": (rx, ry, bw_, bh_), "tip": None,
+                                   "clean": clean})
                 continue
 
             max_text_w = int(w * (0.86 if kind == "caption" else 0.58))
@@ -720,54 +821,79 @@ def render_lettering(project, page, sheet):
             text_h = line_h * len(lines)
 
             if kind == "caption":
-                bx0 = x + pad
-                bw, bh = text_w + pad * 2, text_h + pad * 2
-                by0 = cur_y
-                draw.rectangle([bx0, by0, bx0 + bw, by0 + bh],
+                bw_, bh_ = text_w + pad * 2, text_h + pad * 2
+                (bx0, by0, _, _), clean = _place_rect(rect, bw_, bh_, forbidden,
+                                                      taken, "left")
+                draw.rectangle([bx0, by0, bx0 + bw_, by0 + bh_],
                                fill="#fdf6d8", outline="#000000", width=3)
                 ty = by0 + pad
                 for l in lines:
                     draw.text((bx0 + pad, ty), l, font=font, fill="#000000")
                     ty += line_h
-                cur_y = by0 + bh + pad
+                taken.append((bx0, by0, bw_, bh_))
+                placements.append({"panel": panel["id"], "kind": kind,
+                                   "rect": (bx0, by0, bw_, bh_), "tip": None,
+                                   "clean": clean})
                 continue
 
-            # speech / thought: bulle ellipse, plus large que le bloc de texte
-            bw = int((text_w + pad * 2) * 1.25)
-            bh = int((text_h + pad * 2) * 1.45)
-            bx0 = x + pad if side == 0 else x + w - pad - bw
-            bx0 = max(x + 2, min(bx0, x + w - bw - 2))
-            by0 = cur_y
-            anchor = d.get("anchor") or ((0.35, 0.9) if side == 0 else (0.65, 0.9))
-            tip = (max(x + 2, min(x + int(anchor[0] * w), x + w - 2)),
-                   max(y + 2, min(y + int(anchor[1] * h), y + h - 2)))
-            cx = bx0 + bw // 2
+            # --- speech / thought ---
+            bw_ = int((text_w + pad * 2) * 1.25)
+            bh_ = int((text_h + pad * 2) * 1.45)
+            prefer = "left" if side == 0 else "right"
+            spk = (d.get("speaker") or "").strip().lower()
+            fc = face_of.get(spk)
+            if fc:  # pres du locuteur: colonne du cote de son visage
+                prefer = "left" if (fc["box"][0] + fc["box"][2]) / 2 < x + w / 2 \
+                    else "right"
+            (bx0, by0, _, _), clean = _place_rect(rect, bw_, bh_, forbidden,
+                                                  taken, prefer)
+            cx, cy = bx0 + bw_ // 2, by0 + bh_ // 2
+
+            # pointe de la queue: anchor explicite > bouche du locuteur > bord
+            if d.get("anchor"):
+                ax, ay = d["anchor"]
+                tip = (max(x + 2, min(x + int(ax * w), x + w - 2)),
+                       max(y + 2, min(y + int(ay * h), y + h - 2)))
+            elif fc and fc.get("mouth"):
+                tip = _tail_tip((cx, cy), fc["mouth"], fc["box"])
+            elif fc:
+                bx1, by1, bx2, by2 = fc["box"]
+                tip = _tail_tip((cx, cy), ((bx1 + bx2) / 2, by2), fc["box"])
+            else:
+                # voix hors-champ (bruit de fond, cri derriere, narrateur):
+                # queue vers le bord vertical le plus proche de la bulle
+                edge_x = x + 4 if cx < x + w / 2 else x + w - 4
+                tip = (edge_x, min(y + h - 4, cy + bh_))
+
             if kind == "speech":
-                base_y = by0 + int(bh * 0.82)
+                base_y = by0 + int(bh_ * 0.82)
                 draw.polygon([(cx - fpx // 2, base_y), (cx + fpx // 2, base_y),
                               tip], fill="#ffffff", outline="#000000")
-            draw.ellipse([bx0, by0, bx0 + bw, by0 + bh],
+            draw.ellipse([bx0, by0, bx0 + bw_, by0 + bh_],
                          fill="#ffffff", outline="#000000", width=3)
             if kind == "speech":
-                # re-remplit la jonction queue/ellipse (gomme le trait dessous)
-                base_y = by0 + int(bh * 0.82)
+                base_y = by0 + int(bh_ * 0.82)
                 draw.polygon([(cx - fpx // 2 + 3, base_y - 3),
                               (cx + fpx // 2 - 3, base_y - 3),
                               (tip[0], tip[1] - 4)], fill="#ffffff")
-            else:  # thought: petites bulles decroissantes vers l'ancrage
+            else:
                 for k, r in ((0.35, max(3, fpx // 3)), (0.65, max(2, fpx // 5))):
                     px_ = int(cx + (tip[0] - cx) * k)
-                    py_ = int((by0 + bh) + (tip[1] - (by0 + bh)) * k)
+                    py_ = int((by0 + bh_) + (tip[1] - (by0 + bh_)) * k)
                     draw.ellipse([px_ - r, py_ - r, px_ + r, py_ + r],
                                  fill="#ffffff", outline="#000000", width=2)
-            ty = by0 + (bh - text_h) // 2
+            ty = by0 + (bh_ - text_h) // 2
             for l in lines:
                 lw = draw.textlength(l, font=font)
-                draw.text((bx0 + (bw - lw) // 2, ty), l, font=font, fill="#000000")
+                draw.text((bx0 + (bw_ - lw) // 2, ty), l, font=font,
+                          fill="#000000")
                 ty += line_h
-            cur_y = by0 + bh + pad
+            taken.append((bx0, by0, bw_, bh_))
+            placements.append({"panel": panel["id"], "kind": kind,
+                               "rect": (bx0, by0, bw_, bh_), "tip": tip,
+                               "clean": clean})
             side = 1 - side
-    return sheet
+    return placements
 
 
 # ----------------------------------------------------------------------------
@@ -855,7 +981,8 @@ def render_project(project, project_dir, engine, only=None, force=False,
     return rendered
 
 
-def compose_chapter(project, project_dir, chapter_id, letter=True, fit="cover"):
+def compose_chapter(project, project_dir, chapter_id, letter=True, fit="cover",
+                    face_detector=None):
     """Compose et sauve toutes les planches d'un chapitre (+ lettrage), renvoie
     la liste des chemins dans l'ordre de pagination."""
     chapter = find_chapter(project, chapter_id)
@@ -863,7 +990,7 @@ def compose_chapter(project, project_dir, chapter_id, letter=True, fit="cover"):
     for page in chapter["pages"]:
         sheet = compose_page(project, page, fit=fit)
         if letter:
-            render_lettering(project, page, sheet)
+            render_lettering(project, page, sheet, face_detector=face_detector)
         dst = page_path(project_dir, chapter_id, page["id"])
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         sheet.save(dst)

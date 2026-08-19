@@ -15,6 +15,18 @@ The `cz_comic` engine grows into a full comic-book pipeline, field-tested on a
   invents letters — 'Mendian Station'); bubbles stay editable and translatable.
   Deterministic placement: stacked from the panel top, alternating left/right in
   reading order.
+- **Face-aware lettering**: `render_lettering` takes an injected `face_detector`
+  (insightface via the new `cz_face.detect_faces_full`, which also returns the
+  MOUTH point from the 5 keypoints — wired automatically in the UI and CLI, CPU
+  or GPU per the detailer config). Bubbles **never cover a face** (expanded
+  face boxes are forbidden zones for bubbles, captions AND sfx; if a panel is
+  too crowded the minimal-overlap fallback is flagged `clean=False`), the tail
+  **aims at the speaker's mouth** and stops at the face-box edge (speakers are
+  matched to faces in reading order, first speaker = leftmost face; an explicit
+  `anchor` still wins), and a speaker with NO matched face (off-panel voice,
+  shout from behind, narrator) gets a generic bubble whose tail points to the
+  nearest panel edge. `render_lettering` now returns the placement list
+  ({panel, kind, rect, tip, clean}) for tests and future interactive editing.
 - **Render orchestration** (`render_project`): the generation engine is INJECTED
   (`engine(spec) -> PIL.Image`), so the whole loop is unit-tested with a stub and
   never needs a GPU in CI. Resume-safe: `project.json` is saved after EVERY panel;
