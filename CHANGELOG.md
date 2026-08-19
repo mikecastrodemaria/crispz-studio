@@ -3,6 +3,29 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Comic: build a whole album from the UI (pages, casting, style) + sample project
+
+The Comic accordion covered the panel loop but not the BOOK: layouts, casting and
+style still meant hand-editing project.json. Three editors close that gap:
+
+- **📐 Pages & layouts**: pick a page, **Add page** with any layout, **Change
+  layout**. Shrinking reports the removed panels AND their text in the status line
+  (`set_layout` returns them) — nothing is dropped silently. `splash` = the
+  full-page panel used for covers and back covers.
+- **🎭 Casting (@Name)**: create/edit/delete entries — name, description, kind
+  (character/setting), negative, LoRAs, reference images. **🪪 Generate reference
+  sheet** renders the canonical portrait from `sheet_prompt()` and files it as
+  `refs[0]`, which is exactly what the lettering uses to RECOGNIZE the speaker.
+- **🎨 Style & page format**: style suffix + negative applied to every panel,
+  default bubble shape, and the page geometry (size, margin, gutter, background,
+  panel border). Impossible geometry is refused with the reason instead of
+  producing collapsed panels.
+
+Load/New now fill every editor. New: **`comic-project-sample.json`**, a complete
+worked example (6 pages incl. cover and back cover, 4 casting entries with kinds,
+style, page format) — copied to `comics/exemple-winding-hour/` and ready to load.
+`comics/` is gitignored: your books stay yours. Tests: tests/test_comic_ui.py (7).
+
 ## Unreleased — queue: soft ⏸ Pause, and Stop no longer discards the interrupted job
 
 Two ways to halt a running queue, both loss-free:

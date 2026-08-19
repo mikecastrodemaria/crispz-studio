@@ -118,7 +118,12 @@ SwarmUI. On top of crispz's upscaler it adds:
   the casting reference portraits (embeddings, `refs[0]`), with reading-order
   fallback — and off-panel voices (narrator, shout from behind) get a generic
   bubble pointing to the panel edge. Page composition with gutters/borders and
-  **PDF / CBZ export**. Resume-safe:
+  **PDF / CBZ export**. Everything is editable from the UI — **📐 Pages & layouts**
+  (add page, change layout, removed panels always reported), **🎭 Casting** (with
+  **🪪 Generate reference sheet**, the portrait that lets the lettering recognize
+  the speaker) and **🎨 Style & page format**. Start from
+  `comic-project-sample.json` (a full worked album: cover, 4 pages, back cover),
+  copied to `comics/exemple-winding-hour/` — load it and hit *Generate missing*. Resume-safe:
   `project.json` is saved after every panel, so a crash costs nothing. Config
   `comic.enabled`; the engine (`cz_comic.py`) is pure geometry — no torch, no GPU —
   and fully unit-tested.
