@@ -3,6 +3,21 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — queue: soft ⏸ Pause, and Stop no longer discards the interrupted job
+
+Two ways to halt a running queue, both loss-free:
+
+- **⏸ Pause** (new button next to Run queue): the CURRENT job finishes cleanly,
+  then the queue suspends — remaining jobs stay queued and persisted; Run queue
+  resumes. Use it when you want the GPU back without wasting the render in
+  progress.
+- **Stop** still interrupts the job mid-render, but the interrupted job now
+  **stays at the head of the queue** (it was silently discarded before — a
+  half-rendered job vanished from a night batch). It re-runs entirely on resume.
+
+Semantics unit-tested with a stubbed generator (pause-finishes-then-halts,
+stop-keeps-job, drain, flag+report — tests/test_queue.py).
+
 ## Unreleased — Comic mode: lettering, per-panel rendering, Comic accordion, CLI, PDF/CBZ
 
 The `cz_comic` engine grows into a full comic-book pipeline, field-tested on a

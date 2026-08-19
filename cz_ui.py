@@ -2101,14 +2101,34 @@ def _ui_queue_clear(items):
     return (items, *_q_render(items))
 
 
+_QUEUE_PAUSE = False
+
+
+def _q_request_pause():
+    """PAUSE douce de la file: le job en cours se TERMINE proprement, puis la
+    file se suspend (Run queue reprend). Contrairement a Stop, qui interrompt
+    le rendu en plein vol - et laisse desormais le job interrompu EN FILE pour
+    qu'il soit re-execute entier a la reprise (avant, il etait jete)."""
+    global _QUEUE_PAUSE
+    _QUEUE_PAUSE = True
+    _log("pause requested: finishing the current job, then halting", mod="queue")
+    return "*⏸ Pause requested — the current job will finish, then the queue halts.*"
+
+
 def _ui_queue_run(items, history, progress=gr.Progress(track_tqdm=True)):
     """Execute la file en serie. Chaque job restaure son etat modele (purge VRAM auto au
-    changement) puis rejoue _ui_generate. Stop = interrompt le job courant et met la
-    file en PAUSE: les jobs restants demeurent empiles.
+    changement) puis rejoue _ui_generate.
+
+    Deux facons de s'arreter, toutes deux SANS perdre de jobs (file persistee):
+      - ⏸ Pause: finit le job en cours puis suspend; les restants demeurent.
+      - Stop: interrompt le job en plein vol; le job INTERROMPU reste en file
+        (il n'a pas ete fait) et sera re-execute entier a la reprise.
 
     On opere IN-PLACE sur l'objet d'etat partage (pas de copie): les jobs ajoutes
     pendant l'execution (via '+ Queue') sont donc pris en compte et executes a la
     volee, et le retour n'ecrase jamais la file avec un instantane perime."""
+    global _QUEUE_PAUSE
+    _QUEUE_PAUSE = False
     if not isinstance(items, list):
         items = []
     if not items:
@@ -2141,13 +2161,21 @@ def _ui_queue_run(items, history, progress=gr.Progress(track_tqdm=True)):
         except Exception as e:
             _log(f"job failed ({e}); continuing with next", mod="queue")
             rep = f"Job failed: {e}"
+        if cz_pipeline._STOP:
+            # Job INTERROMPU en plein vol: il reste en tete de file (il n'a pas
+            # ete termine) et sera re-execute entier a la reprise.
+            _q_persist(items)
+            _log(f"stopped mid-job; the interrupted job stays queued "
+                 f"({len(items)} job(s) in the queue)", mod="queue")
+            break
         done += 1
         items.pop(0)
         # Persiste apres CHAQUE job: un crash / une coupure en pleine file de nuit ne
         # coute que le job en cours, pas les suivants.
         _q_persist(items)
-        if cz_pipeline._STOP:
-            _log(f"stopped; queue PAUSED, {len(items)} job(s) remaining", mod="queue")
+        if _QUEUE_PAUSE:
+            _log(f"paused after the current job; {len(items)} job(s) remaining",
+                 mod="queue")
             break
     # Assemblage des planches X/Y/Z touchees pendant ce run (cellules cumulees a travers
     # pause/reprise). gid libere quand plus aucun job de cette grille n'est en file.
@@ -2163,7 +2191,10 @@ def _ui_queue_run(items, history, progress=gr.Progress(track_tqdm=True)):
         if not any((j.get("xyz") or {}).get("gid") == gid for j in items):
             _XYZ_PENDING.pop(gid, None)
     if items and cz_pipeline._STOP:
-        status = f"Queue paused after {done} job(s) — {len(items)} remaining (Run queue to resume)."
+        status = (f"Queue stopped after {done} completed job(s) — the interrupted "
+                  f"job stays queued, {len(items)} remaining (Run queue to resume).")
+    elif items and _QUEUE_PAUSE:
+        status = f"⏸ Queue paused after {done} job(s) — {len(items)} remaining (Run queue to resume)."
     else:
         status = f"Queue done: {done} job(s)."
     return (items, *_q_render(items), gallery_all, f"{status}  \n{rep}", history, history)
@@ -3296,6 +3327,8 @@ def build_ui():
                                                       size="sm", scale=1, min_width=140)
                             queue_run_btn = gr.Button("Run queue", variant="primary", size="sm",
                                                       scale=1, min_width=140)
+                            queue_pause_btn = gr.Button("⏸ Pause", size="sm",
+                                                        scale=1, min_width=100)
                         queue_md = gr.Markdown("*Queue empty.*")
                         with gr.Row():
                             queue_sel = gr.Dropdown([], label="Selected job", scale=4)
@@ -4134,6 +4167,9 @@ def build_ui():
             queue_clear_btn.click(_ui_queue_clear, [queue_state], _q_panel)
             queue_run_btn.click(_ui_queue_run, [queue_state, history],
                                 [*_q_panel, out, report, history, history_gallery])
+            # Pause douce: finit le job en cours puis suspend (Stop, lui,
+            # interrompt le rendu en plein vol; le job interrompu reste en file)
+            queue_pause_btn.click(_q_request_pause, None, [report])
         if XYZ_ENABLED:
             xyz_build_btn.click(_ui_xyz_build,
                                 [*_gen_inputs, xyz_xa, xyz_xv, xyz_ya, xyz_yv, xyz_za, xyz_zv,

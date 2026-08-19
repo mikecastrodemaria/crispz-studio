@@ -25,7 +25,10 @@ SwarmUI. On top of crispz's upscaler it adds:
   Config: `force_upscale_ratio`, `force_ratio_mode` (`crop`/`extend`).
 - **Job queue**: `+ Queue` snapshots ALL current settings (incl. model, LoRAs, sampler)
   into a labeled job list; `Run queue` chains them unattended (overnight batches with
-  different models/settings). **Stop pauses the queue** — remaining jobs are kept. VRAM
+  different models/settings). **⏸ Pause finishes the current job then halts**;
+  **Stop interrupts it mid-render and the interrupted job stays queued** (re-run
+  entirely on resume) — either way no job is ever lost, the queue is saved to
+  `cache/queue.json` after every change/job and **restored at startup**. VRAM
   is purged automatically only when the model changes between jobs.
 - **X/Y/Z grid**: vary 1–3 parameters (checkpoint, sampler, steps, guidance, denoise,
   ESRGAN model, LoRA file, LoRA weight, Performance preset, **full Prompt (A/B test)**,
