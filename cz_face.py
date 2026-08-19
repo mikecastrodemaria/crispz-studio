@@ -148,8 +148,40 @@ def detect_faces_full(image):
         if kps is not None and len(kps) >= 5:
             mouth = (float((kps[3][0] + kps[4][0]) / 2.0),
                      float((kps[3][1] + kps[4][1]) / 2.0))
-        out.append({"box": tuple(float(v) for v in f.bbox), "mouth": mouth})
+        emb = getattr(f, "normed_embedding", None)
+        out.append({"box": tuple(float(v) for v in f.bbox), "mouth": mouth,
+                    "embedding": (emb.tolist() if emb is not None else None)})
     return out
+
+
+_REF_EMB_CACHE = {}
+
+
+def ref_embedding(path):
+    """Embedding du PLUS GRAND visage d'une image de reference (liste de floats,
+    L2-normalisee par insightface), None si aucun visage. Cache par (path, mtime).
+    Sert au lettrage BD: apparier 'qui parle' a 'quel visage' en comparant les
+    visages d'une case aux portraits de reference du casting."""
+    try:
+        key = (os.path.abspath(path), os.path.getmtime(path))
+    except OSError:
+        return None
+    if key in _REF_EMB_CACHE:
+        return _REF_EMB_CACHE[key]
+    emb = None
+    try:
+        with Image.open(path) as im:
+            faces = detect_faces_full(im)
+        faces = [f for f in faces if f.get("embedding")]
+        if faces:
+            def _area(f):
+                x1, y1, x2, y2 = f["box"]
+                return (x2 - x1) * (y2 - y1)
+            emb = max(faces, key=_area)["embedding"]
+    except Exception as e:
+        _log(f"ref_embedding({os.path.basename(path)}) failed: {e}")
+    _REF_EMB_CACHE[key] = emb
+    return emb
 
 
 def _resolve_faceswap_model(checkpoints_dir=None):
