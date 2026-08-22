@@ -1302,6 +1302,24 @@ def _load_dequant_state_dict(path):
     entries.sort(key=lambda kv: kv[1].get("data_offsets", [0])[0])
     raw = {}
     qcfg = {}
+    # comfy-quants declare le schema soit en blobs PAR TENSEUR (X.comfy_quant),
+    # soit CENTRALEMENT dans __metadata__._quantization_metadata (variante
+    # StableYogi: {"layers": {"blocks...": {"format": "int8_tensorwise",
+    # "convrot": true, "convrot_groupsize": 256}}}). Ignorer cette variante
+    # laisse la rotation en place -> poids en bruit total (observe sur les
+    # INT8 Krea 2; meme format cote Z-Image). Les blobs par tenseur gagnent.
+    try:
+        qm = json.loads((hdr.get("__metadata__") or {}).get(
+            "_quantization_metadata") or "{}")
+        for lk, lv in (qm.get("layers") or {}).items():
+            if isinstance(lv, dict):
+                qcfg[lk] = lv
+                qcfg["model.diffusion_model." + lk] = lv   # variante AIO prefixee
+        if qcfg:
+            _dbg(f"quantization metadata: {len(qm.get('layers') or {})} layer(s) "
+                 "declared in header")
+    except Exception as e:
+        _dbg(f"_quantization_metadata unreadable: {e}")
     with safe_open(path, framework="pt", device="cpu") as f:
         for k, _ in entries:
             if k.endswith(".comfy_quant"):   # blob JSON: format + convrot eventuels
