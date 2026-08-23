@@ -3577,12 +3577,12 @@ def build_ui():
                 with gr.Row(equal_height=True):
                     prompt = gr.Textbox(show_label=False, value=CONFIG.get("default_prompt", ""),
                                         placeholder="Type your prompt here...",
-                                        elem_id="cz_prompt", lines=2, scale=4, container=False)
+                                        elem_id="cz_prompt", lines=2, max_lines=12, scale=4, container=False)
                     btn = gr.Button("Generate", elem_id="cz_generate", scale=1, min_width=150)
 
                 with gr.Row(equal_height=True):
                     negative = gr.Textbox(show_label=False, value=CONFIG.get("default_negative_prompt", ""),
-                                          elem_id="cz_neg", lines=1, container=False, scale=4,
+                                          elem_id="cz_neg", lines=1, max_lines=6, container=False, scale=4,
                                           placeholder="Negative prompt - what you do NOT want (needs guidance > 0)")
                     stop_btn = gr.Button("Stop", variant="stop", scale=1, min_width=150)
 

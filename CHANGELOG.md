@@ -3,6 +3,14 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — prompt & negative boxes: capped growth + a visible scrollbar
+
+A long prompt used to grow the textarea unpredictably (Gradio-version
+dependent) and then CLIP silently, the text continuing below the fold with no
+scroll cue on the dark theme. The prompt now grows to 12 lines (~+20%) and the
+negative to 6, then SCROLLS - with a themed, visible scrollbar (CSS capped at
+17em/9em as a version-proof backstop). Same behaviour across the whole family.
+
 ## Unreleased — Comic: chapters in the UI, page roles (cover/title/story/back), book order, folio
 
 A comic is a BOOK, not a list of pages. Pages now carry a `role`:
