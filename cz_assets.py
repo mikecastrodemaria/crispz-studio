@@ -465,6 +465,19 @@ FOOOCUS_CSS = """
 #cz_result .thumbnail-item, #cz_result .thumbnail-item img, #cz_result button img {
   object-fit: contain !important; }
 #cz_prompt textarea, #cz_neg textarea { font-size: 1.04rem; }
+/* Un prompt long grandit jusqu'au plafond (max_lines +20%) puis SCROLLE, avec
+   une scrollbar visible sur le theme sombre - avant, la croissance dependait
+   de la version de Gradio et le texte semblait coupe sans indication. */
+#cz_prompt textarea { max-height: 17em; overflow-y: auto !important;
+  scrollbar-width: thin; scrollbar-color: #5d6884 transparent; }
+#cz_neg textarea { max-height: 9em; overflow-y: auto !important;
+  scrollbar-width: thin; scrollbar-color: #5d6884 transparent; }
+#cz_prompt textarea::-webkit-scrollbar, #cz_neg textarea::-webkit-scrollbar {
+  width: 10px; }
+#cz_prompt textarea::-webkit-scrollbar-thumb, #cz_neg textarea::-webkit-scrollbar-thumb {
+  background: #5d6884; border-radius: 5px; }
+#cz_prompt textarea::-webkit-scrollbar-track, #cz_neg textarea::-webkit-scrollbar-track {
+  background: transparent; }
 #cz_generate, #cz_edit_generate { font-size: 1.12rem; font-weight: 600;
   background: linear-gradient(180deg,#5a6376,#3b4356) !important; color: #fff !important;
   border: 1px solid #5d6884 !important; box-shadow: none !important; }
