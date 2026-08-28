@@ -998,10 +998,14 @@ def render_lettering(project, page, sheet, face_detector=None,
                 tip = (max(x + 2, min(tip[0], x + w - 2)),
                        max(y + 2, min(tip[1], y + h - 2)))
             else:
-                # voix hors-champ (bruit de fond, cri derriere, narrateur):
-                # queue vers le bord vertical le plus proche de la bulle
-                edge_x = x + 4 if cx < x + w / 2 else x + w - 4
-                tip = (edge_x, min(y + h - 4, cy + bh_))
+                # No face info (no detector, or unmatched speaker): aim the
+                # tail BELOW the bubble, slightly toward the panel centre -
+                # where characters are drawn in the vast majority of panels.
+                # (v1 aimed at the nearest vertical edge: without a face
+                # detector EVERY tail seemed to point at nothing.)
+                tx = cx + int((x + w / 2 - cx) * 0.35)
+                tip = (max(x + 2, min(tx, x + w - 2)),
+                       min(y + h - 4, by0 + bh_ + int(0.22 * h)))
 
             # base de la queue: bord de la bulle COTE pointe (bas si la pointe
             # est dessous, haut si elle est au-dessus de la bulle)
