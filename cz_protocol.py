@@ -156,10 +156,18 @@ def run_gen(spec, warnings=None, route="local"):
     if slots:
         cz_pipeline.set_loras(slots)
     steps = spec.get("steps") or int(CONFIG.get("default_gen_steps", 8))
+    # Seed resolu ICI, comme le fait l'UI (cz_ui.run): un -1 devient une valeur
+    # concrete AVANT la generation -> seed_used est toujours exact et rejouable.
+    # (Ne PAS relire cz_pipeline._LAST_SEED apres coup: il n'est pose que par le
+    # chemin UI et rapporterait le seed du dernier rendu UI de l'instance.)
+    import random
+    seed_used = int(spec.get("seed", -1))
+    if seed_used < 0:
+        seed_used = random.randint(0, 2**31 - 1)
+    cz_pipeline._LAST_SEED = seed_used          # 'Reuse last seed' de l'UI le voit
     img, timings = cz_pipeline.txt2img_run(
         spec["prompt"], spec["width"], spec["height"], steps,
-        spec.get("seed", -1), spec.get("negative", ""))
-    seed_used = cz_pipeline._LAST_SEED
+        seed_used, spec.get("negative", ""))
     path = build_output_path(None, "local", spec.get("out_dir"), "png",
                              tag="czp_txt2img", seed=seed_used, size=img.size)
     save_image(img, path, "png",
