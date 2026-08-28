@@ -790,16 +790,23 @@ def _pos_rect(d, panel_rect, bw, bh, forbidden):
 
 
 def _tail_tip(bubble_center, mouth, face_box):
-    """Pointe de la queue: A HAUTEUR DE BOUCHE, juste a cote du visage, du cote
-    de la bulle. C'est la convention BD lisible: la pointe designe la bouche
-    depuis la joue, sans jamais traverser ni couvrir le visage.
+    """Tail tip, picked from where the bubble sits relative to the face -
+    always DESIGNATING the mouth without ever crossing or covering the face:
 
-    (v1 arretait la queue a la sortie de la bbox sur le segment bouche->bulle:
-    avec une bulle au-dessus, ca sortait par le FRONT et la queue semblait
-    designer le haut du crane -- corrige.)"""
+      - bubble BELOW the face (the common case now that bubbles avoid
+        faces): tip just UNDER the chin, at the mouth's x - the tail rises
+        straight toward the mouth. A side tip here seemed to point at the
+        cheek/ear.
+      - otherwise (bubble above or beside): AT MOUTH HEIGHT, just beside
+        the face, on the bubble's side - the readable cheek convention.
+        (v1 stopped the tail where the mouth->bubble segment left the bbox:
+        with a bubble above it exited through the FOREHEAD - fixed.)"""
     mx, my = mouth
-    cx, _cy = bubble_center
+    cx, cy = bubble_center
     x1, y1, x2, y2 = face_box
+    if cy > y2:
+        margin_y = max(6, 0.10 * (y2 - y1))
+        return (int(mx), int(y2 + margin_y))
     margin = max(6, 0.12 * (x2 - x1))
     tip_x = x1 - margin if cx < mx else x2 + margin
     return (int(tip_x), int(my))
