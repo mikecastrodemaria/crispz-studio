@@ -1,26 +1,33 @@
-"""crispz family - protocole CLI v1: spec JSON en entree, JSON en sortie.
+"""crispz family - CLI protocol v1: JSON spec in, JSON out.
 
-Contrat partage par la famille (crispz-studio, crispz-qwen-edit, crispz-krea*,
-et le futur comics2crispz qui les pilote) :
+Contract shared by the whole family (crispz-studio, crispz-qwen-edit,
+crispz-krea*, and comics2crispz which drives them):
 
-    czp caps                       -> capacites de l'outil + instance qui tourne
-    czp gen --spec spec.json       -> genere UNE image, imprime le resultat JSON
+    czp caps                       -> this tool's capabilities + running instance
+    czp gen --spec spec.json       -> generate ONE image, print the JSON result
 
-Principe : le CLI est le CONTRAT, pas le processus. `gen` route vers l'instance
-Gradio qui tourne (endpoints api_name 'cli_caps' / 'cli_gen', meme mecanique
-HTTP que les SPA Asset Browser / Comic Studio) : la queue de l'app serialise le
-GPU et le modele reste chaud. Sans instance, execution locale (chemin froid,
-batch de nuit). Les imports lourds (torch, pipeline) ne se font QUE dans ce
-chemin local : `caps` et le routage ne chargent jamais rien.
+Principle: the CLI is the CONTRACT, not the process. `gen` routes to the
+running Gradio instance (hidden api_name endpoints 'cli_caps' / 'cli_gen',
+same HTTP mechanics as the Asset Browser / Comic Studio SPAs): the app's queue
+serializes the GPU and the model stays warm. Without an instance, local
+execution (cold path, night batch). Heavy imports (torch, pipeline) happen
+ONLY on that local path: `caps` and the routing never load anything.
 
-Sortie : toujours UNE ligne JSON sur stdout. Codes retour :
-    0 ok · 1 erreur d'execution · 2 spec invalide · 3 op/protocole non
-    supporte · 4 aucune route (ni instance, ni --local possible).
+Output: always ONE JSON line on stdout. Exit codes:
+    0 ok - 1 run error - 2 invalid spec - 3 unsupported op/protocol -
+    4 no route (no instance and no local execution possible).
 
-v1 : une image par appel (l'appelant boucle) ; refs/guidance acceptes mais
-non appliques (warning, jamais silencieux) ; sur la route remote, spec.model
-est ignore avec warning (on ne change pas le modele de l'instance de
-l'utilisateur sous ses pieds).
+v1: one image per call (the caller loops); guidance is accepted but not
+applied (warning, never silent); on the remote route spec.model is ignored
+with a warning (we never swap the model of the user's running instance under
+their feet).
+
+refs (v2): spec.refs = LOCAL image paths (the protocol is machine-local).
+When an Omni model is configured (zimage_omni_model), generation goes through
+generate_omni (multi-reference, character consistency); otherwise refs are
+dropped WITH a warning and supports.refs announces it upfront. A ref missing
+on disk is an error (code 2), never a silently degraded generation. At most
+4 refs (Omni UI limit), extras are cut with a warning.
 """
 
 import os
@@ -37,13 +44,34 @@ PROTOCOL = 1
 TOOL = "crispz-studio"
 OPS = ("caps", "gen")
 
-# Champs de spec connus du protocole (v1). Un champ inconnu = warning, jamais
-# une erreur : un spec ecrit pour un autre outil de la famille doit passer.
+# Spec fields known to the protocol (v1). An unknown field is a warning,
+# never an error: a spec written for another family tool must go through.
 SPEC_FIELDS = ("protocol", "op", "prompt", "negative", "width", "height",
                "seed", "steps", "guidance", "refs", "loras", "model", "input",
                "out_dir", "count")
 
 _DEF_URL = "http://127.0.0.1:7860"
+
+MAX_REFS = 4                      # Omni pipeline limit (same as the UI)
+
+# Whether this model family has a multi-reference/omni pipeline AT ALL.
+# crispz-krea / crispz-krea2 hard-set this to False (their _load_omni raises:
+# no instruction-edit model exists for Krea) - config can never turn refs on
+# there, and caps must say so instead of promising a capability that raises.
+OMNI_SUPPORTED = True
+# Default omni repo when the family ships one out of the box
+# (crispz-qwen-edit: Qwen-Image-Edit). Empty = config/env must set it.
+OMNI_DEFAULT = ""
+
+
+def _omni_configured():
+    """Is an Omni model (multi-reference) available? CONFIG/env only - same
+    rule as cz_pipeline.OMNI_MODEL, without importing the pipeline (caps must
+    stay light)."""
+    if not OMNI_SUPPORTED:
+        return False
+    return bool((os.environ.get("ZIMAGE_OMNI_MODEL")
+                 or CONFIG.get("zimage_omni_model") or OMNI_DEFAULT).strip())
 
 
 def instance_url():
@@ -53,11 +81,14 @@ def instance_url():
 
 
 def caps_dict():
-    """Capacites de CET outil. Leger: config seulement, aucun modele charge.
-    supports.refs reste False tant que la v1 n'applique pas les refs Omni."""
+    """This tool's capabilities. Light: config only, no model loaded.
+    supports.refs = an Omni model is configured (multi-reference generation
+    will actually work) - callers know UPFRONT whether character consistency
+    through refs is available."""
     return {"ok": True, "protocol": PROTOCOL, "tool": TOOL,
             "version": APP_VERSION, "ops": list(OPS),
-            "supports": {"loras": True, "refs": False, "seed": True,
+            "supports": {"loras": True, "refs": _omni_configured(),
+                         "max_refs": MAX_REFS, "seed": True,
                          "negative": True, "arbitrary_size": True}}
 
 
@@ -71,9 +102,9 @@ class SpecError(Exception):
 
 
 def validate_spec(spec, op="gen"):
-    """Normalise un spec 'gen'. Renvoie (spec_normalise, warnings).
-    Leve SpecError(code=2) si invalide, SpecError(code=3) si protocole/op
-    hors contrat. Ne tronque jamais en silence."""
+    """Normalize a 'gen' spec. Returns (normalized_spec, warnings).
+    Raises SpecError(code=2) when invalid, SpecError(code=3) when the
+    protocol/op is out of contract. Never truncates silently."""
     if not isinstance(spec, dict):
         raise SpecError("spec must be a JSON object")
     try:
@@ -117,9 +148,21 @@ def validate_spec(spec, op="gen"):
     out["steps"] = steps
     if spec.get("guidance") is not None:
         warnings.append("'guidance' not applied (v1: instance settings win)")
-    refs = spec.get("refs") or []
-    if refs:
-        warnings.append(f"{len(refs)} ref(s) not applied (v1: txt2img only)")
+    refs = [str(r) for r in (spec.get("refs") or []) if str(r).strip()]
+    if refs and not _omni_configured():
+        warnings.append(f"{len(refs)} ref(s) ignored: no omni model "
+                        f"configured (set zimage_omni_model) - character "
+                        f"consistency by refs is OFF")
+        refs = []
+    if len(refs) > MAX_REFS:
+        warnings.append(f"{len(refs)} refs, keeping the first {MAX_REFS} "
+                        f"(omni pipeline limit)")
+        refs = refs[:MAX_REFS]
+    for r in refs:
+        if not os.path.isfile(r):
+            raise SpecError(f"ref not found on disk: {r} (refs are LOCAL "
+                            f"file paths - the caller resolves them)")
+    out["refs"] = refs
     out["loras"] = [str(x) for x in (spec.get("loras") or [])]
     out["model"] = (str(spec["model"]).strip()
                     if spec.get("model") else None)
@@ -133,12 +176,12 @@ def validate_spec(spec, op="gen"):
 
 
 # ----------------------------------------------------------------------------
-# Execution locale (imports lourds ICI seulement)
+# Local execution (heavy imports HERE only)
 # ----------------------------------------------------------------------------
 def run_gen(spec, warnings=None, route="local"):
-    """Genere UNE image depuis un spec VALIDE. Charge le pipeline si besoin
-    (chemin froid) - ne jamais appeler pendant qu'une instance rend sur le
-    meme GPU: passer par la route remote, c'est son role."""
+    """Generate ONE image from a VALIDATED spec. Loads the pipeline when
+    needed (cold path) - never call this while an instance is rendering on
+    the same GPU: that is what the remote route is for."""
     import cz_pipeline
     from cz_imageio import build_output_path, save_image
 
@@ -156,36 +199,60 @@ def run_gen(spec, warnings=None, route="local"):
     if slots:
         cz_pipeline.set_loras(slots)
     steps = spec.get("steps") or int(CONFIG.get("default_gen_steps", 8))
-    # Seed resolu ICI, comme le fait l'UI (cz_ui.run): un -1 devient une valeur
-    # concrete AVANT la generation -> seed_used est toujours exact et rejouable.
-    # (Ne PAS relire cz_pipeline._LAST_SEED apres coup: il n'est pose que par le
-    # chemin UI et rapporterait le seed du dernier rendu UI de l'instance.)
+    # The seed is resolved HERE, the same way the UI does (cz_ui.run): a -1
+    # becomes a concrete value BEFORE generating -> seed_used is always exact
+    # and replayable. (Do NOT read cz_pipeline._LAST_SEED afterwards: only the
+    # UI path sets it, it would report the instance's last UI render.)
     import random
     seed_used = int(spec.get("seed", -1))
     if seed_used < 0:
         seed_used = random.randint(0, 2**31 - 1)
-    cz_pipeline._LAST_SEED = seed_used          # 'Reuse last seed' de l'UI le voit
-    img, timings = cz_pipeline.txt2img_run(
-        spec["prompt"], spec["width"], spec["height"], steps,
-        seed_used, spec.get("negative", ""))
+    cz_pipeline._LAST_SEED = seed_used          # the UI's 'Reuse last seed' sees it
+    refs = spec.get("refs") or []
+    if refs:
+        # Omni route (multi-reference): refs were already validated by
+        # validate_spec (files exist, omni configured).
+        from PIL import Image
+        t_o = time.time()
+        imgs = [Image.open(r) for r in refs]
+        try:
+            img = cz_pipeline.generate_omni(
+                imgs, spec["prompt"], spec.get("negative", ""),
+                spec["width"], spec["height"], steps, seed_used)
+        finally:
+            for im in imgs:
+                try:
+                    im.close()
+                except Exception:
+                    pass
+        timings = {"omni": time.time() - t_o}
+    else:
+        img, timings = cz_pipeline.txt2img_run(
+            spec["prompt"], spec["width"], spec["height"], steps,
+            seed_used, spec.get("negative", ""))
     path = build_output_path(None, "local", spec.get("out_dir"), "png",
-                             tag="czp_txt2img", seed=seed_used, size=img.size)
+                             tag=("czp_omni" if refs else "czp_txt2img"),
+                             seed=seed_used, size=img.size)
     save_image(img, path, "png",
-               meta={"mode": "txt2img", "prompt": spec["prompt"],
+               meta={"mode": "omni" if refs else "txt2img",
+                     "prompt": spec["prompt"],
                      "negative": spec.get("negative", ""), "seed": seed_used,
                      "steps": steps, "size": list(img.size),
-                     "loras": spec.get("loras") or []})
+                     "loras": spec.get("loras") or [],
+                     "refs": [os.path.basename(r) for r in refs]})
     return {"ok": True, "protocol": PROTOCOL, "tool": TOOL,
             "version": APP_VERSION, "route": route,
             "images": [os.path.abspath(path)], "seed_used": seed_used,
+            "refs_used": len(refs),
             "timings": {"total_s": round(time.time() - t0, 2),
                         **{k: round(v, 2) for k, v in (timings or {}).items()}},
             "warnings": warnings}
 
 
 def handle_gen_json(spec_json):
-    """Cote INSTANCE (endpoint api_name='cli_gen'): valide + genere. Renvoie
-    toujours un dict {ok: ...} - l'appelant czp n'a qu'un chemin d'erreur."""
+    """INSTANCE side (api_name='cli_gen' endpoint): validate + generate.
+    Always returns a dict {ok: ...} - the czp caller has a single error
+    path."""
     try:
         spec, warnings = validate_spec(json.loads(spec_json or "{}"))
         if spec.get("model"):
@@ -202,11 +269,12 @@ def handle_gen_json(spec_json):
 
 
 # ----------------------------------------------------------------------------
-# Route remote (HTTP direct sur les endpoints Gradio, comme les SPA)
+# Remote route (direct HTTP on the Gradio endpoints, like the SPAs)
 # ----------------------------------------------------------------------------
 def _gradio_call(url, name, data, post_timeout=10, get_timeout=3600):
-    """POST /gradio_api/call/<name> -> event_id, puis GET du flux et extraction
-    de la premiere sortie. Renvoie la string, ou leve urllib.error/ValueError."""
+    """POST /gradio_api/call/<name> -> event_id, then GET the stream and
+    extract the first output. Returns the string, or raises
+    urllib.error/ValueError."""
     req = urllib.request.Request(
         f"{url.rstrip('/')}/gradio_api/call/{name}",
         data=json.dumps({"data": data}).encode("utf-8"),
@@ -227,8 +295,8 @@ def _gradio_call(url, name, data, post_timeout=10, get_timeout=3600):
 
 
 def probe_instance(url, timeout=4):
-    """caps de l'instance qui tourne a `url`, ou None si rien ne repond.
-    Court: ne bloque jamais un appel local plus de quelques secondes."""
+    """caps of the instance running at `url`, or None if nothing answers.
+    Short: never delays a local call by more than a few seconds."""
     try:
         raw = _gradio_call(url, "cli_caps", [], post_timeout=timeout,
                            get_timeout=max(timeout, 8))
@@ -239,7 +307,7 @@ def probe_instance(url, timeout=4):
 
 
 # ----------------------------------------------------------------------------
-# Entree CLI (czp.bat / python cz_protocol.py)
+# CLI entry (czp.bat / python cz_protocol.py)
 # ----------------------------------------------------------------------------
 def _emit(payload, code):
     print(json.dumps(payload, ensure_ascii=False))
@@ -247,9 +315,9 @@ def _emit(payload, code):
 
 
 def _read_spec(path):
-    # utf-8-sig: PowerShell 5.1 (Set-Content/Out-File -Encoding utf8) ecrit un
-    # BOM - le refuser casserait le premier test venu sous Windows. Le strip
-    # supplementaire couvre le BOM arrive par stdin.
+    # utf-8-sig: PowerShell 5.1 (Set-Content/Out-File -Encoding utf8) writes
+    # a BOM - refusing it would break the first test anyone runs on Windows.
+    # The extra strip covers a BOM arriving through stdin.
     raw = sys.stdin.read() if path == "-" \
         else open(path, encoding="utf-8-sig").read()
     return json.loads(raw.lstrip("\ufeff"))
@@ -293,8 +361,8 @@ def main(argv=None):
         return _emit({"ok": False, "tool": TOOL,
                       "error": f"unreadable spec: {e}"}, 2)
 
-    # Routage: remote si une instance repond (sa queue serialise le GPU),
-    # local sinon. --local / --remote court-circuitent la detection.
+    # Routing: remote when an instance answers (its queue serializes the
+    # GPU), local otherwise. --local / --remote bypass the detection.
     if not args.local:
         url = args.remote or instance_url()
         inst = probe_instance(url)
