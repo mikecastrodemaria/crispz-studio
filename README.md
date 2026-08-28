@@ -148,6 +148,19 @@ SwarmUI. On top of crispz's upscaler it adds:
   accordion: every action re-reads/re-writes `project.json`, so the Studio, the
   accordion, manual edits and the CLI can all work on the same project at once.
   Gated by the same `comic.enabled`.
+- **🔌 Family CLI protocol v1** (`czp.bat` / `cz_protocol.py`): a machine-first
+  contract shared by the crispz family — **JSON spec in, one-line JSON out**.
+  `czp gen --spec spec.json` **routes to the running app** when there is one
+  (hidden `cli_caps`/`cli_gen` endpoints; the app's queue serializes the GPU and
+  the model stays warm) and only loads the pipeline itself when no instance
+  answers (night batch; `--local`/`--remote URL` force a route). `czp caps`
+  prints the tool's capabilities (`loras`, `refs`, `seed`…) plus whether an
+  instance is running — callers degrade **explicitly**, never silently: unknown
+  spec fields, refs, `count>1` all come back as `warnings`, and on the remote
+  route `model` overrides are refused (the running instance keeps its model).
+  Exit codes: 0 ok · 1 run error · 2 bad spec · 3 unsupported op/protocol ·
+  4 no route. One image per call — the caller loops. Config
+  `cli_protocol.instance_url`.
 - **Ollama (optional)**: **Describe** (image→prompt), **Improve prompt**, and **Vision
   Mix** (blend several reference images into one prompt). Models unload from VRAM after
   use. Without Ollama, **Describe** uses a local BLIP captioner and **Improve prompt**
