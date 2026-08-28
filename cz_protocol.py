@@ -239,8 +239,12 @@ def _emit(payload, code):
 
 
 def _read_spec(path):
-    raw = sys.stdin.read() if path == "-" else open(path, encoding="utf-8").read()
-    return json.loads(raw)
+    # utf-8-sig: PowerShell 5.1 (Set-Content/Out-File -Encoding utf8) ecrit un
+    # BOM - le refuser casserait le premier test venu sous Windows. Le strip
+    # supplementaire couvre le BOM arrive par stdin.
+    raw = sys.stdin.read() if path == "-" \
+        else open(path, encoding="utf-8-sig").read()
+    return json.loads(raw.lstrip("\ufeff"))
 
 
 def main(argv=None):
