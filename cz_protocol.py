@@ -80,16 +80,25 @@ def instance_url():
         else _DEF_URL
 
 
+def _faces_available():
+    """Is the face-detection stack (insightface) installed? Light check:
+    module spec only, nothing imported - caps must stay fast."""
+    import importlib.util
+    return importlib.util.find_spec("insightface") is not None
+
+
 def caps_dict():
     """This tool's capabilities. Light: config only, no model loaded.
     supports.refs = an Omni model is configured (multi-reference generation
-    will actually work) - callers know UPFRONT whether character consistency
-    through refs is available."""
+    will actually work); supports.faces = the instance can serve face
+    detection (cli_faces endpoint) so torch-free callers (comics2crispz)
+    can letter with the same face-aware placement as the app."""
     return {"ok": True, "protocol": PROTOCOL, "tool": TOOL,
             "version": APP_VERSION, "ops": list(OPS),
             "supports": {"loras": True, "refs": _omni_configured(),
                          "max_refs": MAX_REFS, "seed": True,
-                         "negative": True, "arbitrary_size": True}}
+                         "negative": True, "arbitrary_size": True,
+                         "faces": _faces_available()}}
 
 
 # ----------------------------------------------------------------------------
