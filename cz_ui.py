@@ -3463,6 +3463,22 @@ def _comic_refresh_editors(dir_txt):
             *st)
 
 
+def _api_cli_caps():
+    """Endpoint api_name='cli_caps' (protocole CLI famille, cz_protocol/czp):
+    permet a czp et aux autres outils de savoir QUI tourne ici."""
+    import cz_protocol
+    return json.dumps(cz_protocol.caps_dict(), ensure_ascii=False)
+
+
+def _api_cli_gen(spec_json):
+    """Endpoint api_name='cli_gen': une generation pilotee par spec JSON
+    (protocole CLI v1). Passe par la queue de l'app -> serialise avec les
+    generations de l'utilisateur, modele deja chaud."""
+    import cz_protocol
+    return json.dumps(cz_protocol.handle_gen_json(spec_json),
+                      ensure_ascii=False)
+
+
 def _comic_studio_open(dir_txt):
     """Bouton 🎬 Comic Studio: ecrit studio.html dans le dossier du projet et
     renvoie (statut, url) — l'onglet s'ouvre via le meme window.open que
@@ -3539,6 +3555,15 @@ def build_ui():
         tr_out = gr.Textbox(visible=False)
         tr_btn = gr.Button(visible=False)
         tr_btn.click(_api_thumbs_rebuild, tr_in, tr_out, api_name="thumbs_rebuild")
+        # Endpoints protocole CLI famille (czp / cz_protocol: caps + gen routes
+        # vers cette instance -> queue partagee, modele chaud)
+        clc_out = gr.Textbox(visible=False)
+        clc_btn = gr.Button(visible=False)
+        clc_btn.click(_api_cli_caps, None, clc_out, api_name="cli_caps")
+        clg_in = gr.Textbox(visible=False)
+        clg_out = gr.Textbox(visible=False)
+        clg_btn = gr.Button(visible=False)
+        clg_btn.click(_api_cli_gen, clg_in, clg_out, api_name="cli_gen")
         # Endpoint Comic Studio (SPA BD: state / save_panel / set_bubble / compose /
         # compose_book / generate — un seul endpoint, dispatch dans cz_comicstudio)
         if COMIC_ENABLED:
