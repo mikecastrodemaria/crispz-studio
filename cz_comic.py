@@ -1043,9 +1043,19 @@ def render_lettering(project, page, sheet, face_detector=None,
                               (tip[0], tip[1] + (4 if tail_up else -4))],
                              fill="#ffffff")
             else:
+                # Thought circles trail from the bubble EDGE facing the tip
+                # (exit point of the centre->tip ray from the bubble rect).
+                # v1 always started from the bubble BOTTOM: with a tip above
+                # (mouth above, bubble below the face) the segment crossed
+                # the bubble and the circles landed on the text.
+                dx, dy = tip[0] - cx, tip[1] - cy
+                t = min((bw_ / 2) / abs(dx) if dx else float("inf"),
+                        (bh_ / 2) / abs(dy) if dy else float("inf"))
+                t = 1.0 if t == float("inf") else min(t, 1.0)
+                ex, ey = cx + dx * t, cy + dy * t
                 for k, r in ((0.35, max(3, fpx // 3)), (0.65, max(2, fpx // 5))):
-                    px_ = int(cx + (tip[0] - cx) * k)
-                    py_ = int((by0 + bh_) + (tip[1] - (by0 + bh_)) * k)
+                    px_ = int(ex + (tip[0] - ex) * k)
+                    py_ = int(ey + (tip[1] - ey) * k)
                     draw.ellipse([px_ - r, py_ - r, px_ + r, py_ + r],
                                  fill="#ffffff", outline="#000000", width=2)
             ty = by0 + (bh_ - text_h) // 2
