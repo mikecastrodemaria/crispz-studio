@@ -159,7 +159,9 @@ SwarmUI. On top of crispz's upscaler it adds:
   spec fields, refs, `count>1` all come back as `warnings`, and on the remote
   route `model` overrides are refused (the running instance keeps its model).
   Exit codes: 0 ok · 1 run error · 2 bad spec · 3 unsupported op/protocol ·
-  4 no route. One image per call — the caller loops. Config
+  4 no route. One image per call — the caller loops. LoRAs hot-swap per call
+  (`spec.loras`, or `<lora:file:weight>` tags right inside the prompt —
+  extracted before the text encoder sees them). Config
   `cli_protocol.instance_url`.
 - **Ollama (optional)**: **Describe** (image→prompt), **Improve prompt**, and **Vision
   Mix** (blend several reference images into one prompt). Models unload from VRAM after
