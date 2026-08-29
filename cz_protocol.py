@@ -22,6 +22,11 @@ applied (warning, never silent); on the remote route spec.model is ignored
 with a warning (we never swap the model of the user's running instance under
 their feet).
 
+loras: spec.loras = ["file.safetensors:0.8", ...], hot-swapped per call. The
+prompt may also carry <lora:file[:weight]> tags (A1111/Civitai habit): they
+are extracted at validation time and merged into spec.loras (explicit entries
+win on duplicates), so style/character LoRAs travel INSIDE panel texts too.
+
 refs (v2): spec.refs = LOCAL image paths (the protocol is machine-local).
 When an Omni model is configured (zimage_omni_model), generation goes through
 generate_omni (multi-reference, character consistency); otherwise refs are
@@ -104,6 +109,31 @@ def caps_dict():
 # ----------------------------------------------------------------------------
 # Spec
 # ----------------------------------------------------------------------------
+# <lora:file[:weight]> tags INSIDE the prompt (the A1111/Civitai habit).
+# Extracted at validation time so every route (remote endpoint, local run)
+# and every caller (czp, comics2crispz panel texts) gets them, and the text
+# encoder never sees the tag itself. Explicit spec.loras win on duplicates
+# (first weight wins, the family rule).
+_LORA_TAG = re.compile(r"<lora:([^:>]+?)(?::([0-9.]+))?>", re.IGNORECASE)
+
+
+def _extract_prompt_loras(prompt, loras):
+    """Moves <lora:...> tags from the prompt into `loras` (in place).
+    Returns the cleaned prompt."""
+    def _sub(m):
+        name = m.group(1).strip()
+        if name:
+            seen = {str(x).split(":", 1)[0].strip().lower() for x in loras}
+            if name.lower() not in seen:
+                loras.append(f"{name}:{m.group(2)}" if m.group(2) else name)
+        return " "
+    out = _LORA_TAG.sub(_sub, prompt)
+    if out != prompt:
+        out = re.sub(r"\s{2,}", " ", out)
+        out = re.sub(r"\s+,", ",", out).strip(" ,")
+    return out
+
+
 class SpecError(Exception):
     def __init__(self, msg, code=2):
         super().__init__(msg)
@@ -173,6 +203,10 @@ def validate_spec(spec, op="gen"):
                             f"file paths - the caller resolves them)")
     out["refs"] = refs
     out["loras"] = [str(x) for x in (spec.get("loras") or [])]
+    out["prompt"] = _extract_prompt_loras(out["prompt"], out["loras"])
+    if op == "gen" and not out["prompt"]:
+        raise SpecError("prompt contained only <lora:...> tags - describe "
+                        "the image too")
     out["model"] = (str(spec["model"]).strip()
                     if spec.get("model") else None)
     out["out_dir"] = (str(spec["out_dir"]).strip()
@@ -252,7 +286,7 @@ def run_gen(spec, warnings=None, route="local"):
     return {"ok": True, "protocol": PROTOCOL, "tool": TOOL,
             "version": APP_VERSION, "route": route,
             "images": [os.path.abspath(path)], "seed_used": seed_used,
-            "refs_used": len(refs),
+            "refs_used": len(refs), "loras": list(spec.get("loras") or []),
             "timings": {"total_s": round(time.time() - t0, 2),
                         **{k: round(v, 2) for k, v in (timings or {}).items()}},
             "warnings": warnings}
