@@ -92,18 +92,62 @@ def _faces_available():
     return importlib.util.find_spec("insightface") is not None
 
 
+def _models_dir(kind):
+    """Dossier des modeles ('checkpoints'|'loras'), memes priorites que
+    cz_pipeline (env > preferences > config > defaut) mais sans l'importer:
+    caps doit rester leger."""
+    from cz_core import HERE, _prefs
+    return (os.environ.get(kind.upper() + "_DIR")
+            or _prefs.get(f"{kind}_dir") or CONFIG.get(f"{kind}_dir")
+            or os.path.join(HERE, kind))
+
+
+def _list_model_files(kind, exts=(".safetensors", ".gguf")):
+    """Fichiers modeles disponibles (chemins relatifs POSIX, tries). Simple
+    listage disque - la SOURCE DE VERITE des modeles reste chaque outil, les
+    appelants (wizard comics2crispz) ne configurent aucun chemin."""
+    d = _models_dir(kind)
+    out = []
+    if os.path.isdir(d):
+        for root, dirs, files in os.walk(d):
+            dirs[:] = [x for x in dirs
+                       if x not in ("_index", ".cache", "recipes")]
+            for f in files:
+                if f.lower().endswith(exts):
+                    out.append(os.path.relpath(os.path.join(root, f), d)
+                               .replace("\\", "/"))
+    return sorted(out, key=str.lower)
+
+
+def _model_loaded():
+    """Modele actif de CE process: renseigne cote instance (endpoint
+    cli_caps), '' cote czp froid (cz_pipeline pas importe - et on ne
+    l'importe PAS pour ca)."""
+    mod = sys.modules.get("cz_pipeline")
+    if mod is None:
+        return ""
+    t = getattr(mod, "ZIMAGE_TRANSFORMER", None)
+    if t:
+        return os.path.basename(str(t))
+    return str(getattr(mod, "BASE_REPO", "") or "")
+
+
 def caps_dict():
-    """This tool's capabilities. Light: config only, no model loaded.
-    supports.refs = an Omni model is configured (multi-reference generation
-    will actually work); supports.faces = the instance can serve face
-    detection (cli_faces endpoint) so torch-free callers (comics2crispz)
-    can letter with the same face-aware placement as the app."""
+    """This tool's capabilities. Light: config + disk listing, no model
+    loaded. supports.refs = an Omni model is configured (multi-reference
+    generation will actually work); supports.faces = the instance can serve
+    face detection (cli_faces endpoint). models/loras = the files this tool
+    can use (its own dirs - callers never configure model paths);
+    model_loaded = what THIS process has active (instance side)."""
     return {"ok": True, "protocol": PROTOCOL, "tool": TOOL,
             "version": APP_VERSION, "ops": list(OPS),
             "supports": {"loras": True, "refs": _omni_configured(),
                          "max_refs": MAX_REFS, "seed": True,
                          "negative": True, "arbitrary_size": True,
-                         "faces": _faces_available()}}
+                         "faces": _faces_available()},
+            "model_loaded": _model_loaded(),
+            "models": _list_model_files("checkpoints"),
+            "loras": _list_model_files("loras")}
 
 
 # ----------------------------------------------------------------------------
