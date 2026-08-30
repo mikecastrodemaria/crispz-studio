@@ -1005,6 +1005,44 @@ _SLICE_ABOVE = int(CONFIG.get("attention_slice_above", 1664))
 # (lent: ~120s en 2K) ET risque le spill VRAM (4K -> crash). Tuiler est plus rapide ET sur.
 _AUTO_TILE_ABOVE = int(CONFIG.get("auto_refine_tile_above", _SLICE_ABOVE))
 
+# Taille de la tuile employee par cet auto-tuilage. "auto" (defaut) = calculee par
+# _pick_refine_tile ; un entier fige la taille (ancien comportement : 1024).
+# Mesure (RTX 5090, sortie 4096x4096, denoise 0.40, overlap 64) : le cout par pixel est
+# PLAT de 768 a 1024 (1.78 / 1.83 / 1.79 us/px) et ne grimpe qu'au-dela (2.41 a 1536,
+# 3.00 a 2048). Le temps suit donc la SURFACE TUILEE (n x tuile^2), pas la taille de la
+# tuile. Or a 1024 la grille deborde : pas de 960 sur 4096 -> la derniere tuile est
+# rabattue et recouvre la precedente sur 832px au lieu de 64, soit 1.56x la surface de
+# l'image. A 896 le pas tombe juste (1.20x) -> 36.7s au lieu de 46.9s sur la meme image,
+# a nombre de tuiles (25) et de coutures (8) IDENTIQUE.
+# Bornes [768, 1024] : en dessous on multiplie tuiles et coutures et chaque tuile voit
+# moins de contexte (le rendu derive - un arriere-plan flou se reconstruit differemment,
+# verifie visuellement) ; au-dessus l'attention devient superlineaire.
+_AUTO_TILE_MIN = int(CONFIG.get("auto_refine_tile_min", 768))
+_AUTO_TILE_MAX = int(CONFIG.get("auto_refine_tile_max", 1024))
+_AUTO_TILE_SIZE = str(CONFIG.get("auto_refine_tile", "auto")).strip().lower()
+
+
+def _pick_refine_tile(w, h, overlap):
+    """Tuile qui minimise la surface tuilee pour couvrir w x h (= le cout reel de la passe).
+
+    A surface egale on garde la PLUS GRANDE tuile : moins de coutures et plus de contexte
+    par tuile. Un entier dans auto_refine_tile court-circuite le calcul (taille figee)."""
+    if _AUTO_TILE_SIZE not in ("auto", "", "0"):
+        try:
+            return round_to_multiple(int(_AUTO_TILE_SIZE))
+        except ValueError:
+            _log(f"config auto_refine_tile='{_AUTO_TILE_SIZE}' invalide (attendu 'auto' ou "
+                 "un entier) -> calcul automatique")
+    lo = max(256, _AUTO_TILE_MIN)
+    hi = max(lo, _AUTO_TILE_MAX)
+    ov = max(0, int(overlap))
+    cands = []
+    for t in range(lo, hi + 1, 32):
+        step = max(16, t - ov)
+        n = len(range(0, max(1, int(w)), step)) * len(range(0, max(1, int(h)), step))
+        cands.append((n * t * t, -t, t))       # surface mini, puis plus grande tuile
+    return min(cands)[2]
+
 # Plafond de denoise pour le refine TUILE. En tuiles, chaque tuile est rediffusee avec le
 # prompt global -> a fort denoise la diffusion reconstruit le sujet (ex: la tasse) DANS
 # chaque tuile = duplications. On plafonne donc le denoise par tuile (le contenu existant
@@ -2274,9 +2312,9 @@ def process_one(image, esrgan_model, factor, denoise, steps, prompt, seed, tile,
         rt = int(refine_tile)
         # Garde-fou anti-crash: refine whole-image trop grand (4K+) -> auto-tuilage.
         if rt <= 0 and max(rw, rh) > _AUTO_TILE_ABOVE:
-            rt = 1024
-            _log(f"refine: image {rw}x{rh} > {_AUTO_TILE_ABOVE}px -> auto-tiling (tile 1024) "
-                 "pour eviter le pic VRAM (regle: auto_refine_tile_above)")
+            rt = _pick_refine_tile(rw, rh, int(refine_overlap) or 64)
+            _log(f"refine: image {rw}x{rh} > {_AUTO_TILE_ABOVE}px -> auto-tiling (tile {rt}) "
+                 "pour eviter le pic VRAM (regles: auto_refine_tile_above, auto_refine_tile)")
         if rt > 0:
             out = _refine_tiled(pipe, img, denoise, steps, prompt, seed,
                                 rt, int(refine_overlap) or 64)

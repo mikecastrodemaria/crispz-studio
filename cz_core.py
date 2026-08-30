@@ -83,6 +83,15 @@ DEFAULT_TILE = int(CONFIG.get("default_tile", DEFAULT_TILE))
 DEFAULT_OVERLAP = int(CONFIG.get("default_overlap", DEFAULT_OVERLAP))
 DEFAULT_REFINE_TILE = int(CONFIG.get("default_refine_tile", DEFAULT_REFINE_TILE))
 DEFAULT_REFINE_OVERLAP = int(CONFIG.get("default_refine_overlap", DEFAULT_REFINE_OVERLAP))
+
+# Choix offerts par le dropdown "Diffusion tile". 0 = Auto : image entiere en dessous de
+# auto_refine_tile_above, et au-dela tuilage a la taille calculee par
+# cz_pipeline._pick_refine_tile. Les tailles fixes restent disponibles pour forcer la main.
+REFINE_TILE_CHOICES = [("Auto", 0)] + [(str(t), t) for t in
+                                       (512, 640, 768, 896, 1024, 1280, 1536, 2048)]
+if DEFAULT_REFINE_TILE not in [v for _, v in REFINE_TILE_CHOICES]:
+    REFINE_TILE_CHOICES.append((str(DEFAULT_REFINE_TILE), DEFAULT_REFINE_TILE))
+    REFINE_TILE_CHOICES.sort(key=lambda c: c[1])
 DEFAULT_SAVE_MODE = CONFIG.get("default_save_mode", DEFAULT_SAVE_MODE)
 DEFAULT_OUTPUT_DIR = CONFIG.get("default_output_dir", DEFAULT_OUTPUT_DIR)
 DEFAULT_OUTPUT_FORMAT = CONFIG.get("default_output_format", DEFAULT_OUTPUT_FORMAT)

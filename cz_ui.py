@@ -73,6 +73,7 @@ from cz_core import (  # noqa: E402,F401
     HERE, PREFS_PATH, CONFIG_PATH, CONFIG_SAMPLE_PATH,
     DEFAULT_MODEL, DEFAULT_FACTOR, DEFAULT_DENOISE, DEFAULT_STEPS, DEFAULT_TILE,
     DEFAULT_OVERLAP, DEFAULT_REFINE_TILE, DEFAULT_REFINE_OVERLAP, DEFAULT_SAVE_MODE,
+    REFINE_TILE_CHOICES,
     DEFAULT_OUTPUT_DIR, DEFAULT_OUTPUT_FORMAT, SUPPORTED_FORMATS, IMG_EXTS,
     DEFAULT_BASE_REPO, DEFAULT_ESRGAN_DIR,
     CONFIG, MODEL_PROFILES, DEFAULT_MODEL_PROFILE, profile_for_model,
@@ -3779,8 +3780,9 @@ def build_ui():
                                 tile = gr.Slider(0, 1024, value=DEFAULT_TILE, step=8, label="Tile (0 = off)")
                                 overlap = gr.Slider(0, 128, value=DEFAULT_OVERLAP, step=8, label="Overlap")
                             with gr.Accordion("Z-Image tiling (4K+)", open=False):
-                                refine_tile = gr.Slider(0, 2048, value=DEFAULT_REFINE_TILE, step=16,
-                                                        label="Diffusion tile (0 = whole image)")
+                                refine_tile = gr.Dropdown(
+                                    choices=REFINE_TILE_CHOICES, value=DEFAULT_REFINE_TILE,
+                                    label="Diffusion tile (Auto = sized to the output)")
                                 refine_overlap = gr.Slider(0, 256, value=DEFAULT_REFINE_OVERLAP, step=16,
                                                            label="Diffusion tile overlap")
 
