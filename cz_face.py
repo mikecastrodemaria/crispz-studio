@@ -11,11 +11,19 @@ _faceswap/_resolve_faceswap_model plutot qu'importe (pas de dependance vers app)
 """
 
 import os
+import warnings
 
 import numpy as np
 from PIL import Image
 
 from cz_core import CONFIG, HERE, DEVICE, _log, _prefs, download_with_progress
+
+# insightface appelle np.linalg.lstsq sans rcond (alignement affine des
+# visages): numpy emet un FutureWarning A CHAQUE visage traite - pur bruit de
+# librairie, aucun effet sur le resultat. Filtre CIBLE sur ce module (jamais
+# un silence global des FutureWarning).
+warnings.filterwarnings("ignore", category=FutureWarning,
+                        module=r"insightface\.utils\.transform")
 
 # FaceSwap: reglages de qualite du post-traitement. Tous reglables via l'UI.
 # - restore   : re-synthese du visage a 512 (inswapper ne sort qu'en 128 -> flou).
