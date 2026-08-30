@@ -866,7 +866,9 @@ def render_lettering(project, page, sheet, face_detector=None,
     Une replique peut porter d['pos'] = [fx, fy] (coin haut-gauche en fractions
     de case, ecrit par Comic Studio au drag): la bulle est alors posee LA,
     clampee dans la case, au lieu du placement automatique. d['anchor'] (deja
-    en v1) pilote de la meme facon la POINTE de la queue.
+    en v1) pilote de la meme facon la POINTE de la queue. d['scale'] (0.4-3.0)
+    est une HOMOTHETIE par replique: police, marges, queue et bulle grandissent
+    ensemble, proportions conservees.
 
     Avec `face_detector` (callable image -> [{'box': (x1,y1,x2,y2),
     'mouth': (x,y)|None}], voir cz_face.detect_faces_full):
@@ -927,13 +929,24 @@ def render_lettering(project, page, sheet, face_detector=None,
         for d in dialogue:
             kind = d.get("kind", "speech")
             text = d.get("text") or ""
+            # Homothetie par replique (Comic Studio): d['scale'] multiplie la
+            # police -> bulle ET texte grandissent ensemble, memes proportions.
+            try:
+                scale = float(d.get("scale") or 1.0)
+            except (TypeError, ValueError):
+                scale = 1.0
+            scale = max(0.4, min(3.0, scale))
+            fpx_d = fpx if scale == 1.0 else max(10, int(round(fpx * scale)))
+            font_d = font if scale == 1.0 else _font(_BUBBLE_FONTS, fpx_d)
+            pad_d = max(8, fpx_d // 2)
             if kind == "sfx":
                 # auto-fit: un cri long ou un TITRE de couverture ne doit pas
-                # deborder la case -> la police retrecit jusqu'a tenir en largeur
-                size = max(fpx * 2, h // 8)
+                # deborder la case -> la police retrecit jusqu'a tenir en
+                # largeur (une echelle manuelle desserre/serre ce plafond)
+                size = int(max(fpx * 2, h // 8) * scale)
                 sfx_font = _font(_SFX_FONTS, size)
                 bb = draw.textbbox((0, 0), text, font=sfx_font, stroke_width=4)
-                while size > fpx and bb[2] - bb[0] > int(w * 0.92):
+                while size > 10 and bb[2] - bb[0] > int(w * 0.92 * scale):
                     size = int(size * 0.85)
                     sfx_font = _font(_SFX_FONTS, size)
                     bb = draw.textbbox((0, 0), text, font=sfx_font, stroke_width=4)
@@ -941,28 +954,32 @@ def render_lettering(project, page, sheet, face_detector=None,
                 (rx, ry, _, _), clean = _pos_rect(d, rect, bw_, bh_, forbidden) \
                     or _place_rect(rect, bw_, bh_, forbidden, taken, "center")
                 draw.text((rx, ry), text, font=sfx_font, fill="#ffffff",
-                          stroke_width=max(3, fpx // 5), stroke_fill="#000000")
+                          stroke_width=max(3, fpx_d // 5), stroke_fill="#000000")
                 taken.append((rx, ry, bw_, bh_))
                 placements.append({"panel": panel["id"], "kind": kind,
                                    "rect": (rx, ry, bw_, bh_), "tip": None,
                                    "clean": clean})
                 continue
 
-            max_text_w = int(w * (0.86 if kind == "caption" else 0.58))
-            lines = _wrap(draw, text, font, max_text_w)
-            line_h = fpx + 4
-            text_w = max(int(draw.textlength(l, font=font)) for l in lines)
+            # la largeur de coupe suit l'echelle (vraie homothetie: la bulle
+            # garde ses proportions), plafonnee a la case
+            max_text_w = min(int(w * 0.92),
+                             int(w * (0.86 if kind == "caption" else 0.58)
+                                 * scale))
+            lines = _wrap(draw, text, font_d, max_text_w)
+            line_h = fpx_d + 4
+            text_w = max(int(draw.textlength(l, font=font_d)) for l in lines)
             text_h = line_h * len(lines)
 
             if kind == "caption":
-                bw_, bh_ = text_w + pad * 2, text_h + pad * 2
+                bw_, bh_ = text_w + pad_d * 2, text_h + pad_d * 2
                 (bx0, by0, _, _), clean = _pos_rect(d, rect, bw_, bh_, forbidden) \
                     or _place_rect(rect, bw_, bh_, forbidden, taken, "left")
                 draw.rectangle([bx0, by0, bx0 + bw_, by0 + bh_],
                                fill="#fdf6d8", outline="#000000", width=3)
-                ty = by0 + pad
+                ty = by0 + pad_d
                 for l in lines:
-                    draw.text((bx0 + pad, ty), l, font=font, fill="#000000")
+                    draw.text((bx0 + pad_d, ty), l, font=font_d, fill="#000000")
                     ty += line_h
                 taken.append((bx0, by0, bw_, bh_))
                 placements.append({"panel": panel["id"], "kind": kind,
@@ -976,11 +993,11 @@ def render_lettering(project, page, sheet, face_detector=None,
             if bstyle not in BUBBLE_STYLES:
                 bstyle = "round"
             if bstyle == "round":     # ellipse: le texte tient dans l'inscrite
-                bw_ = int((text_w + pad * 2) * 1.25)
-                bh_ = int((text_h + pad * 2) * 1.45)
+                bw_ = int((text_w + pad_d * 2) * 1.25)
+                bh_ = int((text_h + pad_d * 2) * 1.45)
             else:                     # rectangle arrondi / pans coupes: compact
-                bw_ = text_w + pad * 3
-                bh_ = text_h + pad * 3
+                bw_ = text_w + pad_d * 3
+                bh_ = text_h + pad_d * 3
             prefer = "left" if side == 0 else "right"
             spk = (d.get("speaker") or "").strip().lower()
             fc = face_of.get(spk)
@@ -1020,11 +1037,12 @@ def render_lettering(project, page, sheet, face_detector=None,
             base_y = by0 + int(bh_ * (0.18 if tail_up else 0.82))
             base_out = base_y + (3 if tail_up else -3)
             if kind == "speech":
-                draw.polygon([(cx - fpx // 2, base_y), (cx + fpx // 2, base_y),
+                draw.polygon([(cx - fpx_d // 2, base_y),
+                              (cx + fpx_d // 2, base_y),
                               tip], fill="#ffffff", outline="#000000")
             if bstyle == "rounded":
                 draw.rounded_rectangle([bx0, by0, bx0 + bw_, by0 + bh_],
-                                       radius=max(8, min(bh_ // 3, fpx)),
+                                       radius=max(8, min(bh_ // 3, fpx_d)),
                                        fill="#ffffff", outline="#000000", width=3)
             elif bstyle == "angular":
                 c = max(6, min(bw_, bh_) // 5)
@@ -1038,8 +1056,8 @@ def render_lettering(project, page, sheet, face_detector=None,
                 draw.ellipse([bx0, by0, bx0 + bw_, by0 + bh_],
                              fill="#ffffff", outline="#000000", width=3)
             if kind == "speech":
-                draw.polygon([(cx - fpx // 2 + 3, base_out),
-                              (cx + fpx // 2 - 3, base_out),
+                draw.polygon([(cx - fpx_d // 2 + 3, base_out),
+                              (cx + fpx_d // 2 - 3, base_out),
                               (tip[0], tip[1] + (4 if tail_up else -4))],
                              fill="#ffffff")
             else:
@@ -1053,7 +1071,8 @@ def render_lettering(project, page, sheet, face_detector=None,
                         (bh_ / 2) / abs(dy) if dy else float("inf"))
                 t = 1.0 if t == float("inf") else min(t, 1.0)
                 ex, ey = cx + dx * t, cy + dy * t
-                for k, r in ((0.35, max(3, fpx // 3)), (0.65, max(2, fpx // 5))):
+                for k, r in ((0.35, max(3, fpx_d // 3)),
+                             (0.65, max(2, fpx_d // 5))):
                     px_ = int(ex + (tip[0] - ex) * k)
                     py_ = int(ey + (tip[1] - ey) * k)
                     draw.ellipse([px_ - r, py_ - r, px_ + r, py_ + r],
