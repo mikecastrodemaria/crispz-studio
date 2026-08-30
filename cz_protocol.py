@@ -53,7 +53,7 @@ OPS = ("caps", "gen")
 # never an error: a spec written for another family tool must go through.
 SPEC_FIELDS = ("protocol", "op", "prompt", "negative", "width", "height",
                "seed", "steps", "guidance", "refs", "loras", "model", "input",
-               "out_dir", "count")
+               "out_dir", "count", "detail_faces", "detail_hands")
 
 _DEF_URL = "http://127.0.0.1:7860"
 
@@ -132,6 +132,13 @@ def _model_loaded():
     return str(getattr(mod, "BASE_REPO", "") or "")
 
 
+def _hands_available():
+    """Le detailer de mains (YOLOv8) demande le paquet optionnel
+    'ultralytics'. Check leger, rien d'importe."""
+    import importlib.util
+    return importlib.util.find_spec("ultralytics") is not None
+
+
 def caps_dict():
     """This tool's capabilities. Light: config + disk listing, no model
     loaded. supports.refs = an Omni model is configured (multi-reference
@@ -144,7 +151,9 @@ def caps_dict():
             "supports": {"loras": True, "refs": _omni_configured(),
                          "max_refs": MAX_REFS, "seed": True,
                          "negative": True, "arbitrary_size": True,
-                         "faces": _faces_available()},
+                         "faces": _faces_available(),
+                         "detail_faces": _faces_available(),
+                         "detail_hands": _hands_available()},
             "model_loaded": _model_loaded(),
             "models": _list_model_files("checkpoints"),
             "loras": _list_model_files("loras")}
@@ -259,6 +268,12 @@ def validate_spec(spec, op="gen"):
     if count is not None and int(count) != 1:
         warnings.append("count forced to 1 (v1: one image per call, loop on "
                         "the caller side)")
+    # Detailer ADetailer-style: true/false force, absent (None) = le reglage
+    # courant de l'outil (config face_detailer) pour les visages, OFF pour
+    # les mains (ultralytics optionnel - jamais implicite).
+    for key in ("detail_faces", "detail_hands"):
+        v = spec.get(key)
+        out[key] = None if v is None else bool(v)
     return out, warnings
 
 
@@ -317,6 +332,29 @@ def run_gen(spec, warnings=None, route="local"):
         img, timings = cz_pipeline.txt2img_run(
             spec["prompt"], spec["width"], spec["height"], steps,
             seed_used, spec.get("negative", ""))
+    # Passe detailer (visages ADetailer-style, mains YOLO) - la meme que le
+    # CLI --detail-faces/--detail-hands. Un echec (paquet optionnel absent,
+    # detecteur KO) DEGRADE en warning, jamais en panneau perdu.
+    timings = dict(timings or {})
+    nf = nh = 0
+    df, dh = spec.get("detail_faces"), spec.get("detail_hands")
+    if df or dh or df is None:
+        try:
+            import cz_detailer
+            if df is None:
+                df = bool(getattr(cz_detailer, "DETAILER_ENABLED", False))
+            if df:
+                t_d = time.time()
+                img, nf = cz_detailer.detail_faces(img, spec["prompt"],
+                                                   seed_used, steps)
+                timings["detail_faces"] = time.time() - t_d
+            if dh:
+                t_d = time.time()
+                img, nh = cz_detailer.detail_hands(img, spec["prompt"],
+                                                   seed_used, steps)
+                timings["detail_hands"] = time.time() - t_d
+        except Exception as e:
+            warnings.append(f"detailer skipped: {e}")
     path = build_output_path(None, "local", spec.get("out_dir"), "png",
                              tag=("czp_omni" if refs else "czp_txt2img"),
                              seed=seed_used, size=img.size)
@@ -331,6 +369,7 @@ def run_gen(spec, warnings=None, route="local"):
             "version": APP_VERSION, "route": route,
             "images": [os.path.abspath(path)], "seed_used": seed_used,
             "refs_used": len(refs), "loras": list(spec.get("loras") or []),
+            "faces_refined": nf, "hands_refined": nh,
             "timings": {"total_s": round(time.time() - t0, 2),
                         **{k: round(v, 2) for k, v in (timings or {}).items()}},
             "warnings": warnings}
