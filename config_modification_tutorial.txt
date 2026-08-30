@@ -85,8 +85,15 @@ attention_slice_above   Cote (px) au-dela duquel on active l'attention slicing (
                         slicing est OFF = attention SDPA rapide. 1664 par defaut. Sur grosse
                         carte tu peux monter (ex. 2048) pour ne jamais slicer.
 auto_refine_tile_above  Cote (px) au-dela duquel un refine "whole image" (refine_tile=0) est
-                        auto-tuile (tuile 1024). Defaut = attention_slice_above (1664): au-dela
+                        auto-tuile (cf. auto_refine_tile). Defaut = attention_slice_above (1664): au-dela
                         un whole-image serait slice (lent ~120s en 2K) et risque le spill 4K.
+auto_refine_tile        Taille de la tuile de cet auto-tuilage. "auto" (defaut) = choisie
+                        pour MINIMISER la surface tuilee (n tuiles x tuile^2), qui est le
+                        vrai cout de la passe. Mesure 4096x4096 : 896 -> 36.7s contre 46.9s
+                        a 1024, a nombre de tuiles et de coutures identique (a 1024 la
+                        grille deborde et couvre 1.56x la surface de l'image). Un entier
+                        fige la taille (ex. 1024 = comportement d'avant). Bornes reglables
+                        via auto_refine_tile_min / auto_refine_tile_max (768 / 1024).
 refine_tile_denoise_cap Plafond de denoise pour le refine TUILE (4K+). En tuiles, chaque tuile
                         est rediffusee avec le prompt global -> a fort denoise (Creative) la
                         diffusion RECREE le sujet (ex: la tasse) DANS chaque tuile = duplications.

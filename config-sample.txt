@@ -68,6 +68,9 @@
     "default_cpu_offload": "none",
     "attention_slice_above": 1664,
     "auto_refine_tile_above": 1664,
+    "auto_refine_tile": "auto",
+    "auto_refine_tile_min": 768,
+    "auto_refine_tile_max": 1024,
     "refine_tile_denoise_cap": 0.40,
     "refine_tile_prompt": "",
 

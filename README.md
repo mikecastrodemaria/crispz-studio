@@ -906,7 +906,7 @@ Every UI setting has a CLI flag and a prefs key:
 | Sampler | `--sampler {euler,unipc,lcm}` | "Sampler" dropdown (next to CFG) | `default_sampler` (`euler`) |
 | Sigma schedule | `--schedule {sgm_uniform,beta,karras,exponential}` (`simple` = `sgm_uniform`) | "Schedule" dropdown | `default_schedule` (`sgm_uniform`) |
 | CPU offload (diffusion) | `--cpu-offload` | - | `none` |
-| Diffusion tile (4K+) | `--refine-tile` | - | `0` (whole image) |
+| Diffusion tile (4K+) | `--refine-tile` | "Diffusion tile" dropdown | `0` = **Auto** |
 | Diffusion tile overlap | `--refine-overlap` | - | `64` |
 | Save mode | `--save-mode` | `save_mode` | `display` |
 | Output folder | `--output-dir` | `output_dir` | `out` |
@@ -1114,6 +1114,7 @@ Measured benefit (RTX 5090, 2K): first call ~66s (cold, model load), next call ~
 |---|---|
 | **Denoise (strength)** | 0.05-0.25 = subtle, stays very close to the input. 0.25-0.40 = creative, more detail injected. Beyond ~0.40, Z-Image starts to reinvent. At high denoise, a **detailed caption prompt** greatly improves coherence. |
 | **Denoise + tiled refine (4K+)** | When the refine is **tiled** (4K, or auto-tiled above `auto_refine_tile_above`), each tile is re-diffused independently. The **global prompt describes the whole scene, not the tile** -> passing it to every tile makes the model redraw the subject (you get the teacup / butterfly repeated in several tiles). Two guards: (1) `refine_tile_prompt` -> per-tile prompt, **empty by default** so each tile only refines local detail (set to `"global"` for the old behavior, or a generic string like `"high detail, sharp focus"`); (2) `refine_tile_denoise_cap` (default **0.40**) caps the per-tile denoise as a safety net. Whole-image refine keeps your prompt and denoise (no duplication possible). |
+| **Diffusion tile size (4K+)** | The dropdown defaults to **Auto**: below `auto_refine_tile_above` the refine runs on the whole image, and above it the tile size is **computed from the output size** to minimise the *tiled surface* (`tiles x tile^2`) - which is what the pass actually costs. Measured on an RTX 5090 at 4096x4096: the cost per pixel is flat from 768 to 1024 (1.78 / 1.83 / 1.79 us/px) and only climbs beyond (2.41 at 1536, 3.00 at 2048), so time follows the covered surface, not the tile size. The old fixed 1024 overflowed the grid (step 960 on 4096 -> the last tile is clamped and re-covers 832px instead of 64 = **1.56x** the image area); Auto picks 896 there (1.20x) -> **36.7s instead of 46.9s**, same 25 tiles and same 8 seams. Search is bounded to `[768, 1024]` (`auto_refine_tile_min` / `auto_refine_tile_max`): smaller tiles multiply seams and give the model less context, which visibly changes the render. Pick a fixed size in the dropdown, or set `auto_refine_tile` to an integer, to force it. |
 | **Steps** | Effective steps ~= `steps * strength`. At strength 0.30, 12-16 steps give enough denoising steps. |
 | **Guidance** | Fixed at 0.0 (Z-Image Turbo). |
 | **Prompt** | Optional. Empty works very well if denoise <= 0.30. |
