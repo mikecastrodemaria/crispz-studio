@@ -789,6 +789,13 @@ def _pos_rect(d, panel_rect, bw, bh, forbidden):
     return r, clean
 
 
+def _thought_steps(dist, fpx):
+    """Nombre de ronds d'une queue de PENSEE: ~1 rond tous les 1.6 corps de
+    police le long du trajet bulle->pointe, borne a [2, 8]. Une pensee
+    lointaine trace un vrai chapelet, une pensee collee reste sobre."""
+    return max(2, min(8, int(round(dist / max(12.0, fpx * 1.6)))))
+
+
 def _tail_tip(bubble_center, mouth, face_box):
     """Tail tip, picked from where the bubble sits relative to the face -
     always DESIGNATING the mouth without ever crossing or covering the face:
@@ -1071,16 +1078,21 @@ def render_lettering(project, page, sheet, face_detector=None,
                         (bh_ / 2) / abs(dy) if dy else float("inf"))
                 t = 1.0 if t == float("inf") else min(t, 1.0)
                 ex, ey = cx + dx * t, cy + dy * t
-                for k, r in ((0.35, max(3, fpx_d // 3)),
-                             (0.65, max(2, fpx_d // 5))):
+                # Nombre de ronds PROPORTIONNEL a la distance bulle->pointe
+                # (voir _thought_steps), rayons decroissants vers la pointe.
+                dist = math.hypot(tip[0] - ex, tip[1] - ey)
+                n = _thought_steps(dist, fpx_d)
+                for i in range(n):
+                    k = (i + 1) / (n + 1.0)
+                    r = max(2, int(round(fpx_d * (0.34 - 0.20 * k))))
                     px_ = int(ex + (tip[0] - ex) * k)
                     py_ = int(ey + (tip[1] - ey) * k)
                     draw.ellipse([px_ - r, py_ - r, px_ + r, py_ + r],
                                  fill="#ffffff", outline="#000000", width=2)
             ty = by0 + (bh_ - text_h) // 2
             for l in lines:
-                lw = draw.textlength(l, font=font)
-                draw.text((bx0 + (bw_ - lw) // 2, ty), l, font=font,
+                lw = draw.textlength(l, font=font_d)
+                draw.text((bx0 + (bw_ - lw) // 2, ty), l, font=font_d,
                           fill="#000000")
                 ty += line_h
             taken.append((bx0, by0, bw_, bh_))
