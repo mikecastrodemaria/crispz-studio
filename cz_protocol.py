@@ -47,13 +47,14 @@ from cz_core import CONFIG, APP_VERSION
 
 PROTOCOL = 1
 TOOL = "crispz-studio"
-OPS = ("caps", "gen")
+OPS = ("caps", "gen", "upscale")
 
 # Spec fields known to the protocol (v1). An unknown field is a warning,
 # never an error: a spec written for another family tool must go through.
 SPEC_FIELDS = ("protocol", "op", "prompt", "negative", "width", "height",
                "seed", "steps", "guidance", "refs", "loras", "model", "input",
-               "out_dir", "count", "detail_faces", "detail_hands")
+               "out_dir", "count", "detail_faces", "detail_hands",
+               "factor", "denoise")
 
 _DEF_URL = "http://127.0.0.1:7860"
 
@@ -218,6 +219,29 @@ def validate_spec(spec, op="gen"):
     out["prompt"] = str(spec.get("prompt") or "").strip()
     if op == "gen" and not out["prompt"]:
         raise SpecError("empty 'prompt'")
+    if op == "upscale":
+        inp = str(spec.get("input") or "").strip()
+        if not inp:
+            raise SpecError("upscale requires 'input' (image path)")
+        if not os.path.isfile(inp):
+            raise SpecError(f"input not found on disk: {inp} (paths are "
+                            f"LOCAL - the caller resolves them)")
+        out["input"] = inp
+        try:
+            out["factor"] = float(spec.get("factor") or 2.0)
+        except (TypeError, ValueError):
+            raise SpecError("invalid 'factor'")
+        if not 1.0 <= out["factor"] <= 8.0:
+            raise SpecError(f"'factor' out of range (1-8): {out['factor']}")
+        den = spec.get("denoise")
+        if den is not None:
+            try:
+                den = float(den)
+            except (TypeError, ValueError):
+                raise SpecError("invalid 'denoise'")
+            if not 0.0 <= den <= 1.0:
+                raise SpecError("'denoise' out of range (0-1)")
+        out["denoise"] = den
     out["negative"] = str(spec.get("negative") or "").strip()
     for key, default in (("width", 1024), ("height", 1024)):
         try:
@@ -375,6 +399,73 @@ def run_gen(spec, warnings=None, route="local"):
             "warnings": warnings}
 
 
+def run_upscale(spec, warnings=None, route="local"):
+    """Upscale UNE image (ESRGAN + refine, le pipeline de l'outil) depuis un
+    spec VALIDE. Sortie print de la famille: les cases BD generees a ~1 MP
+    remontent a la resolution d'impression par ici. Le prompt (optionnel)
+    guide la passe de refine - JAMAIS le prompt de scene sur un crop, regle
+    maison: l'appelant envoie une description LOCALE ou rien."""
+    import cz_pipeline
+    import cz_esrgan
+    from PIL import Image
+    from cz_imageio import build_output_path, save_image
+
+    warnings = list(warnings or [])
+    t0 = time.time()
+    models = cz_esrgan.list_esrgan_models()
+    model = None
+    if spec.get("model"):
+        model = spec["model"] if spec["model"] in models else None
+        if model is None:
+            warnings.append(f"ESRGAN model '{spec['model']}' not found - "
+                            f"using {models[0] if models else 'none'}")
+    if model is None:
+        model = models[0] if models else None
+    if model is None:
+        raise RuntimeError(f"no ESRGAN model in {cz_esrgan.ESRGAN_DIR}")
+    denoise = spec.get("denoise")
+    if denoise is None:
+        denoise = float(CONFIG.get("default_denoise", 0.30))
+    steps = spec.get("steps") or int(CONFIG.get("default_refine_steps",
+                                                CONFIG.get("default_steps",
+                                                           12)))
+    with Image.open(spec["input"]) as im:
+        img, timings = cz_pipeline.process_one(
+            im.convert("RGB"), model, spec.get("factor", 2.0), denoise,
+            steps, spec.get("prompt", ""), spec.get("seed", -1),
+            int(CONFIG.get("default_tile", 0)),
+            int(CONFIG.get("default_overlap", 16)))
+    path = build_output_path(None, "local", spec.get("out_dir"), "png",
+                             tag="czp_upscale", seed=spec.get("seed", -1),
+                             size=img.size)
+    save_image(img, path, "png",
+               meta={"mode": "upscale", "source": spec["input"],
+                     "factor": spec.get("factor"), "denoise": denoise,
+                     "model": model, "size": list(img.size)})
+    return {"ok": True, "protocol": PROTOCOL, "tool": TOOL,
+            "version": APP_VERSION, "route": route,
+            "images": [os.path.abspath(path)],
+            "size": list(img.size), "esrgan_model": model,
+            "timings": {"total_s": round(time.time() - t0, 2),
+                        **{k: round(v, 2) for k, v in (timings or {}).items()
+                           if isinstance(v, (int, float))}},
+            "warnings": warnings}
+
+
+def handle_upscale_json(spec_json):
+    """Cote INSTANCE (endpoint api_name='cli_upscale')."""
+    try:
+        spec, warnings = validate_spec(json.loads(spec_json or "{}"),
+                                       op="upscale")
+        return run_upscale(spec, warnings, route="remote")
+    except SpecError as e:
+        return {"ok": False, "protocol": PROTOCOL, "tool": TOOL,
+                "error": str(e), "exit_code": e.code}
+    except Exception as e:
+        return {"ok": False, "protocol": PROTOCOL, "tool": TOOL,
+                "error": f"{type(e).__name__}: {e}", "exit_code": 1}
+
+
 def handle_gen_json(spec_json):
     """INSTANCE side (api_name='cli_gen' endpoint): validate + generate.
     Always returns a dict {ok: ...} - the czp caller has a single error
@@ -489,16 +580,18 @@ def main(argv=None):
 
     # Routing: remote when an instance answers (its queue serializes the
     # GPU), local otherwise. --local / --remote bypass the detection.
+    endpoint = "cli_upscale" if args.op == "upscale" else "cli_gen"
     if not args.local:
         url = args.remote or instance_url()
         inst = probe_instance(url)
         if inst:
-            if spec.get("model"):
+            if args.op == "gen" and spec.get("model"):
+                # (upscale: spec.model = modele ESRGAN, sans danger remote)
                 warnings.append("model override ignored on the remote route "
                                 "(the running instance keeps its model)")
                 spec["model"] = None
             try:
-                raw = _gradio_call(url, "cli_gen", [json.dumps(spec)])
+                raw = _gradio_call(url, endpoint, [json.dumps(spec)])
                 res = json.loads(raw) if isinstance(raw, str) else raw
             except Exception as e:
                 return _emit({"ok": False, "tool": TOOL,
@@ -513,7 +606,8 @@ def main(argv=None):
                           "error": f"no instance at {args.remote}"}, 4)
 
     try:
-        return _emit(run_gen(spec, warnings), 0)
+        runner = run_upscale if args.op == "upscale" else run_gen
+        return _emit(runner(spec, warnings), 0)
     except Exception as e:
         return _emit({"ok": False, "tool": TOOL,
                       "error": f"{type(e).__name__}: {e}"}, 1)
