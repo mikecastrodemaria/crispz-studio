@@ -3479,6 +3479,14 @@ def _api_cli_gen(spec_json):
                       ensure_ascii=False)
 
 
+def _api_cli_upscale(spec_json):
+    """Endpoint api_name='cli_upscale': upscale ESRGAN + refine d'une image
+    (protocole CLI v1, op upscale) - la sortie print de la famille."""
+    import cz_protocol
+    return json.dumps(cz_protocol.handle_upscale_json(spec_json),
+                      ensure_ascii=False)
+
+
 def _api_cli_faces(img_b64):
     """api_name='cli_faces': face-detection service for the family (boxes,
     mouths, embeddings from a base64 PNG/JPEG). Lets torch-free callers
@@ -3588,6 +3596,11 @@ def build_ui():
         clg_out = gr.Textbox(visible=False)
         clg_btn = gr.Button(visible=False)
         clg_btn.click(_api_cli_gen, clg_in, clg_out, api_name="cli_gen")
+        clu_in = gr.Textbox(visible=False)
+        clu_out = gr.Textbox(visible=False)
+        clu_btn = gr.Button(visible=False)
+        clu_btn.click(_api_cli_upscale, clu_in, clu_out,
+                      api_name="cli_upscale")
         clf_in = gr.Textbox(visible=False)
         clf_out = gr.Textbox(visible=False)
         clf_btn = gr.Button(visible=False)
