@@ -3488,6 +3488,14 @@ def _api_cli_upscale(spec_json):
                       ensure_ascii=False)
 
 
+def _api_cli_edit(spec_json):
+    """Endpoint api_name='cli_edit': image + instruction -> image via le
+    pipeline omni/edit (protocole CLI v1, op edit)."""
+    import cz_protocol
+    return json.dumps(cz_protocol.handle_edit_json(spec_json),
+                      ensure_ascii=False)
+
+
 def _api_cli_faces(img_b64):
     """api_name='cli_faces': face-detection service for the family (boxes,
     mouths, embeddings from a base64 PNG/JPEG). Lets torch-free callers
@@ -3602,6 +3610,10 @@ def build_ui():
         clu_btn = gr.Button(visible=False)
         clu_btn.click(_api_cli_upscale, clu_in, clu_out,
                       api_name="cli_upscale")
+        cle_in = gr.Textbox(visible=False)
+        cle_out = gr.Textbox(visible=False)
+        cle_btn = gr.Button(visible=False)
+        cle_btn.click(_api_cli_edit, cle_in, cle_out, api_name="cli_edit")
         clf_in = gr.Textbox(visible=False)
         clf_out = gr.Textbox(visible=False)
         clf_btn = gr.Button(visible=False)

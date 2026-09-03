@@ -47,7 +47,7 @@ from cz_core import CONFIG, APP_VERSION
 
 PROTOCOL = 1
 TOOL = "crispz-studio"
-OPS = ("caps", "gen", "upscale")
+OPS = ("caps", "gen", "upscale", "edit")
 
 # Spec fields known to the protocol (v1). An unknown field is a warning,
 # never an error: a spec written for another family tool must go through.
@@ -154,7 +154,8 @@ def caps_dict():
                          "negative": True, "arbitrary_size": True,
                          "faces": _faces_available(),
                          "detail_faces": _faces_available(),
-                         "detail_hands": _hands_available()},
+                         "detail_hands": _hands_available(),
+                         "edit": _omni_configured()},
             "model_loaded": _model_loaded(),
             "models": _list_model_files("checkpoints"),
             "loras": _list_model_files("loras")}
@@ -219,6 +220,33 @@ def validate_spec(spec, op="gen"):
     out["prompt"] = str(spec.get("prompt") or "").strip()
     if op == "gen" and not out["prompt"]:
         raise SpecError("empty 'prompt'")
+    if op == "edit":
+        # edit = image + INSTRUCTION -> image, via le pipeline omni/edit de
+        # l'outil (Qwen-Image-Edit, Z-Image Omni). Sans ce modele: refus
+        # net (code 3) - jamais une image NEUVE generee en douce a la place.
+        if not out["prompt"]:
+            raise SpecError("edit requires 'prompt' (the edit instruction)")
+        inp = str(spec.get("input") or "").strip()
+        if not inp:
+            raise SpecError("edit requires 'input' (image path)")
+        if not os.path.isfile(inp):
+            raise SpecError(f"input not found on disk: {inp}")
+        if not _omni_configured():
+            raise SpecError(f"edit not supported by {TOOL}: no edit/omni "
+                            f"model configured (zimage_omni_model)", code=3)
+        out["input"] = inp
+        spec = dict(spec)
+        spec["refs"] = [inp]
+        if not spec.get("width") or not spec.get("height"):
+            # taille par defaut = celle de l'image (alignee 32, bornee)
+            try:
+                from PIL import Image
+                with Image.open(inp) as im:
+                    iw, ih = im.size
+                spec.setdefault("width", max(64, min(2048, iw // 32 * 32)))
+                spec.setdefault("height", max(64, min(2048, ih // 32 * 32)))
+            except Exception as e:
+                raise SpecError(f"input unreadable: {e}")
     if op == "upscale":
         inp = str(spec.get("input") or "").strip()
         if not inp:
@@ -466,6 +494,23 @@ def handle_upscale_json(spec_json):
                 "error": f"{type(e).__name__}: {e}", "exit_code": 1}
 
 
+def handle_edit_json(spec_json):
+    """Cote INSTANCE (endpoint api_name='cli_edit'): image + instruction ->
+    image via le pipeline omni/edit (refs = [input])."""
+    try:
+        spec, warnings = validate_spec(json.loads(spec_json or "{}"),
+                                       op="edit")
+        res = run_gen(spec, warnings, route="remote")
+        res["op"] = "edit"
+        return res
+    except SpecError as e:
+        return {"ok": False, "protocol": PROTOCOL, "tool": TOOL,
+                "error": str(e), "exit_code": e.code}
+    except Exception as e:
+        return {"ok": False, "protocol": PROTOCOL, "tool": TOOL,
+                "error": f"{type(e).__name__}: {e}", "exit_code": 1}
+
+
 def handle_gen_json(spec_json):
     """INSTANCE side (api_name='cli_gen' endpoint): validate + generate.
     Always returns a dict {ok: ...} - the czp caller has a single error
@@ -580,7 +625,8 @@ def main(argv=None):
 
     # Routing: remote when an instance answers (its queue serializes the
     # GPU), local otherwise. --local / --remote bypass the detection.
-    endpoint = "cli_upscale" if args.op == "upscale" else "cli_gen"
+    endpoint = {"upscale": "cli_upscale", "edit": "cli_edit"}.get(
+        args.op, "cli_gen")
     if not args.local:
         url = args.remote or instance_url()
         inst = probe_instance(url)
@@ -607,7 +653,10 @@ def main(argv=None):
 
     try:
         runner = run_upscale if args.op == "upscale" else run_gen
-        return _emit(runner(spec, warnings), 0)
+        res = runner(spec, warnings)
+        if args.op == "edit":
+            res["op"] = "edit"
+        return _emit(res, 0)
     except Exception as e:
         return _emit({"ok": False, "tool": TOOL,
                       "error": f"{type(e).__name__}: {e}"}, 1)
