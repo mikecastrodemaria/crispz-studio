@@ -567,10 +567,22 @@ def save_project(project, project_dir):
     jamais un project.json tronque -- c'est le seul endroit ou vit le scenario."""
     os.makedirs(project_dir, exist_ok=True)
     dst = project_json_path(project_dir)
-    tmp = dst + ".tmp"
+    tmp = dst + f".{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(project, f, indent=2, ensure_ascii=False)
-    os.replace(tmp, dst)
+    # Windows refuse os.replace() sur un fichier qu'un AUTRE lecteur tient
+    # ouvert (PermissionError WinError 5): un sondage UI qui relit
+    # project.json pendant qu'un batch le sauve suffit. La fenetre dure des
+    # millisecondes -> on reessaie brievement au lieu d'echouer.
+    import time
+    for attempt in range(40):
+        try:
+            os.replace(tmp, dst)
+            return dst
+        except PermissionError:
+            if attempt == 39:
+                raise
+            time.sleep(0.05)
     return dst
 
 
