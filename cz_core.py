@@ -66,8 +66,15 @@ def _load_config():
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     return json.load(f) or {}
-            except Exception:
-                pass
+            except Exception as e:
+                # Never silent: a broken config.txt used to fall back to the
+                # sample without a word (wrong offload, wrong models, hours
+                # lost). Windows paths are the classic cause.
+                print(f"[crispz] WARNING: {os.path.basename(path)} is not valid "
+                      f"JSON ({e}) -> IGNORED, falling back to the next config. "
+                      f"Hint: in JSON, write Windows paths with forward slashes "
+                      f"(D:/models/x.gguf) or doubled backslashes (D:\\models).",
+                      flush=True)
     return {}
 
 
