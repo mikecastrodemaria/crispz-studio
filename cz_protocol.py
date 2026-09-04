@@ -427,6 +427,24 @@ def run_gen(spec, warnings=None, route="local"):
             "warnings": warnings}
 
 
+def _pick_esrgan(models, factor):
+    """Default ESRGAN model for a factor when the spec names none: the config
+    default if present, else the first model whose name announces the closest
+    scale (4x for factor 4, 2x for 2...), else the first 4x/2x, else the first
+    one - never a 16x by accident."""
+    if not models:
+        return None
+    cfg = str(CONFIG.get("default_esrgan_model") or "").strip()
+    if cfg in models:
+        return cfg
+    want = max(2, min(8, int(round(factor))))
+    for scale in (want, 4, 2, 8):
+        for m in models:
+            if m.lower().startswith(f"{scale}x"):
+                return m
+    return models[0]
+
+
 def run_upscale(spec, warnings=None, route="local"):
     """Upscale UNE image (ESRGAN + refine, le pipeline de l'outil) depuis un
     spec VALIDE. Sortie print de la famille: les cases BD generees a ~1 MP
@@ -440,17 +458,23 @@ def run_upscale(spec, warnings=None, route="local"):
 
     warnings = list(warnings or [])
     t0 = time.time()
-    models = cz_esrgan.list_esrgan_models()
+    factor = float(spec.get("factor", 2.0) or 2.0)
+    # factor <= 1 = pure img2img (variation): NO ESRGAN stage at all. Picking
+    # the first model of the folder for a 1x pass once ran a 16x upscaler on a
+    # 1280x832 panel (10+ min, 32 GB VRAM) just to shrink it back.
+    do_esrgan = factor > 1.0
+    models = cz_esrgan.list_esrgan_models() if do_esrgan else []
     model = None
-    if spec.get("model"):
-        model = spec["model"] if spec["model"] in models else None
+    if do_esrgan:
+        if spec.get("model"):
+            model = spec["model"] if spec["model"] in models else None
+            if model is None:
+                warnings.append(f"ESRGAN model '{spec['model']}' not found - "
+                                f"using {_pick_esrgan(models, factor) or 'none'}")
         if model is None:
-            warnings.append(f"ESRGAN model '{spec['model']}' not found - "
-                            f"using {models[0] if models else 'none'}")
-    if model is None:
-        model = models[0] if models else None
-    if model is None:
-        raise RuntimeError(f"no ESRGAN model in {cz_esrgan.ESRGAN_DIR}")
+            model = _pick_esrgan(models, factor)
+        if model is None:
+            raise RuntimeError(f"no ESRGAN model in {cz_esrgan.ESRGAN_DIR}")
     denoise = spec.get("denoise")
     if denoise is None:
         denoise = float(CONFIG.get("default_denoise", 0.30))
@@ -459,10 +483,10 @@ def run_upscale(spec, warnings=None, route="local"):
                                                            12)))
     with Image.open(spec["input"]) as im:
         img, timings = cz_pipeline.process_one(
-            im.convert("RGB"), model, spec.get("factor", 2.0), denoise,
+            im.convert("RGB"), model, factor, denoise,
             steps, spec.get("prompt", ""), spec.get("seed", -1),
             int(CONFIG.get("default_tile", 0)),
-            int(CONFIG.get("default_overlap", 16)))
+            int(CONFIG.get("default_overlap", 16)), do_esrgan=do_esrgan)
     path = build_output_path(None, "local", spec.get("out_dir"), "png",
                              tag="czp_upscale", seed=spec.get("seed", -1),
                              size=img.size)

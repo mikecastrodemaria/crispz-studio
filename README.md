@@ -158,6 +158,11 @@ SwarmUI. On top of crispz's upscaler it adds:
   instance is running — callers degrade **explicitly**, never silently: unknown
   spec fields, refs, `count>1` all come back as `warnings`, and on the remote
   route `model` overrides are refused (the running instance keeps its model).
+  Ops: `gen`, `upscale` (`input` + `factor`/`denoise`; **`factor` 1 = pure
+  img2img variation, no ESRGAN stage**), `edit` (image + instruction, needs
+  an omni/edit model — `caps.supports.edit`). A broken `config.txt` (invalid
+  JSON, e.g. single backslashes in a Windows path) is now reported loudly at
+  startup instead of silently falling back to the sample.
   Exit codes: 0 ok · 1 run error · 2 bad spec · 3 unsupported op/protocol ·
   4 no route. One image per call — the caller loops. LoRAs hot-swap per call
   (`spec.loras`, or `<lora:file:weight>` tags right inside the prompt —
