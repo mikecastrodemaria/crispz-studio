@@ -49,6 +49,12 @@ PROTOCOL = 1
 TOOL = "crispz-studio"
 OPS = ("caps", "gen", "upscale", "edit", "inpaint")
 
+# What this MODEL FAMILY can do at all (diffusers pipelines that exist for
+# it). Static on purpose: `caps` must answer without importing the pipeline
+# (torch). Krea 2 has no img2img / inpaint pipeline -> variation (upscale
+# with factor 1) and inpaint are refused with exit 3, never faked.
+FAMILY_CAPS = {"img2img": True, "inpaint": True}
+
 # Spec fields known to the protocol (v1). An unknown field is a warning,
 # never an error: a spec written for another family tool must go through.
 SPEC_FIELDS = ("protocol", "op", "prompt", "negative", "width", "height",
@@ -156,7 +162,8 @@ def caps_dict():
                          "detail_faces": _faces_available(),
                          "detail_hands": _hands_available(),
                          "edit": _omni_configured(),
-                         "inpaint": True},
+                         "inpaint": FAMILY_CAPS["inpaint"],
+                         "img2img": FAMILY_CAPS["img2img"]},
             "model_loaded": _model_loaded(),
             "models": _list_model_files("checkpoints"),
             "loras": _list_model_files("loras")}
@@ -250,7 +257,10 @@ def validate_spec(spec, op="gen"):
                 raise SpecError(f"input unreadable: {e}")
     if op == "inpaint":
         # inpaint = image + MASQUE (blanc = a redessiner) + prompt local ->
-        # image. Tous les outils de la famille ont un pipeline inpaint.
+        # image. Refus net (code 3) quand la famille n'a pas de pipeline.
+        if not FAMILY_CAPS["inpaint"]:
+            raise SpecError(f"inpaint not supported by {TOOL}: this model "
+                            f"family has no inpaint pipeline", code=3)
         inp = str(spec.get("input") or "").strip()
         if not inp:
             raise SpecError("inpaint requires 'input' (image path)")
@@ -286,6 +296,10 @@ def validate_spec(spec, op="gen"):
             raise SpecError("invalid 'factor'")
         if not 1.0 <= out["factor"] <= 8.0:
             raise SpecError(f"'factor' out of range (1-8): {out['factor']}")
+        if out["factor"] <= 1.0 and not FAMILY_CAPS["img2img"]:
+            raise SpecError(f"variation (upscale with factor 1 = img2img "
+                            f"refine) not supported by {TOOL}: this model "
+                            f"family has no img2img pipeline", code=3)
         den = spec.get("denoise")
         if den is not None:
             try:
