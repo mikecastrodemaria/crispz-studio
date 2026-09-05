@@ -711,39 +711,114 @@ def parse_dialogue(block):
             continue
         head, text = head.strip(), text.strip()
         low = head.lower()
-        if low == "cap":
-            out.append({"speaker": "", "text": text, "kind": "caption"})
-        elif low == "sfx":
-            out.append({"speaker": "", "text": text, "kind": "sfx"})
+        mh = re.match(r"^(cap|sfx)\s*\(([^)]+)\)$", low)
+        if low in ("cap", "sfx") or mh:
+            d = {"speaker": "", "text": text,
+                 "kind": "caption" if (mh.group(1) if mh else low) == "cap" else "sfx"}
+            if mh:
+                raw_mods = re.match(r"^(.*?)\s*\(([^)]+)\)$", head).group(2)
+                for tok in raw_mods.split(","):
+                    tok = tok.strip()
+                    if tok.lower() in ("hidden", "off", "muet"):
+                        d["hidden"] = True
+                    elif tok.lower().startswith("font="):
+                        d["font"] = tok[5:].strip()
+            out.append(d)
         else:
-            kind, style = "speech", None
+            kind, style, hidden, font = "speech", None, False, None
             m = re.match(r"^(.*?)\s*\(([^)]+)\)$", head)
             if m:
                 known = True
-                k2, s2 = kind, style
+                k2, s2, h2, f2 = kind, style, hidden, font
                 for tok in m.group(2).split(","):
-                    tok = tok.strip().lower()
-                    if tok in ("think", "thought", "pense"):
+                    tok = tok.strip()
+                    tl = tok.lower()
+                    if tl in ("think", "thought", "pense"):
                         k2 = "thought"
-                    elif tok in BUBBLE_STYLES:
-                        s2 = tok
+                    elif tl in BUBBLE_STYLES:
+                        s2 = tl
+                    elif tl in ("hidden", "off", "muet"):
+                        h2 = True                 # kept in the script, not lettered
+                    elif tl.startswith("font="):
+                        f2 = tok[5:].strip() or None
                     else:
                         known = False
                         break
                 if known:
-                    head, kind, style = m.group(1).strip(), k2, s2
+                    head, kind, style, hidden, font = m.group(1).strip(), k2, s2, h2, f2
             d = {"speaker": head, "text": text, "kind": kind}
             if style:
                 d["style"] = style
+            if hidden:
+                d["hidden"] = True
+            if font:
+                d["font"] = font
             out.append(d)
+    return out
+
+
+# Polices proposees dans l'UI (fichier -> libelle). Sondees a la demande: seules
+# celles qui se chargent sont listees. Un dossier fonts/ a cote de ce module
+# (ou du projet) ajoute ses .ttf/.otf - c'est la que vont les polices BD
+# telechargees (Komika, Anime Ace, Blambot...).
+FONT_CANDIDATES = (
+    ("comicbd.ttf", "Comic Sans Bold"), ("comic.ttf", "Comic Sans"),
+    ("segoepr.ttf", "Segoe Print"), ("segoeprb.ttf", "Segoe Print Bold"),
+    ("segoesc.ttf", "Segoe Script"), ("segoescb.ttf", "Segoe Script Bold"),
+    ("impact.ttf", "Impact"), ("arialbd.ttf", "Arial Bold"), ("arial.ttf", "Arial"),
+    ("ariblk.ttf", "Arial Black"), ("georgia.ttf", "Georgia"),
+    ("verdana.ttf", "Verdana"), ("trebucbd.ttf", "Trebuchet Bold"),
+    ("bahnschrift.ttf", "Bahnschrift"), ("calibri.ttf", "Calibri"),
+    ("DejaVuSans.ttf", "DejaVu Sans"), ("DejaVuSans-Bold.ttf", "DejaVu Sans Bold"),
+)
+_FONT_DIRS = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")]
+
+
+def _resolve_font(name):
+    """Nom de police -> chemin si elle vit dans un dossier fonts/, sinon le
+    nom tel quel (PIL cherche dans les polices systeme)."""
+    if not name:
+        return None
+    for d in _FONT_DIRS:
+        p = os.path.join(d, os.path.basename(str(name)))
+        if os.path.isfile(p):
+            return p
+    return str(name)
+
+
+def available_fonts(extra_dirs=()):
+    """[{'file', 'label'}] des polices utilisables ici: candidates systeme qui
+    se chargent + tout .ttf/.otf des dossiers fonts/ (module, puis extra_dirs,
+    p.ex. le dossier du livre)."""
+    from PIL import ImageFont
+    out, seen = [], set()
+    dirs = list(_FONT_DIRS) + [d for d in extra_dirs if d]
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        for f in sorted(os.listdir(d)):
+            if f.lower().endswith((".ttf", ".otf")) and f not in seen:
+                seen.add(f)
+                out.append({"file": f, "label": os.path.splitext(f)[0]})
+    for f, label in FONT_CANDIDATES:
+        if f in seen:
+            continue
+        try:
+            ImageFont.truetype(f, 20)
+        except Exception:
+            continue
+        seen.add(f)
+        out.append({"file": f, "label": label})
     return out
 
 
 def _font(candidates, px):
     from PIL import ImageFont
     for name in candidates:
+        if not name:
+            continue
         try:
-            return ImageFont.truetype(name, px)
+            return ImageFont.truetype(_resolve_font(name), px)
         except Exception:
             continue
     return ImageFont.load_default()
@@ -963,6 +1038,11 @@ def render_lettering(project, page, sheet, face_detector=None,
 
         # locuteur -> visage: reconnaissance par embeddings (portraits de
         # reference du casting) puis fallback sens de lecture
+        # d['hidden']: la replique reste dans le scenario mais n'est pas
+        # lettree (le texte est deja DANS l'image, ou on veut la case muette)
+        dialogue = [d for d in dialogue if not d.get("hidden")]
+        if not dialogue:
+            continue
         speakers = []
         for d in dialogue:
             s = (d.get("speaker") or "").strip().lower()
@@ -971,7 +1051,9 @@ def render_lettering(project, page, sheet, face_detector=None,
         face_of = _match_speakers(speakers, faces, char_embeddings)
 
         fpx = max(16, min(44, h // 22))
-        font = _font(_BUBBLE_FONTS, fpx)
+        book_font = (project.get("style") or {}).get("font") or None
+        bubble_fonts = ([book_font] if book_font else []) + list(_BUBBLE_FONTS)
+        font = _font(bubble_fonts, fpx)
         pad = max(8, fpx // 2)
         taken = []
         side = 0
@@ -979,6 +1061,8 @@ def render_lettering(project, page, sheet, face_detector=None,
         for d in dialogue:
             kind = d.get("kind", "speech")
             text = d.get("text") or ""
+            # police: celle de la replique > celle du livre > defauts
+            d_fonts = ([d["font"]] if d.get("font") else []) + bubble_fonts
             # Homothetie par replique (Comic Studio): d['scale'] multiplie la
             # police -> bulle ET texte grandissent ensemble, memes proportions.
             try:
@@ -987,18 +1071,20 @@ def render_lettering(project, page, sheet, face_detector=None,
                 scale = 1.0
             scale = max(0.4, min(3.0, scale))
             fpx_d = fpx if scale == 1.0 else max(10, int(round(fpx * scale)))
-            font_d = font if scale == 1.0 else _font(_BUBBLE_FONTS, fpx_d)
+            font_d = font if (scale == 1.0 and not d.get("font")) \
+                else _font(d_fonts, fpx_d)
             pad_d = max(8, fpx_d // 2)
+            sfx_fonts = ([d["font"]] if d.get("font") else []) + list(_SFX_FONTS)
             if kind == "sfx":
                 # auto-fit: un cri long ou un TITRE de couverture ne doit pas
                 # deborder la case -> la police retrecit jusqu'a tenir en
                 # largeur (une echelle manuelle desserre/serre ce plafond)
                 size = int(max(fpx * 2, h // 8) * scale)
-                sfx_font = _font(_SFX_FONTS, size)
+                sfx_font = _font(sfx_fonts, size)
                 bb = draw.textbbox((0, 0), text, font=sfx_font, stroke_width=4)
                 while size > 10 and bb[2] - bb[0] > int(w * 0.92 * scale):
                     size = int(size * 0.85)
-                    sfx_font = _font(_SFX_FONTS, size)
+                    sfx_font = _font(sfx_fonts, size)
                     bb = draw.textbbox((0, 0), text, font=sfx_font, stroke_width=4)
                 bw_, bh_ = bb[2] - bb[0], bb[3] - bb[1]
                 (rx, ry, _, _), clean = _pos_rect(d, rect, bw_, bh_, forbidden) \
