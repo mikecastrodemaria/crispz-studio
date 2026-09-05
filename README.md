@@ -131,6 +131,11 @@ SwarmUI. On top of crispz's upscaler it adds:
   `project.json` is saved after every panel, so a crash costs nothing. Config
   `comic.enabled`; the engine (`cz_comic.py`) is pure geometry — no torch, no GPU —
   and fully unit-tested.
+- **Balloon modifiers** in the dialogue syntax: `Name (think): …`, `Name (angular): …`,
+  `Name (hidden): …` keeps the line without lettering it (text already drawn in
+  the image), `Name (font=comicbd.ttf): …` picks a font (`CAP`/`SFX` accept them
+  too); `available_fonts()` lists the system fonts that load plus a `fonts/`
+  folder, and `style['font']` is the book's default balloon font.
 - **🎬 Comic Studio** (`cz_comicstudio` + `assets/comicstudio/`): a full-page
   **visual editor** for comic projects, opened in its own tab from the 🎞 Comic
   accordion (same mechanics as the Asset Browser: a vanilla HTML/JS SPA written
