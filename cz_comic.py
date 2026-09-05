@@ -294,7 +294,7 @@ def new_project(name, description="", page=None, style=None, casting=None):
         "name": name or "Untitled",
         "description": description or "",
         "page": page_size(page or DEFAULT_PAGE),
-        "style": {"prompt_suffix": "", "negative": "", "loras": [],
+        "style": {"prompt_suffix": "", "negative": "", "loras": [], "mood": "",
                   **(style or {})},
         "casting": dict(casting or {}),
         "chapters": [],
@@ -309,11 +309,39 @@ def _next_id(existing, prefix, width=2):
     return f"{prefix}{n:0{width}d}"
 
 
-def add_chapter(project, name, synopsis=""):
+def add_chapter(project, name, synopsis="", mood=""):
+    """`mood` = ambiance visuelle DU CHAPITRE (palette, lumiere, meteo...),
+    qui remplace le mood global du style (style['mood']) pour ses planches.
+    Vide = le mood global s'applique."""
     chapter = {"id": _next_id(project["chapters"], "ch"), "name": name or "Chapter",
-               "synopsis": synopsis or "", "pages": []}
+               "synopsis": synopsis or "", "pages": [], "mood": (mood or "").strip()}
     project["chapters"].append(chapter)
     return chapter
+
+
+def chapter_of_page(project, page):
+    """Le chapitre qui contient cette planche (None si aucune). `page` =
+    le dict de la planche (identite d'objet: les ids de planche p01, p02...
+    se repetent d'un chapitre a l'autre) ou son id quand il est unique."""
+    chapters = project.get("chapters") or []
+    if isinstance(page, dict):
+        for ch in chapters:
+            if any(pg is page for pg in ch.get("pages") or []):
+                return ch
+        page = page.get("id")
+    hits = [ch for ch in chapters
+            if any(pg.get("id") == page for pg in ch.get("pages") or [])]
+    return hits[0] if len(hits) == 1 else None
+
+
+def effective_mood(project, page):
+    """Mood applique a une planche: celui du chapitre s'il est renseigne,
+    sinon le mood global du style (style['mood']), sinon rien."""
+    ch = chapter_of_page(project, page) if page else None
+    mood = (ch or {}).get("mood") or ""
+    if not str(mood).strip():
+        mood = (project.get("style") or {}).get("mood") or ""
+    return str(mood).strip()
 
 
 def new_panel(pid, text=""):
@@ -426,7 +454,10 @@ def resolve_panel(project, page, panel, index=None, target_pixels=1024 * 1024):
 
     res = resolve_casting(panel.get("text", ""), project.get("casting"))
     style = project.get("style") or {}
-    parts = [res["prompt"], (style.get("prompt_suffix") or "").strip()]
+    # ordre: texte de la case (casting resolu), style du livre, mood
+    # (chapitre > global) - le mood est une ambiance, jamais un sujet
+    parts = [res["prompt"], (style.get("prompt_suffix") or "").strip(),
+             effective_mood(project, page)]
     prompt = ", ".join(p for p in parts if p)
     negs = [res["negative"], (style.get("negative") or "").strip()]
 
