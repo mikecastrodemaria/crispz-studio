@@ -3496,6 +3496,14 @@ def _api_cli_edit(spec_json):
                       ensure_ascii=False)
 
 
+def _api_cli_inpaint(spec_json):
+    """Endpoint api_name='cli_inpaint': image + masque + prompt -> image
+    (zone blanche redessinee, protocole CLI v1, op inpaint)."""
+    import cz_protocol
+    return json.dumps(cz_protocol.handle_inpaint_json(spec_json),
+                      ensure_ascii=False)
+
+
 def _api_cli_faces(img_b64):
     """api_name='cli_faces': face-detection service for the family (boxes,
     mouths, embeddings from a base64 PNG/JPEG). Lets torch-free callers
@@ -3614,6 +3622,11 @@ def build_ui():
         cle_out = gr.Textbox(visible=False)
         cle_btn = gr.Button(visible=False)
         cle_btn.click(_api_cli_edit, cle_in, cle_out, api_name="cli_edit")
+        cli_in = gr.Textbox(visible=False)
+        cli_out = gr.Textbox(visible=False)
+        cli_btn = gr.Button(visible=False)
+        cli_btn.click(_api_cli_inpaint, cli_in, cli_out,
+                      api_name="cli_inpaint")
         clf_in = gr.Textbox(visible=False)
         clf_out = gr.Textbox(visible=False)
         clf_btn = gr.Button(visible=False)

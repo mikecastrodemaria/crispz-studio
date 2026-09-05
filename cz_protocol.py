@@ -47,12 +47,12 @@ from cz_core import CONFIG, APP_VERSION
 
 PROTOCOL = 1
 TOOL = "crispz-studio"
-OPS = ("caps", "gen", "upscale", "edit")
+OPS = ("caps", "gen", "upscale", "edit", "inpaint")
 
 # Spec fields known to the protocol (v1). An unknown field is a warning,
 # never an error: a spec written for another family tool must go through.
 SPEC_FIELDS = ("protocol", "op", "prompt", "negative", "width", "height",
-               "seed", "steps", "guidance", "refs", "loras", "model", "input",
+               "seed", "steps", "guidance", "refs", "loras", "model", "input", "mask",
                "out_dir", "count", "detail_faces", "detail_hands",
                "factor", "denoise")
 
@@ -155,7 +155,8 @@ def caps_dict():
                          "faces": _faces_available(),
                          "detail_faces": _faces_available(),
                          "detail_hands": _hands_available(),
-                         "edit": _omni_configured()},
+                         "edit": _omni_configured(),
+                         "inpaint": True},
             "model_loaded": _model_loaded(),
             "models": _list_model_files("checkpoints"),
             "loras": _list_model_files("loras")}
@@ -247,6 +248,30 @@ def validate_spec(spec, op="gen"):
                 spec.setdefault("height", max(64, min(2048, ih // 32 * 32)))
             except Exception as e:
                 raise SpecError(f"input unreadable: {e}")
+    if op == "inpaint":
+        # inpaint = image + MASQUE (blanc = a redessiner) + prompt local ->
+        # image. Tous les outils de la famille ont un pipeline inpaint.
+        inp = str(spec.get("input") or "").strip()
+        if not inp:
+            raise SpecError("inpaint requires 'input' (image path)")
+        if not os.path.isfile(inp):
+            raise SpecError(f"input not found on disk: {inp}")
+        msk = str(spec.get("mask") or "").strip()
+        if not msk:
+            raise SpecError("inpaint requires 'mask' (PNG path, white = "
+                            "area to redraw)")
+        if not os.path.isfile(msk):
+            raise SpecError(f"mask not found on disk: {msk}")
+        out["input"], out["mask"] = inp, msk
+        den = spec.get("denoise")
+        if den is not None:
+            try:
+                den = float(den)
+            except (TypeError, ValueError):
+                raise SpecError("invalid 'denoise'")
+            if not 0.0 <= den <= 1.0:
+                raise SpecError("'denoise' out of range (0-1)")
+        out["denoise"] = den
     if op == "upscale":
         inp = str(spec.get("input") or "").strip()
         if not inp:
@@ -535,6 +560,71 @@ def handle_edit_json(spec_json):
                 "error": f"{type(e).__name__}: {e}", "exit_code": 1}
 
 
+def run_inpaint(spec, warnings=None, route="local"):
+    """Inpaint UNE image depuis un spec VALIDE: la zone BLANCHE du masque est
+    redessinee selon le prompt (pipeline inpaint de l'outil, meme code que
+    l'onglet Inpaint). Le prompt decrit ce qui doit apparaitre DANS la zone
+    (description locale - regle maison: jamais le prompt de scene sur un
+    fragment). Hors masque: pixels d'origine, jointure fondue."""
+    import random
+    import cz_pipeline
+    from PIL import Image
+    from cz_imageio import build_output_path, save_image
+
+    warnings = list(warnings or [])
+    t0 = time.time()
+    denoise = spec.get("denoise")
+    if denoise is None:
+        denoise = float(CONFIG.get("default_inpaint_strength", 0.9))
+    steps = spec.get("steps") or int(CONFIG.get("default_refine_steps",
+                                                CONFIG.get("default_steps",
+                                                           12)))
+    seed_used = int(spec.get("seed", -1))
+    if seed_used < 0:
+        seed_used = random.randint(0, 2**31 - 1)
+    cz_pipeline._LAST_SEED = seed_used
+    with Image.open(spec["input"]) as im, Image.open(spec["mask"]) as mk:
+        bg = im.convert("RGB")
+        mask = mk.convert("L")
+        if mask.size != bg.size:
+            warnings.append(f"mask {mask.size[0]}x{mask.size[1]} resized to "
+                            f"the image {bg.size[0]}x{bg.size[1]}")
+            mask = mask.resize(bg.size, Image.NEAREST)
+        if mask.getbbox() is None:
+            raise SpecError("mask is empty (nothing painted white): nothing "
+                            "to inpaint")
+        img = cz_pipeline.inpaint_run(bg, mask, spec.get("prompt", ""),
+                                      int(steps), float(denoise), seed_used)
+    path = build_output_path(None, "local", spec.get("out_dir"), "png",
+                             tag="czp_inpaint", seed=seed_used, size=img.size)
+    save_image(img, path, "png",
+               meta={"mode": "inpaint", "source": spec["input"],
+                     "mask": spec["mask"], "prompt": spec.get("prompt", ""),
+                     "denoise": denoise, "steps": int(steps),
+                     "seed": seed_used, "size": list(img.size)})
+    return {"ok": True, "protocol": PROTOCOL, "tool": TOOL,
+            "version": APP_VERSION, "route": route, "op": "inpaint",
+            "images": [os.path.abspath(path)], "seed_used": seed_used,
+            "size": list(img.size), "denoise": denoise, "steps": int(steps),
+            "timings": {"total_s": round(time.time() - t0, 2)},
+            "warnings": warnings}
+
+
+def handle_inpaint_json(spec_json):
+    """Cote INSTANCE (endpoint api_name='cli_inpaint'): image + masque +
+    prompt -> image (zone blanche redessinee)."""
+    try:
+        spec, warnings = validate_spec(json.loads(spec_json or "{}"),
+                                       op="inpaint")
+        return run_inpaint(spec, warnings, route="remote")
+    except SpecError as e:
+        return {"ok": False, "protocol": PROTOCOL, "tool": TOOL,
+                "error": str(e), "exit_code": e.code}
+    except Exception as e:
+        return {"ok": False, "protocol": PROTOCOL, "tool": TOOL,
+                "error": f"{type(e).__name__}: {e}", "exit_code": 1}
+
+
 def handle_gen_json(spec_json):
     """INSTANCE side (api_name='cli_gen' endpoint): validate + generate.
     Always returns a dict {ok: ...} - the czp caller has a single error
@@ -612,7 +702,7 @@ def _read_spec(path):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="czp", description="crispz family CLI protocol v1 (JSON in/out)")
-    parser.add_argument("op", choices=["caps", "gen", "edit", "upscale"])
+    parser.add_argument("op", choices=list(OPS))
     parser.add_argument("--spec", metavar="FILE",
                         help="spec JSON ('-' = stdin); required for gen")
     parser.add_argument("--local", action="store_true",
@@ -649,7 +739,8 @@ def main(argv=None):
 
     # Routing: remote when an instance answers (its queue serializes the
     # GPU), local otherwise. --local / --remote bypass the detection.
-    endpoint = {"upscale": "cli_upscale", "edit": "cli_edit"}.get(
+    endpoint = {"upscale": "cli_upscale", "edit": "cli_edit",
+                "inpaint": "cli_inpaint"}.get(
         args.op, "cli_gen")
     if not args.local:
         url = args.remote or instance_url()
@@ -676,7 +767,8 @@ def main(argv=None):
                           "error": f"no instance at {args.remote}"}, 4)
 
     try:
-        runner = run_upscale if args.op == "upscale" else run_gen
+        runner = {"upscale": run_upscale,
+                  "inpaint": run_inpaint}.get(args.op, run_gen)
         res = runner(spec, warnings)
         if args.op == "edit":
             res["op"] = "edit"
