@@ -4289,7 +4289,7 @@ def build_ui():
                                 refresh_btn = gr.Button("Refresh ESRGAN", size="sm")
                                 save_paths_btn = gr.Button("Save paths", size="sm")
                             paths_status = gr.Markdown("")
-                            with gr.Row():
+                            with gr.Column():
                                 _ckpt_names = ZIMAGE_BASE_REPOS + list_checkpoints()
                                 _ckpt_value = (cz_pipeline.BASE_REPO if cz_pipeline.BASE_REPO
                                                in _ckpt_names else ZIMAGE_BASE_REPOS[0])
@@ -4297,22 +4297,24 @@ def build_ui():
                                                       value=_ckpt_value, label="Z-Image checkpoint", scale=3,
                                                       info="[format · size] — GGUF stays quantized in VRAM; "
                                                            "FP8/INT8 are dequantized once, then cached")
-                                ckpt_open_btn = gr.Button("\U0001F5BC️", size="sm", scale=0, min_width=44,
-                                                          elem_id="cz_ckpt_open")
-                                ckpt_refresh_btn = gr.Button("Refresh", size="sm", scale=1)
+                                with gr.Row():      # boutons SOUS le dropdown (pleine largeur au-dessus)
+                                    ckpt_open_btn = gr.Button("\U0001F5BC️ Browse", size="sm", scale=1,
+                                                              elem_id="cz_ckpt_open")
+                                    ckpt_refresh_btn = gr.Button("Refresh", size="sm", scale=1)
                             civitai_reco_btn = gr.Button(
                                 "📊 Apply CivitAI recommended settings", size="sm",
                                 variant="secondary")
                             ckpt_status = gr.Markdown("")
-                            with gr.Row():
+                            with gr.Column():
                                 transformer_tb = gr.Textbox(
                                     value="", scale=3,
                                     label="Transformer override (HF repo / diffusers folder)",
                                     placeholder="e.g. RunDiffusion/Juggernaut-Z-Image",
                                     info="For community models with an incomplete tokenizer (Juggernaut-Z): "
                                          "loads only the transformer, keeps base VAE/encoder. Set base = Turbo.")
-                                transformer_apply_btn = gr.Button("Apply override", size="sm", scale=1,
-                                                                  variant="secondary")
+                                with gr.Row():
+                                    transformer_apply_btn = gr.Button("Apply override", size="sm",
+                                                                      variant="secondary")
 
                         with gr.Accordion("\U0001F9E9 LoRA (combinable)", open=False):
                             lora_dir_tb = gr.Textbox(value=cz_pipeline.LORAS_DIR, label="LoRA folder")
