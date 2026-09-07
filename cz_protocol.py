@@ -140,10 +140,28 @@ def _model_loaded():
 
 
 def _hands_available():
-    """Le detailer de mains (YOLOv8) demande le paquet optionnel
-    'ultralytics'. Check leger, rien d'importe."""
+    """Le detailer de mains peut-il tourner ? Check leger, rien n'est importe.
+
+    A L'EXECUTION il ne demande qu'onnxruntime + le .onnx exporte une fois dans
+    cache/. 'ultralytics' ne sert qu'a CET export, dans un sous-process -- sa
+    docstring dans cz_detailer explique pourquoi il ne doit surtout pas vivre dans
+    le process de diffusion (il corrompt les poids partages pendant les transferts
+    d'offload). Exiger ultralytics ici declarait donc la feature absente chez
+    quiconque avait suivi ce conseil et exporte le .onnx depuis un venv jetable:
+    le detecteur etait pret, et l'app repondait 'detail_hands: false'."""
     import importlib.util
-    return importlib.util.find_spec("ultralytics") is not None
+    import os
+    if importlib.util.find_spec("onnxruntime") is None:
+        return False
+    if importlib.util.find_spec("ultralytics") is not None:
+        return True                     # l'export peut se faire a la demande
+    try:
+        import cz_detailer
+        from cz_core import HERE
+        stem = os.path.splitext(os.path.basename(cz_detailer._HAND_MODEL))[0]
+        return os.path.isfile(os.path.join(HERE, "cache", stem + ".onnx"))
+    except Exception:
+        return False
 
 
 def caps_dict():

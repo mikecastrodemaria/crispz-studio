@@ -85,7 +85,7 @@
     "dequant_cache": "auto",
     "_dequant_cache_max_gb_help": "Size cap of that cache in GB; least-recently-used entries are evicted past it. 0 = unlimited.",
     "dequant_cache_max_gb": 60,
-    "_hand_detailer_help": "Tick '🖐 Detail hands' by default: after each render, detected hands are re-refined at high resolution like faces are. Needs the optional 'ultralytics' package (requirements-extra.txt); without it the feature logs a message and does nothing.",
+    "_hand_detailer_help": "Tick '🖐 Detail hands' by default: after each render, detected hands are re-refined at high resolution like faces are. At run time it needs only onnxruntime plus the detector exported once to cache/*.onnx; 'ultralytics' is required solely for that export, which runs in a subprocess (it must never live in the diffusion process - see cz_detailer._ensure_hand_onnx). If you would rather not install ultralytics here, export the .onnx from a throwaway venv and drop it in cache/: the app picks it up.",
     "hand_detailer": false,
     "_hand_detailer_denoise_help": "Strength of the per-hand refine pass (0.1-0.7). Hands usually want more than faces (0.4-0.5) to fix fingers; too high invents a different hand.",
     "hand_detailer_denoise": 0.4,
