@@ -3,6 +3,25 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — the Models tab was empty on any install that keeps models elsewhere
+
+The Asset Browser catalogue walked only the **main** checkpoints folder and
+matched only `.safetensors`. An install whose models live in the *extra* folder —
+another disk, a library shared between forks — has an empty main folder, so the
+Models tab showed **0 entries** against a real library. GGUF files were never
+listed either, whatever the folder.
+
+It now walks the same folders as the rest of the app (`_checkpoint_dirs()`, and
+`_lora_dirs()` where that exists), main first, same file name = main wins, with
+the same extensions — GGUF included for models, excluded for LoRAs.
+
+Verified against the real libraries on this machine: crispz-krea **0 → 11
+models** (its whole library sits in the extra folder, the exact broken case),
+crispz-studio 39, crispz-qwen-edit 10, crispz-krea2 16.
+
+Found on crispz-klein (0 → 22). Regression test:
+`tests/test_asset_browser_dirs.py`.
+
 ## Unreleased — the hand detailer was declared missing while it was ready to run
 
 `_hands_available()` tested for the `ultralytics` package. But at run time the

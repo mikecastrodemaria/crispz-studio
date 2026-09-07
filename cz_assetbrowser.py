@@ -531,25 +531,55 @@ def _find_preview(safepath):
     return None
 
 
-def _scan_catalog(model_dir, out_dir, kind):
-    """Scanne un dossier de modeles (.safetensors): nom, taille, preview eventuelle,
-    trigger words (LoRA). Genere les miniatures des previews en tache de fond.
-    Renvoie la liste d'entrees pour <kind>.json."""
-    if not model_dir or not os.path.isdir(model_dir):
+# Onglets LoRAs / Models: MEMES dossiers et MEMES extensions que le reste de l'app.
+# Historiquement l'Asset Browser ne scannait que le dossier PRINCIPAL et ne
+# reconnaissait que .safetensors -- donc une bibliotheque rangee dans le dossier
+# "extra" (le cas des installs qui gardent les modeles sur un autre disque)
+# affichait un onglet Models VIDE, et les GGUF n'apparaissaient jamais.
+_CATALOG_EXTS = {"models": (".safetensors", ".gguf", ".ckpt", ".pt", ".sft"),
+                 "loras": (".safetensors", ".ckpt", ".pt")}
+
+
+def _catalog_dirs(dirs):
+    """Normalise en liste de dossiers existants, sans doublon, ordre conserve
+    (le principal d'abord: a nom egal, c'est lui qui gagne)."""
+    if not dirs:
         return []
+    if isinstance(dirs, str):
+        dirs = [dirs]
+    out = []
+    for d in dirs:
+        d = (d or "").strip()
+        if d and os.path.isdir(d) and d not in out:
+            out.append(d)
+    return out
+
+
+def _scan_catalog(model_dirs, out_dir, kind):
+    """Scanne le(s) dossier(s) de modeles: nom, taille, preview eventuelle, trigger
+    words (LoRA). Genere les miniatures des previews en tache de fond. Renvoie la
+    liste d'entrees pour <kind>.json. `model_dirs` accepte un dossier ou une liste."""
+    model_dirs = _catalog_dirs(model_dirs)
+    if not model_dirs:
+        return []
+    exts = _CATALOG_EXTS.get(kind, _CATALOG_EXTS["loras"])
     try:
         from cz_pipeline import lora_keywords
     except Exception:
         def lora_keywords(_p):
             return ""
-    entries, jobs = [], []
-    for root, dirs, files in os.walk(model_dir):
+    entries, jobs, seen = [], [], set()
+    for model_dir in model_dirs:
+      for root, dirs, files in os.walk(model_dir):
         dirs[:] = [x for x in dirs if x not in ("_index", ".cache", "recipes")]
         for f in files:
-            if not f.lower().endswith(".safetensors"):
+            if not f.lower().endswith(exts):
                 continue
             fp = os.path.join(root, f)
             rel = os.path.relpath(fp, model_dir).replace("\\", "/")
+            if rel.lower() in seen:      # meme nom: le dossier principal gagne
+                continue
+            seen.add(rel.lower())
             sub = os.path.dirname(rel)
             try:
                 size_mb = os.path.getsize(fp) / 1e6
@@ -602,19 +632,23 @@ def _thumb_jobs_for(kind, output_dir, loras_dir=None, checkpoints_dir=None, size
         for rel, p in _ab_scan(d):
             jobs.append((p, _thumb_paths(d, os.path.splitext(rel)[0] + ".jpg")[0]))
         return jobs
-    mdir = loras_dir if kind == "loras" else checkpoints_dir
-    if not mdir or not os.path.isdir(mdir):
-        return jobs
-    for root, dirs, files in os.walk(mdir):
+    mdirs = _catalog_dirs(loras_dir if kind == "loras" else checkpoints_dir)
+    exts = _CATALOG_EXTS.get(kind, _CATALOG_EXTS["loras"])
+    seen = set()
+    for mdir in mdirs:
+      for root, dirs, files in os.walk(mdir):
         dirs[:] = [x for x in dirs if x not in ("_index", ".cache", "recipes")]
         for f in files:
-            if not f.lower().endswith(".safetensors"):
+            if not f.lower().endswith(exts):
                 continue
             fp = os.path.join(root, f)
             prev = _find_preview(fp)      # pas de preview -> rien a miniaturiser
             if not prev:
                 continue
             rel = os.path.relpath(fp, mdir).replace("\\", "/")
+            if rel.lower() in seen:
+                continue
+            seen.add(rel.lower())
             jobs.append((prev, _thumb_paths(d, kind + "/" + os.path.splitext(rel)[0] + ".jpg")[0]))
     return jobs
 

@@ -1359,7 +1359,7 @@ def _ui_gallery_open(output_dir):
     # Catalogue LoRAs / Models (onglets de l'Asset Browser) construit en tache de fond.
     try:
         threading.Thread(target=ab_build_catalog,
-                         args=(output_dir, cz_pipeline.LORAS_DIR, cz_pipeline.CHECKPOINTS_DIR),
+                         args=(output_dir, cz_pipeline.LORAS_DIR, cz_pipeline._checkpoint_dirs()),
                          daemon=True).start()
     except Exception as e:
         _dbg(f"catalog build spawn failed: {e}")
@@ -1383,7 +1383,7 @@ def _asset_focus_url(kind, name):
     # Catalogue construit SYNCHRONE ici (rapide: pas de hashing) pour que la cible soit
     # presente dans loras.json/models.json au moment ou la SPA se focalise dessus.
     try:
-        ab_build_catalog(out_dir, cz_pipeline.LORAS_DIR, cz_pipeline.CHECKPOINTS_DIR)
+        ab_build_catalog(out_dir, cz_pipeline.LORAS_DIR, cz_pipeline._checkpoint_dirs())
     except Exception as e:
         _dbg(f"catalog build (focus) failed: {e}")
     focus = ""
@@ -1458,7 +1458,7 @@ def _api_civitai_fetch(rel, kind):
                 res = cz_civitai.fetch_civitai_for_model(path, progress=_progress)
                 try:
                     ab_build_catalog(DEFAULT_OUTPUT_DIR, cz_pipeline.LORAS_DIR,
-                                     cz_pipeline.CHECKPOINTS_DIR)
+                                     cz_pipeline._checkpoint_dirs())
                 except Exception as e:
                     _dbg(f"catalog rebuild after civitai fetch failed: {e}")
                 _bg_job_set(key, phase="done", frac=1.0, done=True,
@@ -1494,7 +1494,7 @@ def _api_thumbs_rebuild(kind):
                 _allow_runtime_path(DEFAULT_OUTPUT_DIR)
                 res = rebuild_thumbs(kind, DEFAULT_OUTPUT_DIR,
                                      loras_dir=cz_pipeline.LORAS_DIR,
-                                     checkpoints_dir=cz_pipeline.CHECKPOINTS_DIR,
+                                     checkpoints_dir=cz_pipeline._checkpoint_dirs(),
                                      force=True, progress=_progress)
                 _bg_job_set(key, phase="done", done=True, ok=True, summary=res,
                             text=(f"{res['made']} rebuilt, {res['failed']} failed "
@@ -1543,7 +1543,7 @@ def _api_civitai_fetch_all(kind):
                     checkpoints_dir=cz_pipeline.CHECKPOINTS_DIR)
                 try:
                     ab_build_catalog(DEFAULT_OUTPUT_DIR, cz_pipeline.LORAS_DIR,
-                                     cz_pipeline.CHECKPOINTS_DIR)
+                                     cz_pipeline._checkpoint_dirs())
                 except Exception as e:
                     _dbg(f"catalog rebuild after batch failed: {e}")
                 _bg_job_set(
