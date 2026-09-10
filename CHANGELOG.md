@@ -3,6 +3,52 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — swap the text encoder
+
+Models > Checkpoints gets a **Text encoder** picker. Default is the base repo's own
+Qwen3-4B, as before. Otherwise a transformers folder (config.json + safetensors) or a
+Hugging Face repo id (`owner/repo`, or `owner/repo/subfolder` when the weights sit in a
+sub-folder), for instance an abliterated Qwen3-4B. Only the encoder changes: tokenizer,
+VAE and transformer still come from the base repo.
+
+A candidate is checked against the base repo's own encoder config **before** anything
+loads: same model type, same hidden size, same layer count. Z-Image feeds the
+second-to-last hidden state of the encoder to a transformer that expects it 2560 wide
+(`cap_feat_dim`): a wider encoder cannot feed it, and a deeper one would hand over
+another layer. The refusal names both numbers. GGUF and single files are refused with
+the reason: there is no config.json, give the folder.
+
+The encoder loads with the class named in the base repo's `model_index.json`
+(`Qwen3Model`), not the `Qwen3ForCausalLM` of `text_encoder/config.json`: diffusers
+loads that class, and the pipeline expects it. It goes in through
+`ZImagePipeline.from_pretrained(..., text_encoder=...)`. img2img and inpaint are derived
+with `from_pipe` and share the same encoder object (checked by a test).
+
+Changing the encoder frees the pipeline, since the encoder loads with it. An encoder that
+turns out not to fit at load time (the base repo changed since it was picked, the folder
+went away, the load failed) is set aside with a log line, and the base encoder runs: a
+generation never fails over it. The image says which. In the metadata, `text_encoder`
+names the encoder that actually ran, by folder name and never by path, and
+`text_encoder_not_applied` names one that was asked for and skipped. The A1111
+`parameters` line gains `Text encoder:`. The queue snapshot keeps the encoder, so a
+replayed job runs with its own; a snapshot from before this change leaves it alone.
+
+**Omni is untouched.** `ZImageOmniPipeline` loads a separate model with its own encoder,
+and the picker does not reach it. Omni images carry no `text_encoder` key.
+
+Choosing **Default** saves an empty `text_encoder` in the preferences, and that empty
+value wins over a `text_encoder` set in config.txt at the next start (an empty string used
+to count as absent); the environment variable still wins over both.
+
+Config: `text_encoder`, `text_encoders_dir` (the list scans its sub-folders; default
+`text_encoders`, `text_encoder` or `clip` next to the checkpoints folders, main and
+extra, or their parent). Env `ZIMAGE_TEXT_ENCODER`, `TEXT_ENCODERS_DIR`.
+
+Ported from crispz-klein. Checked on GPU: the stock encoder, loaded through this path from its own folder,
+renders the same image bit for bit (0/255 at 1024 x 1024, 8 steps, same seed), and a
+Qwen3-8B encoder (4096 wide) is refused with the reason. Regression tests: `tests/test_text_encoder.py`;
+`tests/test_queue.py` now expects the `text_encoder` key in the snapshot.
+
 ## Unreleased — the Models tab was empty on any install that keeps models elsewhere
 
 The Asset Browser catalogue walked only the **main** checkpoints folder and

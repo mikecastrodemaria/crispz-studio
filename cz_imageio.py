@@ -128,6 +128,9 @@ def _a1111_parameters(meta):
             parts.append(f"Size: {size}")
     if meta.get("model"):
         parts.append(f"Model: {os.path.basename(str(meta['model']))}")
+    # Encodeur texte de remplacement: meme prompt, meme seed, autre encodeur = autre image.
+    if meta.get("text_encoder"):
+        parts.append(f"Text encoder: {meta['text_encoder']}")
     if parts:
         out.append(", ".join(parts))
     return "\n".join(out)
