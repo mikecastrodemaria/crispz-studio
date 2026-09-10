@@ -424,6 +424,52 @@ def test_default_picked_in_the_ui_survives_a_restart():
     print("OK test_default_picked_in_the_ui_survives_a_restart")
 
 
+def test_compatible_encoders_in_the_hf_cache_are_listed():
+    """Un encodeur telecharge depuis HF vit dans le cache HF: la liste doit le montrer.
+    Pas un pipeline diffusers, pas une config sans poids; une autre taille est nommee a cote."""
+    import json as _json
+    import os as _os
+    import tempfile as _tempfile
+    ref = {"model_type": "fam", "hidden_size": 64, "num_hidden_layers": 2}
+    wide = {"model_type": "fam", "hidden_size": 128, "num_hidden_layers": 2}
+    root = _tempfile.mkdtemp(prefix="hfcache_")
+
+    def snap(repo, sub=None, cfg=ref, weights=True, pipeline=False):
+        d = _os.path.join(root, "models--" + repo.replace("/", "--"), "snapshots", "r1")
+        p = _os.path.join(d, sub) if sub else d
+        _os.makedirs(p, exist_ok=True)
+        with open(_os.path.join(p, "config.json"), "w", encoding="utf-8") as f:
+            _json.dump(cfg, f)
+        if weights:
+            open(_os.path.join(p, "model.safetensors"), "wb").close()
+        if pipeline:
+            with open(_os.path.join(d, "model_index.json"), "w", encoding="utf-8") as f:
+                f.write("{}")
+
+    snap("a/fits")
+    snap("b/fits-in-sub", sub="enc")
+    snap("c/wider", cfg=wide)
+    snap("d/pipeline", sub="text_encoder", pipeline=True)
+    snap("e/config-only", weights=False)
+    snap("f/no-shape", cfg={"_class_name": "AutoencoderKL"})
+    old = (P._hf_cache_dir, P._base_text_encoder_config)
+    try:
+        P._hf_cache_dir = lambda: root
+        P._base_text_encoder_config = lambda base=None: ref
+        got = [v for _l, v in P.list_cached_text_encoders()]
+        other, width = P.cached_text_encoder_mismatches()
+        import cz_ui as U
+        hint = U._te_hint()
+        choices = [v for _l, v in U._te_choices()]
+    finally:
+        P._hf_cache_dir, P._base_text_encoder_config = old
+    assert got == ["a/fits", "b/fits-in-sub/enc"], got
+    assert all(v in choices for v in got), choices
+    assert [h for h, _w in other] == ["c/wider"] and width == 64, (other, width)
+    assert "128" in hint and "64" in hint and "c/wider" in hint, hint
+    print("OK test_compatible_encoders_in_the_hf_cache_are_listed")
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

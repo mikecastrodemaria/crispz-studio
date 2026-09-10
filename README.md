@@ -647,6 +647,56 @@ Juggernaut-Z is a **Z-Image Base** fine-tune → set **Performance = "Base CFG"*
 "loras_dir": "C:\\path\\to\\models\\Lora"
 ```
 
+### Text encoder (swap)
+
+**Models → Checkpoints → Text encoder** replaces the base repo's own text encoder, for
+instance with an *abliterated* model of the same shape. Only the encoder changes: the
+tokenizer, the VAE and the transformer stay the base repo's.
+
+**Which encoder fits.** It must have the shape of the base repo's own encoder:
+
+| Base (and its checkpoints) | Encoder it takes |
+|---|---|
+| Z-Image Turbo / Z-Image | a Qwen3-4B: `qwen3`, hidden size 2560, 36 layers |
+
+Z-Image ships the public `Qwen/Qwen3-4B`, bit for bit the encoder of FLUX.2-klein-4B, so the
+Qwen3-4B abliterations made for Klein fit Z-Image too (e.g.
+`huihui-ai/Huihui-Qwen3-4B-abliterated-v2`). The **Omni** pipeline loads its own model and
+keeps its own encoder. Env `ZIMAGE_TEXT_ENCODER`.
+
+Anything else is refused **before it loads**, with the reason. GGUF files (made for
+ComfyUI / llama.cpp) and single `.safetensors` files are refused too: the app needs the
+transformers **folder** (`config.json` + weights).
+
+**Downloading one.** An encoder from Hugging Face goes into the HF cache
+(`%USERPROFILE%\.cache\huggingface\hub`), where the picker finds it. From the app folder,
+with its venv (`import cz_core` makes the download use the app's own Hugging Face token):
+
+```bat
+.venv\Scripts\python -c "import cz_core; from huggingface_hub import snapshot_download; print(snapshot_download('owner/repo'))"
+```
+
+When the encoder sits in a **sub-folder** of its repo (next to GGUF files you do not
+need), fetch that folder only by adding `allow_patterns=['the-folder/*']`.
+
+A **gated** repo answers `403 … not in the authorized list` until you accept its terms on
+its Hugging Face page, **with the account of the token the app uses** (`hf_token` in
+`config.txt` / `preferences.json`, or `HF_TOKEN`): accepting with another account changes
+nothing. A local folder works too: put it under `text_encoders\<name>\` next to your
+checkpoints folder or its parent, or point `text_encoders_dir` at your own folder.
+
+**Picking it.** The list offers *Default*, the folders found, and the encoders of the HF
+cache that fit, marked *(HF cache)*. Pick one, or paste a folder path or a Hugging Face id
+(`owner/repo`, or `owner/repo/subfolder`) and press Enter. The status line confirms, and
+the model reloads on the next run. Encoders of the cache that do **not** fit the current base are named under the
+list with the reason, and the list follows a model change. **Refresh encoders** rescans after a download.
+
+**What is recorded.** An image made with a replacement encoder carries its name in the
+metadata (folder name or Hugging Face id, never a local path) and in the A1111
+parameters; an encoder asked for but set aside at load time is recorded as not applied.
+The queue keeps each job's encoder, and *Default* survives a restart. Config:
+`text_encoders_dir` and the encoder key(s) above.
+
 ### LoRA (up to 3, combinable)
 
 **Models → LoRA**: set the folder → **Refresh** → pick **up to 3 LoRAs**, each with

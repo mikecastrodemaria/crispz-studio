@@ -710,6 +710,10 @@ def _te_choices():
     ch = [("Default (base repo's own)", "")]
     for p in cz_pipeline.list_text_encoders():
         ch.append((cz_pipeline._encoder_label(p), p))
+    # ... et ceux du cache Hugging Face qui conviennent au repo de base (id HF en valeur).
+    for label, hid in cz_pipeline.list_cached_text_encoders():
+        if hid not in [v for _lab, v in ch]:
+            ch.append((f"{label} (HF cache)", hid))
     cur = cz_pipeline.TEXT_ENCODER
     if cur and cur not in [v for _lab, v in ch]:
         ch.append((cz_pipeline._encoder_label(cur), cur))
@@ -736,8 +740,25 @@ def _ui_set_text_encoder(src):
             f"transformer stay the base repo's; Omni keeps its own encoder." + reload)
 
 
+def _te_hint():
+    """Pourquoi un encodeur telecharge n'apparait pas: il est d'une autre taille que celui du
+    repo de base courant. Sans cette ligne, la liste se reduisait a "Default" sans un mot
+    (releve sur klein le 2026-09-10)."""
+    try:
+        other, width = cz_pipeline.cached_text_encoder_mismatches()
+    except Exception:
+        return ""
+    if not other:
+        return ""
+    names = ", ".join(f"`{h}`" for h, _w in other[:3]) + (", ..." if len(other) > 3 else "")
+    sizes = sorted({w for _h, w in other if w})
+    return (f"ℹ️ {len(other)} text encoder(s) in the HF cache are hidden here: "
+            f"{'/'.join(str(s) for s in sizes)} wide, and **{cz_pipeline.BASE_REPO}** needs "
+            f"{width}. {names}. Pick a base of their size to use them.")
+
+
 def _ui_refresh_text_encoders():
-    return gr.update(choices=_te_choices())
+    return gr.update(choices=_te_choices()), _te_hint()
 
 
 def _wild_sanitize(name):
@@ -4380,7 +4401,7 @@ def build_ui():
                                          "model. Omni keeps its own encoder.")
                                 with gr.Row():
                                     te_refresh_btn = gr.Button("Refresh encoders", size="sm", scale=1)
-                                te_status = gr.Markdown("")
+                                te_status = gr.Markdown(_te_hint())
 
                         with gr.Accordion("\U0001F9E9 LoRA (combinable)", open=False):
                             lora_dir_tb = gr.Textbox(value=cz_pipeline.LORAS_DIR, label="LoRA folder")
@@ -4631,7 +4652,8 @@ def build_ui():
                               [wild_dd, wild_status, wild_new_name])
         ckpt_refresh_btn.click(_refresh_checkpoints, [ckpt_dir_tb, ckpt_extra_dir_tb],
                                [ckpt_dd, ckpt_status, preset_dd])
-        ckpt_dd.change(_apply_checkpoint, [ckpt_dd], [ckpt_status, gen_steps, guidance, performance])
+        ckpt_dd.change(_apply_checkpoint, [ckpt_dd], [ckpt_status, gen_steps, guidance, performance]) \
+            .then(_ui_refresh_text_encoders, None, [te_dd, te_status])
         # Reglages communautaires CivitAI -> steps/CFG/sampler/schedule (les updates
         # programmatiques ne declenchent pas .change, d'ou les .then explicites).
         civitai_reco_btn.click(_ui_civitai_reco, [ckpt_dd],
@@ -4641,7 +4663,7 @@ def build_ui():
         transformer_apply_btn.click(_apply_transformer_repo, [transformer_tb],
                                     [ckpt_status, gen_steps, guidance, performance])
         te_dd.change(_ui_set_text_encoder, [te_dd], [te_status])
-        te_refresh_btn.click(_ui_refresh_text_encoders, None, [te_dd])
+        te_refresh_btn.click(_ui_refresh_text_encoders, None, [te_dd, te_status])
         lora_refresh_btn.click(_refresh_loras, [lora_dir_tb], lora_dds + [lora_status])
         # slots entrelaces: dd1, lw1, dd2, lw2, ... (attendu par _apply_loras/_ui_loras_apply)
         _lora_slots = [c for _pair in zip(lora_dds, lora_lws) for c in _pair]

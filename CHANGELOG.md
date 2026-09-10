@@ -3,6 +3,18 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — The text-encoder list shows the Hugging Face cache
+
+Ported from crispz-klein 1.35.1. An encoder downloaded from Hugging Face lives in the HF
+cache, and the Text encoder list only scanned `text_encoders` folders: it showed nothing
+but *Default*, and the id had to be pasted by hand. It now also offers the encoders of
+the HF cache that fit the current base (same family, width and layer count), marked
+*(HF cache)*, with their Hugging Face id as the value: readable in the image metadata.
+Diffusers pipelines, configs without weights and other sizes are left out; encoders of
+the same family but another size are **named under the list** with the reason instead
+of silently missing. The list follows a model change, and an id is looked up in the
+cache first, so it also works offline. Regression test in `tests/test_text_encoder.py`.
+
 ## Unreleased — The boot check offers the GitHub update
 
 Ported from crispz-klein 1.35.0. `boot_check.bat` (and its `_lan` / `_web` wrappers) now looks for new commits on
