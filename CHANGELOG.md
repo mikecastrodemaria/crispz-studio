@@ -3,6 +3,21 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — FP8 weights stored at scale, read as such
+
+Ported from crispz-klein 1.34.1. A FLUX.2 file of the library
+(`kleinFinalcutFP16FP8_comfyQuant`) stores its FP8 weights **already at scale** and still
+ships a `weight_scale`; the dequant loader, the same here, applied it and made every
+weight 1,200 to 1,700 times too small, so the model rendered noise. `_stored_at_scale`
+recognises the layout: the stored values fill less than a quarter of the format range
+(448 for E4M3, 127 for INT8) AND max / (scale x range) sits between 0.5 and 2. A regular
+scaled file fills the range, and its ratio is 1 / scale: 71 to 1,691 across the 16 other
+FP8/INT8 files of the library. The scale is then left out; MX exponent scales are never
+concerned. The dequant cache key changes for such files only (`bf16-prescaled`), so
+every regular cache keeps its key, and writing the new cache deletes the stale one.
+No Z-Image file of the library has this layout today: the guard is there for the next
+one. Regression tests in `tests/test_prescaled_fp8.py`.
+
 ## Unreleased — swap the text encoder
 
 Models > Checkpoints gets a **Text encoder** picker. Default is the base repo's own
