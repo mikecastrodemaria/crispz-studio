@@ -10,6 +10,7 @@ REM liste d'architectures compilees dans le build torch installe. C'est ce qui
 REM detecte le cas "RTX 50xx + torch non-cu128" (WinError 127 torch_cuda.dll).
 REM
 REM   --no-run   diagnostiquer seulement, ne pas lancer l'app
+REM   --no-update  ne pas chercher de mise a jour GitHub (ou CRISPZ_NO_UPDATE_CHECK=1)
 REM   --lan      ecouter sur le LAN (0.0.0.0) au lieu de 127.0.0.1
 REM   --web      LAN + tunnel Cloudflare (URL publique)
 REM   tout autre argument est transmis a run.bat
@@ -22,12 +23,15 @@ title crispz-studio - Boot Check
 cd /d "%~dp0"
 
 set "NORUN=0"
+set "NOUPDATE=0"
 set "EXPOSE="
 set "PASSTHRU="
 :argloop
 if "%~1"=="" goto argdone
 if /I "%~1"=="--no-run" (
     set "NORUN=1"
+) else if /I "%~1"=="--no-update" (
+    set "NOUPDATE=1"
 ) else if /I "%~1"=="--lan" (
     set "EXPOSE=lan"
 ) else if /I "%~1"=="--web" (
@@ -58,6 +62,32 @@ if errorlevel 1 (
     pause & exit /b 1
 )
 echo.
+
+REM --- Mise a jour GitHub: PROPOSEE, jamais imposee (voir _update_check.py) ---
+REM Proposee seulement si elle est sure: aucun des commits a recuperer ne touche un
+REM fichier modifie ici ni n'ajoute un fichier deja present hors de git. Sans reponse
+REM en 20 s: N, l'app demarre telle quelle. --no-update ou CRISPZ_NO_UPDATE_CHECK=1:
+REM etape sautee. Hors ligne, sans git ou sans branche suivie: elle le dit et passe.
+if "!NOUPDATE!"=="0" (
+    echo [MAJ] Mises a jour GitHub...
+    !RUNPY! _update_check.py
+    set "UPD=!errorlevel!"
+    if "!UPD!"=="10" (
+        choice /C ON /T 20 /D N /M "    Mettre a jour maintenant ? N par defaut dans 20 s"
+        if errorlevel 2 (
+            echo    Demarrage sans mise a jour. Plus tard : update.bat
+        ) else (
+            call "%~dp0update.bat"
+            if errorlevel 1 (
+                echo    [ERREUR] Mise a jour interrompue, voir ci-dessus. L'app n'est pas lancee.
+                pause & exit /b 1
+            )
+            echo    Mise a jour faite. Suite des verifications...
+        )
+    )
+    if "!UPD!"=="11" echo    Demarrage sans mise a jour.
+    echo.
+)
 
 REM --- 2. Etat du driver / de la carte (informations brutes) ---
 echo [2/5] Driver NVIDIA...

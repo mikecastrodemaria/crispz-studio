@@ -231,11 +231,26 @@ Tabbed Gradio UI + scriptable CLI + persistent server (`--serve`).
 |---|---|
 | `run.bat` | Standard local launch (127.0.0.1:7860). |
 | `xyz_example.bat` | Ready-to-run **X/Y/Z grid** CLI example (`xyz_example.bat "your prompt"`) — 2×2 Steps × Guidance, prints the sheet path. Unix: `xyz_example.sh`. |
-| `boot_check.bat` | **Smart boot diagnostic**, any GPU (RTX 50xx/40xx/30xx/20xx…): driver, and — the decisive check — whether the installed torch build actually has kernels for your card's `sm_XX`. That is what catches *"RTX 50xx + non-cu128 torch"* (`WinError 127 torch_cuda.dll`) **before** the app crashes, with the exact fix to run. Then reports VRAM and recommends CPU offload / tiling / resolution for *your* card, checks the diffusers pipelines and lists your real model folders (read from `config.txt`, not hardcoded). `--no-run` diagnoses without launching. |
+| `boot_check.bat` | **Smart boot diagnostic**, any GPU (RTX 50xx/40xx/30xx/20xx…): driver, and — the decisive check — whether the installed torch build actually has kernels for your card's `sm_XX`. That is what catches *"RTX 50xx + non-cu128 torch"* (`WinError 127 torch_cuda.dll`) **before** the app crashes, with the exact fix to run. Then reports VRAM and recommends CPU offload / tiling / resolution for *your* card, checks the diffusers pipelines and lists your real model folders (read from `config.txt`, not hardcoded). `--no-run` diagnoses without launching. **Offers GitHub updates first**: a `[MAJ]` step lists the new commits and asks `O/N` — no answer in 20 s means N, so the app never updates on its own. It is offered only when the update touches none of your local changes (see below). `--no-update` (or `CRISPZ_NO_UPDATE_CHECK=1`) skips it. |
 | `boot_check_lan.bat` / `boot_check_web.bat` | Same diagnostic, then **LAN** (`0.0.0.0`) or **Cloudflare tunnel**. **Set a login first**: `"auth": "user:password"` in `config.txt` (or `--auth` / `CRISPZ_AUTH`) shows a login page and gates every route — without it, anyone with the URL can generate and browse/delete your images (see `SECURITY.md`). |
-| `update.bat` / `update.sh` | **Update after a GitHub pull**: refuses to `git pull` over uncommitted work, reinstalls dependencies **only if the requirements file changed**, warns if `torch` was swapped (a transitive resolve can replace a `+cu128` build with a CPU wheel), re-runs the hardware check, verifies the app still imports, and lists **new config keys** added to `config-sample.txt` (your `config.txt` is never overwritten). `--no-pull` / `--force-deps` / `--shared`. |
+| `update.bat` / `update.sh` | **Update after a GitHub pull**: refuses a `git pull` that would touch a file you modified or overwrite a file present outside git (other local changes — `config.txt`, tests, untracked folders — are kept), reinstalls dependencies **only if the requirements file changed**, warns if `torch` was swapped (a transitive resolve can replace a `+cu128` build with a CPU wheel), re-runs the hardware check, verifies the app still imports, and lists **new config keys** added to `config-sample.txt` (your `config.txt` is never overwritten). `--no-pull` / `--force-deps` / `--shared`. |
 
 They set `GRADIO_SERVER_NAME` / `GRADIO_SERVER_PORT` (Gradio reads them) and call `run.bat`.
+
+**Updates at boot.** `boot_check.bat` (and its `_lan` / `_web` wrappers) fetches from
+GitHub before the diagnostics (20 s at most: offline, it says so and moves on). With new
+commits, it lists up to eight of them and asks `O/N`; **O** runs `update.bat` (pull,
+dependencies only if the lock changed, torch and pipeline checks), then the boot goes on
+with the new version. It offers an update only when it is safe (`_update_check.py`):
+
+- none of the incoming commits touches a file you modified here — git would refuse;
+- none adds a file already present here outside git — git would **overwrite** it without
+  a word if it is ignored, and `tests/` is;
+- your branch has no local commit missing from GitHub.
+
+Otherwise it names the files in the way, starts the app untouched, and you commit or
+stash them before running `update.bat`. Changes elsewhere (`config.txt`, your own tests,
+a `wildcards/_backup-*` folder) never block: the pull keeps them.
 
 **Cloudflare (private):** the web launcher reads `cloudflare.local.bat` (your tunnel
 name/port) — this file is **gitignored**, never committed. Copy

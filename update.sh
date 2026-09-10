@@ -47,12 +47,12 @@ echo
 if [ "$DOPULL" = "1" ]; then
   if ! command -v git >/dev/null 2>&1; then
     echo "[AVERT] git introuvable -> pull saute."
-  elif [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-    echo "[ATTENTION] Modifications locales non commitees:"
-    git status --short
+  elif ! "$RUNPY" _update_check.py --guard; then
+    # Bloque seulement si les commits a recuperer touchent un fichier modifie ici ou
+    # ajoutent un fichier deja present hors de git (cf. _update_check.py).
     echo
-    echo "  git pull risquerait un conflit. Commit / stash d'abord, ou relance"
-    echo "  avec --no-pull pour ne resynchroniser que les dependances."
+    echo "  Commit / stash ces fichiers d'abord, ou relance avec --no-pull pour ne"
+    echo "  resynchroniser que les dependances."
     exit 1
   else
     echo "Recuperation des commits (git pull)..."

@@ -65,16 +65,15 @@ if "!DOPULL!"=="1" (
     if errorlevel 1 (
         echo [AVERT] git introuvable -^> pull saute. Mets a jour les fichiers a la main.
     ) else (
-        REM Refuser d'ecraser du travail local non commite: on previent au lieu
-        REM de perdre des modifications.
-        set "DIRTY="
-        for /f "delims=" %%s in ('git status --porcelain 2^>nul') do set "DIRTY=1"
-        if defined DIRTY (
-            echo [ATTENTION] Modifications locales non commitees:
-            git status --short
+        REM Ne jamais ecraser du travail local: _update_check.py --guard bloque si les
+        REM commits a recuperer touchent un fichier modifie ici, ou ajoutent un fichier
+        REM deja present ici hors de git. Ailleurs, git pull --ff-only CONSERVE les
+        REM modifications locales: config, tests, wildcards non suivis ne bloquent plus.
+        !RUNPY! _update_check.py --guard
+        if errorlevel 1 (
             echo.
-            echo   git pull risquerait un conflit. Commit / stash d'abord, ou relance
-            echo   avec --no-pull pour ne resynchroniser que les dependances.
+            echo   Commit / stash ces fichiers d'abord, ou relance avec --no-pull pour ne
+            echo   resynchroniser que les dependances.
             pause & exit /b 1
         )
         echo Recuperation des commits ^(git pull^)...
@@ -158,4 +157,6 @@ echo.
 echo === Update OK ===
 if exist "CHANGELOG.md" echo Nouveautes: voir CHANGELOG.md
 echo Lance: run.bat  ^(ou boot_check.bat pour un diagnostic complet^)
-endlocal
+REM Code de sortie explicite: boot_check.bat distingue ainsi une mise a jour terminee
+REM d'une mise a jour en echec (un avertissement de l'etape 5 laissait errorlevel a 1).
+endlocal & exit /b 0
