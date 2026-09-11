@@ -59,10 +59,31 @@ LAYOUTS = {
 
 # Formats de planche courants. dpi sert a l'export (PDF) et a rien d'autre.
 PAGE_PRESETS = {
-    "A4 300dpi":        {"width": 2480, "height": 3508, "dpi": 300},
-    "US comic 300dpi":  {"width": 1988, "height": 3075, "dpi": 300},   # 6.625 x 10.25 in
-    "A4 150dpi":        {"width": 1240, "height": 1754, "dpi": 150},
-    "Web":              {"width": 1280, "height": 1980, "dpi": 96},
+    # formats imprimes traditionnels (300 dpi): marge ~2 cm (236 px), gouttiere
+    # 5 mm (59 px) - les valeurs d'usage en impression, modifiables ensuite
+    "Franco-Belge 24x32 cm":   {"width": 2835, "height": 3780, "dpi": 300, "margin": 236, "gutter": 59},
+    "A4 300dpi":               {"width": 2480, "height": 3508, "dpi": 300, "margin": 236, "gutter": 59},
+    "US comic 17x26 cm":       {"width": 1988, "height": 3075, "dpi": 300, "margin": 200, "gutter": 59},
+    "Manga 13x18 cm":          {"width": 1535, "height": 2126, "dpi": 300, "margin": 150, "gutter": 47},
+    "Graphic novel 17x24 cm":  {"width": 2008, "height": 2835, "dpi": 300, "margin": 200, "gutter": 59},
+    "Square album 21x21 cm":   {"width": 2480, "height": 2480, "dpi": 300, "margin": 236, "gutter": 59},
+    "Landscape 29.7x21 cm":    {"width": 3508, "height": 2480, "dpi": 300, "margin": 236, "gutter": 59},
+    # numerique
+    "Web":                     {"width": 1280, "height": 1980, "dpi": 96, "margin": 96, "gutter": 48},
+    "Webtoon":                 {"width": 800, "height": 1280, "dpi": 96, "margin": 40, "gutter": 80},
+}
+
+# Une ligne d'explication par format, pour le wizard (jamais dans project.json)
+PAGE_NOTES = {
+    "Franco-Belge 24x32 cm": "hardcover album, colour, 48-64 pages",
+    "A4 300dpi": "Franco-Belge A4 21x29.7 cm, print",
+    "US comic 17x26 cm": "stapled comic book, 22-32 pages per issue",
+    "Manga 13x18 cm": "pocket size, black & white, reads right to left",
+    "Graphic novel 17x24 cm": "thicker book, 100+ pages, soft or hard cover",
+    "Square album 21x21 cm": "children's picture book",
+    "Landscape 29.7x21 cm": "landscape album",
+    "Web": "screen only, fastest",
+    "Webtoon": "tall pages for a vertical phone scroll",
 }
 
 DEFAULT_PAGE = {
@@ -1072,7 +1093,12 @@ def render_lettering(project, page, sheet, face_detector=None,
                 speakers.append(s)
         face_of = _match_speakers(speakers, faces, char_embeddings)
 
-        fpx = max(16, min(44, h // 22))
+        # taille de police RELATIVE a la planche rendue (pas des px absolus):
+        # la meme bulle garde la meme proportion a l'ecran (1980 px de haut)
+        # et a l'impression (3508 px) - avant, le plafond de 44 px rendait le
+        # texte deux fois plus petit sur la sortie print
+        ph = sheet.height
+        fpx = max(int(ph * 0.008), min(int(ph * 0.0225), h // 22))
         book_font = (project.get("style") or {}).get("font") or None
         bubble_fonts = ([book_font] if book_font else []) + list(_BUBBLE_FONTS)
         font = _font(bubble_fonts, fpx)
