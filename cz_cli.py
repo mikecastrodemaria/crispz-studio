@@ -564,6 +564,10 @@ def cli_main(argv=None):
     parser.add_argument("--faceswap-src", metavar="PATH",
                         help="Post-process: swap the face in the (txt2img/reframe) result with this "
                              "source face. Needs insightface + an inswapper model.")
+    parser.add_argument("--faceswap-only", action="store_true",
+                        help="Swap the face of -i with --faceswap-src and exit: no ESRGAN, no refine. "
+                             "Output follows --save-mode/--output-dir/--output-format and stdout "
+                             "carries only the output path (Fooocus2026 plugin action).")
     parser.add_argument("--vision-mix", nargs="+", metavar="IMG",
                         help="Describe these reference images with an Ollama vision model and merge "
                              "them into ONE prompt, then run txt2img from it.")
@@ -762,6 +766,32 @@ def cli_main(argv=None):
         dst = args.output if (args.output and not os.path.isdir(args.output)) else \
             build_output_path(args.input, sm, args.output_dir, "png", tag=f"{base}_nobg")
         save_image(res, dst, "png")
+        print(os.path.abspath(dst))
+        return 0
+
+    # --faceswap-only : face swap seul sur -i (ni ESRGAN ni refine), puis sortie. C'est
+    # l'action "Face swap" du plugin Fooocus2026 : meme contrat que --remove-bg, stdout ne
+    # porte que le chemin. Dependance ou modele absent -> message sur stderr, code 1.
+    if args.faceswap_only:
+        if not args.input or not os.path.isfile(args.input):
+            parser.error("--faceswap-only requires -i <image>")
+        if not args.faceswap_src or not os.path.isfile(args.faceswap_src):
+            parser.error("--faceswap-only requires --faceswap-src <face image>")
+        # insightface imprime ses chargements sur stdout ("Applied providers", "find model",
+        # "inswapper-shape") : detournes vers stderr, stdout ne porte que le chemin.
+        import contextlib
+        try:
+            with contextlib.redirect_stdout(sys.stderr):
+                res = _faceswap(Image.open(args.input), Image.open(args.faceswap_src))
+        except Exception as e:
+            print(f"error: face swap failed: {e}", file=sys.stderr)
+            return 1
+        sm = args.save_mode if args.save_mode != "display" else "local"
+        fmt = args.output_format if args.output_format in SUPPORTED_FORMATS else "png"
+        base = os.path.splitext(os.path.basename(args.input))[0]
+        dst = args.output if (args.output and not os.path.isdir(args.output)) else \
+            build_output_path(args.input, sm, args.output_dir, fmt, tag=f"{base}_faceswap")
+        save_image(res, dst, fmt)
         print(os.path.abspath(dst))
         return 0
 

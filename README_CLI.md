@@ -261,6 +261,11 @@ python app.py --txt2img --prompt "studio portrait, soft light" \
 
 # reframe + face swap
 python app.py --reframe 16:9 -i in.png --faceswap-src myface.jpg --save-mode local --output-dir out
+
+# face swap ONLY (no ESRGAN, no refine): stdout carries only the output path.
+# This is the "Face swap" action of the Fooocus2026 Extra plugin.
+python app.py -i in.png --faceswap-only --faceswap-src myface.jpg \
+    --save-mode local --output-dir out --print-output
 ```
 
 ## Presets (use cases)

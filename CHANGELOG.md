@@ -3,6 +3,18 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
+## Unreleased — Face swap alone from the CLI, as a Fooocus2026 plugin action
+
+`--faceswap-only` swaps the face of `-i` with `--faceswap-src` and exits, without the
+ESRGAN or refine passes that every other CLI path chains around the swap. It follows the
+`--remove-bg` contract: output through `--save-mode` / `--output-dir` / `--output-format`,
+stdout carries only the path, a missing dependency or model is reported on stderr with
+exit code 1.
+
+`fooocus_extra.json` declares two **actions** for Fooocus2026's Extra Plugins
+(custom-24): the usual *Upscale*, and *Face swap* with a *Source face* image input. The
+plugin tab in Fooocus2026 now offers the occlusion-aware swap next to the upscaler.
+
 ## Unreleased — The text-encoder list shows the Hugging Face cache
 
 Ported from crispz-klein 1.35.1. An encoder downloaded from Hugging Face lives in the HF

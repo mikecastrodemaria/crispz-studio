@@ -109,6 +109,16 @@
     }
   ],
 
+  "actions": [
+    {"id": "upscale", "label": "Upscale", "server": true},
+    {
+      "id": "faceswap", "label": "Face swap",
+      "args": ["--faceswap-only"],
+      "params": [],
+      "image_params": [{"key": "faceswap_src", "label": "Source face", "arg": "--faceswap-src"}],
+      "note": "Swaps the face of the input image with the source face: occlusion mask (XSeg), face-region mask (BiSeNet), colour match, CodeFormer restore at 512. Needs insightface + onnxruntime-gpu in the plugin venv (requirements-faceswap.txt) and faceswap/inswapper_128.onnx."
+    }
+  ],
   "host_hints": {
     "offload_host_model_before_run": true,
     "reason": "crispz loads ESRGAN + Z-Image BF16. On a shared GPU, offloading the Fooocus SDXL model before the call avoids OOM.",
