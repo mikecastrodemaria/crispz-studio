@@ -1073,6 +1073,13 @@ echo "upscaled image: $dst"
 (`local` / `alongside` / `custom`). In `display` nothing is written, so nothing
 is printed.
 
+**Fooocus2026 Extra plugin** (`fooocus_extra.json`): the install steps mirror
+`install.bat`, including Pillow 12.3.0 set with `--no-deps` after
+`requirements.txt` (gradio's `pillow<12` bound pulls it back down during the
+deps step; only 12.x fixes the image-decoding CVEs). That step carries
+`"rerun_with_deps": true`, so the plugin manager replays it after every update
+that reinstalls the dependencies.
+
 ---
 
 ## VRAM offload (`--cpu-offload`)

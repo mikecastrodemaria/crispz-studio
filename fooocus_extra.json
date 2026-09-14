@@ -48,6 +48,12 @@
           {
             "name": "crispz deps",
             "cmd": ["{venv_pip}", "install", "-r", "requirements.txt"]
+          },
+          {
+            "name": "Pillow 12.3.0 (image-decoding CVE fixes)",
+            "cmd": ["{venv_pip}", "install", "--no-deps", "--upgrade", "pillow==12.3.0"],
+            "rerun_with_deps": true,
+            "warn": "Same as install.bat: gradio declares pillow<12 and pulls Pillow back down during the deps step; only 12.x fixes the image-decoding CVEs reachable here. --no-deps sets it without re-resolving the graph. Replayed after every update that reinstalls the deps."
           }
         ]
       },
@@ -58,6 +64,12 @@
           {
             "name": "crispz deps (inherited torch)",
             "cmd": ["{venv_pip}", "install", "-r", "requirements.txt"]
+          },
+          {
+            "name": "Pillow 12.3.0 (image-decoding CVE fixes)",
+            "cmd": ["{venv_pip}", "install", "--no-deps", "--upgrade", "pillow==12.3.0"],
+            "rerun_with_deps": true,
+            "warn": "Same as install.bat: gradio's pillow<12 bound pulls Pillow back down during the deps step; set 12.3.0 without re-resolving. Installed in the venv only, the inherited system Pillow is untouched."
           }
         ],
         "base_python_hint": "Path to be provided by the user at install time (e.g. py -3.10)."
