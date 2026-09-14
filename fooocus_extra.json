@@ -1,10 +1,10 @@
 {
   "manifest_version": 1,
-  "id": "crispz",
-  "name": "Crispz - Z-Image upscaler + detailer",
-  "version": "0.1.0",
-  "description": "ESRGAN upscale + Z-Image Turbo refinement pass (img2img BF16). External process, invoked via CLI.",
-  "repo": "https://github.com/mikecastrodemaria/crispz",
+  "id": "crispz-studio",
+  "name": "crispz-studio - Z-Image upscaler + detailer",
+  "version": "1.16.0",
+  "description": "ESRGAN upscale + Z-Image Turbo refinement pass (img2img BF16), from crispz-studio. External process, invoked via CLI.",
+  "repo": "https://github.com/mikecastrodemaria/crispz-studio",
   "license_note": "Models pulled separately (HuggingFace for Z-Image, local ESRGAN folder).",
 
   "runtime": {
