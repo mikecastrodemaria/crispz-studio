@@ -3,7 +3,26 @@
 All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
-## Unreleased — Face swap alone from the CLI, as a Fooocus2026 plugin action
+
+## 1.17.0 — 2026-09-14 — Release: Comic mode, AI provenance (C2PA + TrustMark), broad CivitAI model loading, `<lora:>` prompts
+
+Consolidates everything since **1.16.0**. The headline is a full **Comic mode**:
+per-panel rendering, lettering, UI chapters with page roles (cover / title / story /
+back), book order and folio, and a one-click **album builder** (pages, casting, style)
+that exports **PDF / CBZ**. **AI provenance** lands alongside it — C2PA reading plus an
+invisible **TrustMark** watermark (EU AI Act art. 50). Prompts gain
+**`<lora:name:weight>`** syntax with CivitAI search for missing LoRAs, and the model
+layer widens to load **almost every CivitAI Z-Image build** (GGUF, FP8/INT8 "scaled")
+behind a dequant disk cache with format badges and a GPU-busy guard. The **text-encoder**
+list now surfaces the Hugging Face cache and can be swapped; the **boot check** offers a
+GitHub update; the **queue** gains persistence, a soft ⏸ pause and HTTP txt2img/edit
+endpoints with real CI. Plus the **🖐 hand detailer**, the resolved **mosaic-corruption**
+root cause (a resident torch YOLO model poisoning offload transfers), an XYZ full-prompt
+A/B axis, CLI parity flags, a thumbnail cache, a **face-swap-only** CLI + Fooocus2026
+plugin action, and a batch of correctness fixes (scheduler concurrency, hot-swap VRAM,
+ConvRot INT8, LoRA-as-checkpoint). Details in the sections below.
+
+### Face swap alone from the CLI, as a Fooocus2026 plugin action
 
 `--faceswap-only` swaps the face of `-i` with `--faceswap-src` and exits, without the
 ESRGAN or refine passes that every other CLI path chains around the swap. It follows the
@@ -15,7 +34,7 @@ exit code 1.
 (custom-24): the usual *Upscale*, and *Face swap* with a *Source face* image input. The
 plugin tab in Fooocus2026 now offers the occlusion-aware swap next to the upscaler.
 
-## Unreleased — The text-encoder list shows the Hugging Face cache
+### The text-encoder list shows the Hugging Face cache
 
 Ported from crispz-klein 1.35.1. An encoder downloaded from Hugging Face lives in the HF
 cache, and the Text encoder list only scanned `text_encoders` folders: it showed nothing
@@ -27,7 +46,7 @@ the same family but another size are **named under the list** with the reason in
 of silently missing. The list follows a model change, and an id is looked up in the
 cache first, so it also works offline. Regression test in `tests/test_text_encoder.py`.
 
-## Unreleased — The boot check offers the GitHub update
+### The boot check offers the GitHub update
 
 Ported from crispz-klein 1.35.0. `boot_check.bat` (and its `_lan` / `_web` wrappers) now looks for new commits on
 GitHub before the diagnostics, and offers them: step `[MAJ]` lists up to eight of them and
@@ -52,7 +71,7 @@ code, so the boot can tell a finished update from a failed one.
 
 Regression tests in `tests/test_update_check.py`, on real temporary git repositories.
 
-## Unreleased — FP8 weights stored at scale, read as such
+### FP8 weights stored at scale, read as such
 
 Ported from crispz-klein 1.34.1. A FLUX.2 file of the library
 (`kleinFinalcutFP16FP8_comfyQuant`) stores its FP8 weights **already at scale** and still
@@ -67,7 +86,7 @@ every regular cache keeps its key, and writing the new cache deletes the stale o
 No Z-Image file of the library has this layout today: the guard is there for the next
 one. Regression tests in `tests/test_prescaled_fp8.py`.
 
-## Unreleased — swap the text encoder
+### swap the text encoder
 
 Models > Checkpoints gets a **Text encoder** picker. Default is the base repo's own
 Qwen3-4B, as before. Otherwise a transformers folder (config.json + safetensors) or a
@@ -113,7 +132,7 @@ renders the same image bit for bit (0/255 at 1024 x 1024, 8 steps, same seed), a
 Qwen3-8B encoder (4096 wide) is refused with the reason. Regression tests: `tests/test_text_encoder.py`;
 `tests/test_queue.py` now expects the `text_encoder` key in the snapshot.
 
-## Unreleased — the Models tab was empty on any install that keeps models elsewhere
+### the Models tab was empty on any install that keeps models elsewhere
 
 The Asset Browser catalogue walked only the **main** checkpoints folder and
 matched only `.safetensors`. An install whose models live in the *extra* folder —
@@ -132,7 +151,7 @@ crispz-studio 39, crispz-qwen-edit 10, crispz-krea2 16.
 Found on crispz-klein (0 → 22). Regression test:
 `tests/test_asset_browser_dirs.py`.
 
-## Unreleased — the hand detailer was declared missing while it was ready to run
+### the hand detailer was declared missing while it was ready to run
 
 `_hands_available()` tested for the `ultralytics` package. But at run time the
 detailer needs only **onnxruntime** plus the detector exported once to
@@ -155,7 +174,7 @@ Found on crispz-klein, where the case actually happened; propagated across the
 family, which shares `cz_protocol.py` by copy. Regression test:
 `tests/test_hands_available.py`.
 
-## Unreleased — prompt & negative boxes: capped growth + a visible scrollbar
+### prompt & negative boxes: capped growth + a visible scrollbar
 
 A long prompt used to grow the textarea unpredictably (Gradio-version
 dependent) and then CLIP silently, the text continuing below the fold with no
@@ -163,7 +182,7 @@ scroll cue on the dark theme. The prompt now grows to 12 lines (~+20%) and the
 negative to 6, then SCROLLS - with a themed, visible scrollbar (CSS capped at
 17em/9em as a version-proof backstop). Same behaviour across the whole family.
 
-## Unreleased — Comic: chapters in the UI, page roles (cover/title/story/back), book order, folio
+### Comic: chapters in the UI, page roles (cover/title/story/back), book order, folio
 
 A comic is a BOOK, not a list of pages. Pages now carry a `role`:
 
@@ -184,7 +203,7 @@ A comic is a BOOK, not a list of pages. Pages now carry a `role`:
 - The sample projects (`comic-project-sample.json`, `comics/exemple-winding-hour`)
   now declare their cover/back roles and enable the folio.
 
-## Unreleased — Comic: build a whole album from the UI (pages, casting, style) + sample project
+### Comic: build a whole album from the UI (pages, casting, style) + sample project
 
 The Comic accordion covered the panel loop but not the BOOK: layouts, casting and
 style still meant hand-editing project.json. Three editors close that gap:
@@ -207,7 +226,7 @@ worked example (6 pages incl. cover and back cover, 4 casting entries with kinds
 style, page format) — copied to `comics/exemple-winding-hour/` and ready to load.
 `comics/` is gitignored: your books stay yours. Tests: tests/test_comic_ui.py (7).
 
-## Unreleased — queue: soft ⏸ Pause, and Stop no longer discards the interrupted job
+### queue: soft ⏸ Pause, and Stop no longer discards the interrupted job
 
 Two ways to halt a running queue, both loss-free:
 
@@ -222,7 +241,7 @@ Two ways to halt a running queue, both loss-free:
 Semantics unit-tested with a stubbed generator (pause-finishes-then-halts,
 stop-keeps-job, drain, flag+report — tests/test_queue.py).
 
-## Unreleased — Comic mode: lettering, per-panel rendering, Comic accordion, CLI, PDF/CBZ
+### Comic mode: lettering, per-panel rendering, Comic accordion, CLI, PDF/CBZ
 
 The `cz_comic` engine grows into a full comic-book pipeline, field-tested on a
 3-page / 12-panel noir chapter rendered through a running instance:
@@ -283,7 +302,7 @@ The `cz_comic` engine grows into a full comic-book pipeline, field-tested on a
   picks a location as a face-detail subject; placeholders use a readable TrueType
   font. Tests: 53 cases in tests/test_comic.py.
 
-## Unreleased — AI provenance: C2PA reading + TrustMark invisible watermark (EU AI Act art. 50)
+### AI provenance: C2PA reading + TrustMark invisible watermark (EU AI Act art. 50)
 
 New optional brick `cz_provenance.py` (CPU only, the GPU is never touched), for
 machine-readable AI disclosure as required by EU AI Act Article 50 (applicable
@@ -310,7 +329,7 @@ Aug 2 2026; systems already on the market have until Dec 2 2026):
   resident-YOLO offload-corruption precedent below, watch the first renders with
   `provenance_watermark: on` + GGUF/offload `model`; the watermark hook runs at save
   time only, and stays off by default.
-## Unreleased — `<lora:name:weight>` in the prompt + CivitAI search for missing LoRAs
+### `<lora:name:weight>` in the prompt + CivitAI search for missing LoRAs
 
 A LoRA can now be called **directly from the prompt** (A1111 syntax): `<lora:my_lora>`
 or `<lora:my_lora:0.8>`, in the UI, the CLI (`--prompt`) and the HTTP server. The tag
@@ -333,7 +352,7 @@ file deleted + clear message), hash cached in the `.civitai.json` sidecar, previ
 trigger words fetched, slot dropdowns refreshed. CLI exits with code 2 and the same
 guidance; the server answers HTTP 400.
 
-## Unreleased — the REAL mechanism: a resident torch YOLO model corrupts offload transfers
+### the REAL mechanism: a resident torch YOLO model corrupts offload transfers
 
 The CPU-detection fix was not the end of it. On the GGUF path (offload `model`, forced
 for every GGUF) the corruption came back — hands pass fine, next render mosaic, then
@@ -374,7 +393,7 @@ renders bit-stable (0.64/0.64/0.64); positive control with the old in-process to
 load on the same build still poisons (0.64→0.36→0.30), proving the harness catches it.
 ONNX detection finds the same hands as the torch predictor on the reference image.
 
-## Unreleased — `_effective_offload(None)` ambiguity re-fixed after the revert
+### `_effective_offload(None)` ambiguity re-fixed after the revert
 
 Re-lands a real fix that was swept away by the ControlNet revert (dc66910). `None` is a
 *legitimate* value for `tpath` (no override → the base repo's transformer), but it also
@@ -385,7 +404,7 @@ though the effective offload changes (`none` → `model`, forced for every GGUF)
 full reload is required. Now uses a dedicated sentinel object; regression test in
 `tests/test_model_swap.py`.
 
-## Unreleased — mosaic corruption SOLVED: the hand detector poisoned the GPU
+### mosaic corruption SOLVED: the hand detector poisoned the GPU
 
 The mystery corruption that plagued 2026-08-16/17 — renders coming out as mosaic
 garbage, unrelated to the prompt, no error, until restart — is root-caused and fixed.
@@ -416,7 +435,7 @@ crashed, ≥0 regions actually refined) and `offload` (configured/effective). No
 test matrices: the job queue does NOT snapshot the detailer checkboxes (module flags
 read at run time) — use direct Generate clicks when varying them per step.
 
-## Unreleased — ControlNet Tile: root cause found, feature stays OFF
+### ControlNet Tile: root cause found, feature stays OFF
 
 `CONTROLNET_TILE_AVAILABLE` remains **False**. It was flipped on to resume the
 investigation, and the investigation ended it: **the tiled ControlNet refine recopies
@@ -566,7 +585,7 @@ prompt. Only what changed is logged, so the first `CHANGED` line names the culpr
 Wired into `generate()`, `get_pipe()` (right after a `from_pipe` derivation), and around
 the ControlNet pass and release.
 
-## Unreleased — 🔒 ControlNet Tile refine (structure-locked upscale)
+### 🔒 ControlNet Tile refine (structure-locked upscale)
 
 The refine pass can now run through the official **Z-Image Tile ControlNet**
 (`alibaba-pai`, distilled for 8 steps) instead of plain img2img: every diffusion step is
@@ -597,7 +616,7 @@ tab. CLI: `--controlnet-tile`, `--controlnet-scale`. Config: `controlnet_tile`,
 Validated: identical results between the shared-component pipeline and a stock diffusers
 one built from scratch (sharpness 985 vs 1002, structure gap 44.4 vs 45.4).
 
-## Unreleased — 🖐 Hand detailer
+### 🖐 Hand detailer
 
 Hands are the weak point of every diffusion model, so the ADetailer-style pass now
 works on them too: **🖐 Detail hands** next to *Detail faces* runs the same circuit
@@ -619,7 +638,7 @@ both refined in 9.6 s, mean pixel difference **6.5 inside the hand boxes and 0.0
 everywhere else** — palm creases and skin texture appear, the face and clothes are
 byte-identical.
 
-## Unreleased — Persistent queue, HTTP txt2img/edit endpoints, real CI, slicing fix
+### Persistent queue, HTTP txt2img/edit endpoints, real CI, slicing fix
 
 - **The job queue survives a restart.** It is written to `cache/queue.json` on every
   mutation *and* after each finished job, then restored at startup (the accordion opens
@@ -644,7 +663,7 @@ byte-identical.
   silently dropped. It now (re)asserts **VAE tiling/slicing**, which is the mechanism
   that actually caps the 2K+ memory peak.
 
-## Unreleased — Dequant disk cache, GPU-busy guard, format badges
+### Dequant disk cache, GPU-busy guard, format badges
 
 Three quality-of-life fixes born from a 7-checkpoint benchmark session.
 
@@ -673,7 +692,7 @@ Measured on a real 5.7 GB FP8 off the HDD: **first load 249.9 s** (238 s of dequ
 dequant pass is gone and the checkpoint behaves like any BF16 single-file. Weights
 byte-identical between the two passes.
 
-## Unreleased — Fix: hot-swap freed the old transformer too late (VRAM spill)
+### Fix: hot-swap freed the old transformer too late (VRAM spill)
 
 **Why.** On a multi-checkpoint XYZ grid, the second swap put the machine in the mud:
 the NEW transformer (12 GB) was moved to the GPU **before** the old one (12 GB) was
@@ -688,7 +707,7 @@ tests green, and the same 7-checkpoint grid (3× FP8, ConvRot INT8, AIO bundle, 
 Q4, bf16 reference) then completed end-to-end with every render back to **3-14 s**
 and all seven portraits clean on the contact sheet.
 
-## Unreleased — XYZ grid: full-Prompt A/B axis + type-ahead suggestions
+### XYZ grid: full-Prompt A/B axis + type-ahead suggestions
 
 **Why.** Comparing whole prompts needed Prompt S/R gymnastics, and filling the
 Checkpoint/LoRA value fields meant copy-pasting long file names by hand.
@@ -709,7 +728,7 @@ Checkpoint/LoRA value fields meant copy-pasting long file names by hand.
   ⤵ suggest button). Validated live in the browser: checkpoint filter + insert, second
   segment after a comma, wildcard expansion inside a prompt, `:1` suffix.
 
-## Unreleased — Fix: ConvRot INT8 checkpoints rendered pure noise
+### Fix: ConvRot INT8 checkpoints rendered pure noise
 
 **Why.** `redcraft22INT8INT4_redzit222026HD` loaded structurally but rendered a pixel
 mosaic: its `comfy_quant` blobs declare
@@ -729,7 +748,7 @@ Validated three ways: synthetic roundtrip (export recipe reproduced, max error <
 weights (0.004 before the fix), and a clean GPU render from the previously-broken
 checkpoint. Ported to the qwen-edit and krea loaders.
 
-## Unreleased — CLI parity: expand / inpaint-mask / reframe-fit / force-ratio flags
+### CLI parity: expand / inpaint-mask / reframe-fit / force-ratio flags
 
 **Why.** The Inpaint/Outpaint tab features and the forced-ratio radio had no CLI
 equivalents — batch/headless users couldn't reach them.
@@ -748,7 +767,7 @@ Validated end-to-end: crop 1024² → 1024×576, cover 1376×768 (no fill), expa
 right+bottom 1024² → 1331² (GPU), inpaint-mask renders the prompt exactly in the
 masked circle (GPU). Documented in README_CLI.md.
 
-## Unreleased — Force aspect ratio: new "Extend (outpaint)" mode next to crop
+### Force aspect ratio: new "Extend (outpaint)" mode next to crop
 
 **Why.** "Force aspect ratio on Upscale/img2img" could only centre-crop the input to the
 target ratio (Fooocus-style) — the edges were lost. Requested: reach the ratio by
@@ -769,7 +788,7 @@ original centre stays pixel-for-pixel untouched. Config: `force_ratio_mode` (`cr
 cover the geometry (both axes + no-op), the setter and the UI radio mapping
 (`tests/test_force_ratio.py`).
 
-## Unreleased — Load (almost) every CivitAI Z-Image build: GGUF + FP8/INT8 "scaled" checkpoints
+### Load (almost) every CivitAI Z-Image build: GGUF + FP8/INT8 "scaled" checkpoints
 
 **Why.** Most Z-Image fine-tunes on CivitAI ship as ComfyUI **FP8/INT8 "scaled"**
 safetensors (half the size of BF16) or as **GGUF** quants — both were skipped from the
@@ -804,7 +823,7 @@ Validated on real CivitAI files: pure-FP8 5.7 GB (intorealism V80) and INT8-per-
 loads in ~5 s (no dequant needed); a quantized non-Z-Image checkpoint (ernieRedmix) is
 rejected with the clear architecture message; Z-Image Turbo Q4_K_M GGUF loads and lists.
 
-## Unreleased — Fix: a LoRA picked as checkpoint no longer hunts for an SD1.5 config
+### Fix: a LoRA picked as checkpoint no longer hunts for an SD1.5 config
 
 **Why.** A LoRA file misfiled in a checkpoints folder (e.g. `ZITnsfwLoRAv3.safetensors`)
 could be selected as the transformer: diffusers cannot recognise the state dict, falls
@@ -822,7 +841,7 @@ offline mode keeps working. Validated: 3 real Z-Image LoRAs detected, a real che
 accepted and actually loaded through the new path (25 s, valid model), the forced-LoRA
 guard raises the clear error, smoke 22/22.
 
-## Unreleased — Fix: concurrent generations no longer corrupt the shared scheduler
+### Fix: concurrent generations no longer corrupt the shared scheduler
 
 **Why.** Gradio does not serialise events from DIFFERENT listeners: a manual **Generate**
 still running while **Run queue** starts its first job (or the face detailer refining)
@@ -839,7 +858,7 @@ process_one→refine, detailer) stays free thanks to the RLock. Validated: 4 thr
 locked function show zero overlap, nesting does not deadlock, all entry points wrapped,
 smoke 22/22.
 
-## Unreleased — Thumbnail cache: app-folder default, UI field, and CLI flags for the new features
+### Thumbnail cache: app-folder default, UI field, and CLI flags for the new features
 
 - **New default location**: the Asset Browser thumbnail cache now lives in **`<app>/cache/`**
   (gitignored) instead of inside the output folder — the app folder is usually on a fast
