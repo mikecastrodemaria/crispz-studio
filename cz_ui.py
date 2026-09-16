@@ -152,6 +152,7 @@ import cz_prompt
 from cz_prompt import (  # noqa: E402,F401
     STYLES, _seed_rng, list_wildcards, _apply_wildcards, _pick_styles, _apply_styles,
     set_wildcards_dir, set_wildcards_in_order, strip_lora_tags,
+    resolve_seed, expand_prompt_pair,
 )
 
 # Real-ESRGAN (spandrel) + upscale tuile/overlap-add -> cz_esrgan.py. L'etat mutable
@@ -1190,8 +1191,13 @@ def _ui_edit(mode, editor_value, dirs, ratio, fit, auto_describe, harmonize, har
             return [], "Load an image first.", history, history
         set_offload_mode(offload_mode)
         set_guidance(guidance)
-        # Tags <lora:...> du prompt: memes regles que Generate (resolus + actives avant
-        # tout chargement; introuvable -> echec propre + recherche CivitAI pre-remplie).
+        # Memes regles que Generate: seed -1 resolue en valeur concrete, variantes
+        # {a|b|c} + wildcards developpees (liees a cette seed), PUIS tags <lora:...> lus
+        # sur le texte developpe (resolus + actives avant tout chargement; introuvable
+        # -> echec propre + recherche CivitAI pre-remplie).
+        seed = resolve_seed(seed)
+        cz_pipeline._LAST_SEED = seed
+        prompt, _ = expand_prompt_pair(prompt, "", seed, index=0)
         prompt, _missing_loras = _consume_prompt_loras_ui(prompt)
         if _missing_loras:
             gr.Warning("LoRA not found: " + ", ".join(_missing_loras)
@@ -1731,26 +1737,39 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
     try:
         set_offload_mode(offload_mode)
         set_guidance(guidance)
-        # Tags <lora:nom[:poids]> du prompt: extraits + resolus + actives AVANT tout
-        # chargement de modele. Introuvable -> echec propre (message + recherche CivitAI
-        # pre-remplie), on ne genere rien plutot que de generer sans la LoRA demandee.
-        prompt, _missing_loras = _consume_prompt_loras_ui(prompt)
-        if _missing_loras:
-            gr.Warning("LoRA not found: " + ", ".join(_missing_loras)
+        # Seed -1 resolue en valeur CONCRETE pour TOUTES les branches (Omni compris):
+        # reproductible, memorisee (bouton "Reuse last seed"), ecrite dans les
+        # metadonnees, et necessaire aux variantes {a|b|c} / wildcards liees a la seed.
+        base_seed = resolve_seed(seed)
+        cz_pipeline._LAST_SEED = base_seed
+
+        def _prep(s, i):
+            """Prompt d'UNE image (seed s, index i dans le lot): variantes {a|b|c} +
+            wildcards du positif et du negatif, PUIS tags <lora:nom[:poids]> lus sur le
+            texte DEVELOPPE (une LoRA placee dans une option non choisie n'est jamais
+            activee; activation par image, hot-swap seulement si le jeu change), PUIS
+            styles. Renvoie (prompt, negatif, styles choisis, LoRA introuvables)."""
+            p_i, n_i = expand_prompt_pair(prompt, negative, s, index=i)
+            p_i, missing = _consume_prompt_loras_ui(p_i)
+            n_i = strip_lora_tags(n_i)   # un fragment de syntaxe ne va jamais a l'encodeur
+            chosen = _pick_styles(styles, style_random)
+            fp_i, fn_i = _apply_styles(p_i, n_i, chosen)
+            return fp_i, fn_i, chosen, missing
+
+        def _lora_stop(missing, imgs=(), reps=(), paths=None):
+            # LoRA introuvable -> echec propre (message + recherche CivitAI pre-remplie):
+            # on ne genere pas sans la LoRA demandee; les images deja faites restent.
+            gr.Warning("LoRA not found: " + ", ".join(missing)
                        + " — see Models > LoRA > Search CivitAI")
-            return _done([], _missing_lora_report(_missing_loras))
-        # strip_lora_tags apres les wildcards: un tag <lora:...> injecte par un wildcard
-        # n'est PAS active (les LoRA du run sont fixees avant), mais il ne doit surtout
-        # pas partir a l'encodeur de texte comme du texte de scene.
-        base_prompt = strip_lora_tags(_apply_wildcards(prompt, _seed_rng(seed), index=0))
-        picked_styles = _pick_styles(styles, style_random)        # noms de styles -> meta
-        full_prompt, full_negative = _apply_styles(base_prompt, negative, picked_styles)
+            return _done(list(imgs), "  \n".join(list(reps) + [_missing_lora_report(missing)]),
+                         paths)
+
         mode = "img2img/upscale" if (use_input and input_image is not None) else "txt2img"
         _log(f"Generate ({mode})")
         _dbg(f"params: mode={mode} use_input={use_input} has_img={input_image is not None} "
              f"size={int(width)}x{int(height)} gen_steps={int(gen_steps)} n={int(image_number)} "
-             f"seed={int(seed)} guidance={float(guidance)} offload={offload_mode} styles={styles}")
-        _dbg(f"prompt='{(full_prompt or '')[:160]}' | negative='{(negative or '')[:80]}'")
+             f"seed={base_seed} guidance={float(guidance)} offload={offload_mode} styles={styles}")
+        _dbg(f"prompt='{(prompt or '')[:160]}' | negative='{(negative or '')[:80]}'")
         # --- Omni multi-reference (compo a partir de plusieurs images) ---
         # Garde-fou: on ne route en Omni que si un modele Omni est configure. Sinon
         # (UI obsolete dans le navigateur, mode reste sur Omni) on retombe en
@@ -1761,8 +1780,12 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
             _dbg(f"omni: {len(refs)} ref(s), size={int(width)}x{int(height)}")
             if not refs:
                 return _done([], "Omni: add at least one reference image.")
+            full_prompt, full_negative, picked_styles, _missing = _prep(base_seed, 0)
+            if _missing:
+                return _lora_stop(_missing)
             try:
-                img = generate_omni(refs, full_prompt, full_negative, width, height, gen_steps, seed)
+                img = generate_omni(refs, full_prompt, full_negative, width, height, gen_steps,
+                                    base_seed)
             except Exception as e:
                 _log(f"omni error: {e}")
                 return _done([], f"Omni error: {e}")
@@ -1770,10 +1793,10 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
             if save_mode != "display":
                 try:
                     omni_dst = build_output_path(None, save_mode, output_dir, output_format,
-                                                 tag="omni", seed=seed, size=img.size)
+                                                 tag="omni", seed=base_seed, size=img.size)
                     if omni_dst:
                         save_image(img, omni_dst, output_format, meta=_gen_meta(
-                            "omni", full_prompt, full_negative, seed, gen_steps, cz_pipeline.GUIDANCE,
+                            "omni", full_prompt, full_negative, base_seed, gen_steps, cz_pipeline.GUIDANCE,
                             img.size, styles=picked_styles, extra={"refs": len(refs)}))
                         _dbg(f"saved: {omni_dst}")
                 except Exception as e:
@@ -1789,8 +1812,6 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
             if eff_denoise <= 0.0 and n > 1:
                 _log(f"img2img: no refine (denoise 0) -> deterministic output, batch {n} -> 1")
                 n = 1
-            base_seed = int(seed) if int(seed) >= 0 else random.randint(0, 2**31 - 1)
-            cz_pipeline._LAST_SEED = base_seed
             _dbg(f"img2img: esrgan={esrgan_model} do_esrgan={do_esrgan} do_refine={do_refine} "
                  f"n={n} seed={base_seed} factor={factor} denoise={eff_denoise} "
                  f"refine_steps={int(refine_steps)} tile={int(tile)} "
@@ -1802,9 +1823,9 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                     break
                 s = base_seed if cz_pipeline._NO_SEED_INCREMENT else base_seed + i
                 progress(i / n, desc=f"Image {i + 1}/{n}")
-                chosen = _pick_styles(styles, style_random)
-                p_i = strip_lora_tags(_apply_wildcards(prompt, _seed_rng(s), index=i))
-                fp, _fn = _apply_styles(p_i, negative, chosen)
+                fp, _fn, chosen, _missing = _prep(s, i)
+                if _missing:
+                    return _lora_stop(_missing, images, reports, img_paths)
                 if style_random:
                     _log(f"random style #{i + 1}: {chosen}")
                 try:
@@ -1829,10 +1850,6 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
             return _done(images, "  \n".join(reports), img_paths)
         # txt2img (batch image_number)
         n = max(1, int(image_number))
-        # Resout un seed -1 (random) en une valeur CONCRETE -> reproductible, memorisee
-        # (bouton "Reuse last seed") et ecrite correctement dans les metadonnees.
-        base_seed = int(seed) if int(seed) >= 0 else random.randint(0, 2**31 - 1)
-        cz_pipeline._LAST_SEED = base_seed
         images, img_paths, total_t = [], [], 0.0
         for i in range(n):
             if cz_pipeline._STOP:
@@ -1840,10 +1857,10 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                 break
             s = base_seed if cz_pipeline._NO_SEED_INCREMENT else base_seed + i
             progress(i / n, desc=f"Image {i + 1}/{n}")
-            # Wildcards (__name__) + style aleatoire, par image (seed -> reproductible)
-            chosen = _pick_styles(styles, style_random)
-            p_i = strip_lora_tags(_apply_wildcards(prompt, _seed_rng(s), index=i))
-            fp, fn = _apply_styles(p_i, negative, chosen)
+            # Variantes {a|b|c} + wildcards + LoRA + style aleatoire, par image (seed s)
+            fp, fn, chosen, _missing = _prep(s, i)
+            if _missing:
+                return _lora_stop(_missing, images, [], img_paths)
             if style_random:
                 _log(f"random style #{i + 1}: {chosen}")
             img, t = txt2img_run(fp, width, height, gen_steps, s, fn,

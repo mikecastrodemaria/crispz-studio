@@ -12,7 +12,8 @@ import re
 import json
 import random
 
-from cz_core import HERE, CONFIG, _prefs
+from cz_core import HERE, CONFIG, _prefs, _log
+from prompt_variants import expand_variants, has_variants
 
 _FALLBACK_STYLES = {
     "Fooocus Cinematic": {"prompt": "cinematic still {prompt} . emotional, harmonious, vignette, highly detailed, high budget, bokeh, cinemascope, moody, epic, gorgeous, film grain, grainy",
@@ -129,18 +130,31 @@ def set_wildcards_in_order(v):
 
 
 def _apply_wildcards(text, rng=None, index=None):
-    """Remplace les __nom__ par une ligne de wildcards/nom.txt (gere l'imbrication).
-    Par defaut: ligne ALEATOIRE (rng, reproductible par seed). Si READ_WILDCARDS_IN_ORDER
-    et index fourni: prend la ligne (index % nb_lignes) -> parcourt le fichier au fil du
-    batch, de facon deterministe (facon Fooocus 'read wildcards in order')."""
-    if not text or "__" not in text:
+    """Developpe les variantes {a|b|c} (prompt_variants) et les __nom__ (une ligne de
+    wildcards/nom.txt), imbrication comprise.
+    Par defaut: tirage ALEATOIRE (rng, reproductible par seed). Si READ_WILDCARDS_IN_ORDER
+    et index fourni: option (index % n) / ligne (index % nb_lignes) -> parcourt les
+    options au fil du batch, de facon deterministe (facon Fooocus 'read wildcards in
+    order'). Les deux syntaxes partagent ce booleen et ce rng.
+
+    Ordre (identique a Fooocus2026 apply_wildcards): a chaque passe, UN niveau de
+    groupes est developpe (le plus interne) AVANT la recherche d'un __nom__. Un
+    placeholder place dans une option non choisie n'est donc jamais developpe. Quand il
+    ne reste plus de placeholder mais encore un groupe imbrique, on refait une passe.
+    Un texte sans groupe ni placeholder ne fait AUCUN tirage: les seeds des prompts
+    existants redonnent la meme image."""
+    if not text or ("__" not in text and not has_variants(text)):
         return text
-    import re
-    rng = rng or random
+    raw = text
+    rng = rng or random.Random()
     in_order = READ_WILDCARDS_IN_ORDER and index is not None
+    idx = int(index) if index is not None else 0
     for _ in range(64):  # garde-fou anti-boucle
+        text = expand_variants(text, rng, index=idx, in_order=in_order, max_depth=1)
         m = re.search(r"__([A-Za-z0-9_\-/]+)__", text)
         if not m:
+            if has_variants(text):
+                continue
             break
         name = m.group(1)
         path = os.path.join(WILDCARDS_DIR, name + ".txt")
@@ -155,7 +169,28 @@ def _apply_wildcards(text, rng=None, index=None):
             except Exception:
                 pass
         text = text[:m.start()] + repl + text[m.end():]
+    if has_variants(raw):
+        _log(f"{raw} -> {text}", mod="Variants")
     return text
+
+
+def resolve_seed(seed):
+    """Seed concrete: -1 (ou invalide) -> tirage aleatoire. Les variantes {a|b|c} et les
+    wildcards sont lies a la seed; une seed -1 non resolue les rendrait irreproductibles
+    et absentes des metadonnees."""
+    try:
+        s = int(seed)
+    except (TypeError, ValueError):
+        s = -1
+    return s if s >= 0 else random.randint(0, 2**31 - 1)
+
+
+def expand_prompt_pair(prompt, negative, seed, index=None):
+    """Variantes {a|b|c} + wildcards du positif ET du negatif pour UNE image. Chaque
+    texte a son propre random.Random(seed): memes tirages pour une meme seed, et
+    modifier le positif ne change pas les tirages du negatif."""
+    return (_apply_wildcards(prompt, _seed_rng(seed), index=index),
+            _apply_wildcards(negative, _seed_rng(seed), index=index))
 
 
 def _pick_styles(selected, randomize):

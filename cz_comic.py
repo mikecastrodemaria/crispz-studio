@@ -19,10 +19,14 @@ qui renvoie une description LOCALE, jamais le texte du panneau. Voir detail_prom
 
 import os
 import re
+import sys
 import json
 import math
+import random
 
 from PIL import Image, ImageDraw, ImageOps
+
+from prompt_variants import expand_variants, has_variants
 
 SCHEMA_VERSION = 1
 
@@ -455,6 +459,61 @@ def page_path(project_dir, chapter_id, page_id, ext="png"):
 
 
 # ----------------------------------------------------------------------------
+# Variantes {a|b|c} (prompt_variants, syntaxe partagee par toute la famille)
+# ----------------------------------------------------------------------------
+def _expand_text(text, seed):
+    """Developpe les groupes {a|b|c} d'UN champ avec son propre random.Random(seed):
+    meme seed + meme texte = meme choix, quel que soit l'appelant (rendu du
+    panneau, variation, passe de detail). Un texte sans groupe est rendu tel quel,
+    sans aucun tirage."""
+    if not text or not has_variants(text):
+        return text
+    out = expand_variants(text, random.Random(int(seed)) if int(seed) >= 0
+                          else random.Random())
+    print(f"[Variants] {text} -> {out}", file=sys.stderr, flush=True)
+    return out
+
+
+def _panel_variant_texts(project, page, panel):
+    """Tous les textes qui composent le prompt de ce panneau, bruts: texte de la
+    case, style, ambiance, et description / negatif des fiches citees."""
+    casting = project.get("casting") or {}
+    style = project.get("style") or {}
+    texts = [panel.get("text") or "", style.get("prompt_suffix") or "",
+             style.get("negative") or "", effective_mood(project, page) or ""]
+    for name in resolve_casting(panel.get("text") or "", casting)["used"]:
+        char = casting.get(name) or {}
+        texts += [char.get("desc") or "", char.get("negative") or ""]
+    return texts
+
+
+def panel_seed(project, page, panel):
+    """Seed de rendu du panneau. Un panneau dont un texte utilise {a|b|c} et dont la
+    seed vaut -1 recoit une seed CONCRETE, ecrite dans panel['seed'] (l'appelant
+    sauvegarde le projet comme d'habitude): les options tirees doivent survivre a
+    un nouveau rendu, a une variation et a la passe de detail. Sans groupe, rien
+    ne change: -1 reste -1 (le moteur tire la seed, comme avant)."""
+    seed = int(panel.get("seed", -1))
+    if seed < 0 and any(has_variants(t)
+                        for t in _panel_variant_texts(project, page, panel)):
+        seed = random.randint(0, 2**31 - 1)
+        panel["seed"] = seed
+    return seed
+
+
+def _expanded_casting(casting, seed):
+    """Copie du casting dont desc / negatif ont leurs groupes developpes (seed)."""
+    out = {}
+    for name, char in (casting or {}).items():
+        c = dict(char)
+        for key in ("desc", "negative"):
+            if c.get(key):
+                c[key] = _expand_text(c[key], seed)
+        out[name] = c
+    return out
+
+
+# ----------------------------------------------------------------------------
 # Ce qu'il faut envoyer au moteur pour UNE case
 # ----------------------------------------------------------------------------
 def resolve_panel(project, page, panel, index=None, target_pixels=1024 * 1024):
@@ -473,14 +532,20 @@ def resolve_panel(project, page, panel, index=None, target_pixels=1024 * 1024):
     rects = panel_rects(cells, pg["width"], pg["height"], pg["margin"], pg["gutter"])
     rw, rh = rects[index][2], rects[index][3]
 
-    res = resolve_casting(panel.get("text", ""), project.get("casting"))
+    # Variantes {a|b|c}: developpees AVANT la substitution des @Name, avec la seed
+    # du panneau (fixee et memorisee si besoin). '{@Lea|@Sam}' ne cite donc qu'UN
+    # personnage: seules ses refs, LoRA et negatifs partent au moteur.
+    seed = panel_seed(project, page, panel)
+    res = resolve_casting(_expand_text(panel.get("text", ""), seed),
+                          _expanded_casting(project.get("casting"), seed))
     style = project.get("style") or {}
     # ordre: texte de la case (casting resolu), style du livre, mood
     # (chapitre > global) - le mood est une ambiance, jamais un sujet
-    parts = [res["prompt"], (style.get("prompt_suffix") or "").strip(),
-             effective_mood(project, page)]
+    parts = [res["prompt"],
+             (_expand_text(style.get("prompt_suffix") or "", seed) or "").strip(),
+             _expand_text(effective_mood(project, page), seed)]
     prompt = ", ".join(p for p in parts if p)
-    negs = [res["negative"], (style.get("negative") or "").strip()]
+    negs = [res["negative"], (_expand_text(style.get("negative") or "", seed) or "").strip()]
 
     loras = list(res["loras"]) + list(panel.get("loras") or [])
     seen = set()
@@ -501,7 +566,7 @@ def resolve_panel(project, page, panel, index=None, target_pixels=1024 * 1024):
             "negative": ", ".join(n for n in negs if n),
             "refs": refs, "loras": merged,
             "width": gw, "height": gh,
-            "rect": rects[index], "seed": int(panel.get("seed", -1)),
+            "rect": rects[index], "seed": seed,
             "unknown": res["unknown"]}
 
 
@@ -523,7 +588,9 @@ def detail_prompt(project, panel, subject=None):
             # kind 'setting' saute: 'wide shot of @Castle, @Hero on the ramparts'
             # doit detailler Hero, pas renvoyer le chateau comme sujet de visage.
             if char and char.get("kind", "character") == "character":
-                return (char.get("desc") or "").strip()
+                # Meme option {a|b|c} que le rendu du panneau (meme seed, meme champ).
+                return (_expand_text(char.get("desc") or "",
+                                     int(panel.get("seed", -1))) or "").strip()
         m = _AT.search(text, m.end())
     return ""
 
@@ -1294,12 +1361,17 @@ def render_lettering(project, page, sheet, face_detector=None,
 # ----------------------------------------------------------------------------
 # Character sheets & exports
 # ----------------------------------------------------------------------------
-def sheet_prompt(char, style=None):
+def sheet_prompt(char, style=None, seed=-1):
     """(prompt, negative) pour generer la planche de reference d'une fiche de
     casting: un portrait canonique (seed fixe cote appelant) qui sert ensuite
-    de ref Omni. Pour un decor (kind 'setting'): un plan d'ensemble vide."""
+    de ref Omni. Pour un decor (kind 'setting'): un plan d'ensemble vide.
+    Les groupes {a|b|c} des champs sont developpes avec `seed` (-1 = tirage libre)."""
+    char = _expanded_casting({"_": char}, seed)["_"]
+    style = dict(style or {})
+    for key in ("prompt_suffix", "negative"):
+        if style.get(key):
+            style[key] = _expand_text(style[key], seed)
     desc = (char.get("desc") or "").strip()
-    style = style or {}
     if char.get("kind", "character") == "setting":
         base = f"{desc}, wide establishing shot, empty scene, no people"
     else:

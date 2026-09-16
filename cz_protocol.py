@@ -44,6 +44,7 @@ import re
 import urllib.request
 
 from cz_core import CONFIG, APP_VERSION
+from prompt_variants import has_variants
 
 PROTOCOL = 1
 TOOL = "crispz-studio"
@@ -215,6 +216,25 @@ def _extract_prompt_loras(prompt, loras):
     return out
 
 
+def _expand_spec(spec, seed):
+    """Variant groups {a|b|c} + __wildcards__ of the prompt AND the negative,
+    bound to `seed` (index 0: one image per call), THEN the <lora:...> tags
+    of the EXPANDED prompt are moved into spec['loras'] - a LoRA written in
+    an option that was not picked is never applied. Returns a new dict (the
+    caller's spec is untouched). A prompt without group nor placeholder makes
+    no random draw: same text, same image as before."""
+    from cz_prompt import expand_prompt_pair, strip_lora_tags
+    out = dict(spec)
+    loras = list(out.get("loras") or [])
+    prompt, negative = expand_prompt_pair(out.get("prompt", ""),
+                                          out.get("negative", ""), seed,
+                                          index=0)
+    out["prompt"] = _extract_prompt_loras(prompt, loras)
+    out["negative"] = strip_lora_tags(negative)
+    out["loras"] = loras
+    return out
+
+
 class SpecError(Exception):
     def __init__(self, msg, code=2):
         super().__init__(msg)
@@ -365,10 +385,13 @@ def validate_spec(spec, op="gen"):
                             f"file paths - the caller resolves them)")
     out["refs"] = refs
     out["loras"] = [str(x) for x in (spec.get("loras") or [])]
-    out["prompt"] = _extract_prompt_loras(out["prompt"], out["loras"])
-    if op == "gen" and not out["prompt"]:
-        raise SpecError("prompt contained only <lora:...> tags - describe "
-                        "the image too")
+    # A prompt with {a|b|c} groups keeps its <lora:...> tags until run time
+    # (_expand_spec): only the option actually picked may bring its LoRA.
+    if not has_variants(out["prompt"]):
+        out["prompt"] = _extract_prompt_loras(out["prompt"], out["loras"])
+        if op == "gen" and not out["prompt"]:
+            raise SpecError("prompt contained only <lora:...> tags - describe "
+                            "the image too")
     out["model"] = (str(spec["model"]).strip()
                     if spec.get("model") else None)
     out["out_dir"] = (str(spec["out_dir"]).strip()
@@ -400,6 +423,20 @@ def run_gen(spec, warnings=None, route="local"):
     t0 = time.time()
     if spec.get("model"):
         cz_pipeline.set_zimage_model(spec["model"])
+    # The seed is resolved HERE, the same way the UI does (cz_ui.run): a -1
+    # becomes a concrete value BEFORE generating -> seed_used is always exact
+    # and replayable. (Do NOT read cz_pipeline._LAST_SEED afterwards: only the
+    # UI path sets it, it would report the instance's last UI render.)
+    import random
+    seed_used = int(spec.get("seed", -1))
+    if seed_used < 0:
+        seed_used = random.randint(0, 2**31 - 1)
+    cz_pipeline._LAST_SEED = seed_used          # the UI's 'Reuse last seed' sees it
+    # {a|b|c} + wildcards bound to that seed, then <lora:...> of the result.
+    spec = _expand_spec(spec, seed_used)
+    if not spec["prompt"]:
+        raise SpecError("prompt contained only <lora:...> tags - describe "
+                        "the image too")
     slots = []
     for s in spec.get("loras") or []:
         head, _, tail = str(s).rpartition(":")
@@ -410,15 +447,6 @@ def run_gen(spec, warnings=None, route="local"):
     if slots:
         cz_pipeline.set_loras(slots)
     steps = spec.get("steps") or int(CONFIG.get("default_gen_steps", 8))
-    # The seed is resolved HERE, the same way the UI does (cz_ui.run): a -1
-    # becomes a concrete value BEFORE generating -> seed_used is always exact
-    # and replayable. (Do NOT read cz_pipeline._LAST_SEED afterwards: only the
-    # UI path sets it, it would report the instance's last UI render.)
-    import random
-    seed_used = int(spec.get("seed", -1))
-    if seed_used < 0:
-        seed_used = random.randint(0, 2**31 - 1)
-    cz_pipeline._LAST_SEED = seed_used          # the UI's 'Reuse last seed' sees it
     refs = spec.get("refs") or []
     if refs:
         # Omni route (multi-reference): refs were already validated by
@@ -538,14 +566,19 @@ def run_upscale(spec, warnings=None, route="local"):
     steps = spec.get("steps") or int(CONFIG.get("default_refine_steps",
                                                 CONFIG.get("default_steps",
                                                            12)))
+    # Seed concrete (the refine pass draws from it) + {a|b|c} / wildcards
+    # bound to it; returned as seed_used so a variation can be replayed.
+    from cz_prompt import resolve_seed
+    seed_used = resolve_seed(spec.get("seed", -1))
+    spec = _expand_spec(spec, seed_used)
     with Image.open(spec["input"]) as im:
         img, timings = cz_pipeline.process_one(
             im.convert("RGB"), model, factor, denoise,
-            steps, spec.get("prompt", ""), spec.get("seed", -1),
+            steps, spec.get("prompt", ""), seed_used,
             int(CONFIG.get("default_tile", 0)),
             int(CONFIG.get("default_overlap", 16)), do_esrgan=do_esrgan)
     path = build_output_path(None, "local", spec.get("out_dir"), "png",
-                             tag="czp_upscale", seed=spec.get("seed", -1),
+                             tag="czp_upscale", seed=seed_used,
                              size=img.size)
     save_image(img, path, "png",
                meta={"mode": "upscale", "source": spec["input"],
@@ -553,7 +586,7 @@ def run_upscale(spec, warnings=None, route="local"):
                      "model": model, "size": list(img.size)})
     return {"ok": True, "protocol": PROTOCOL, "tool": TOOL,
             "version": APP_VERSION, "route": route,
-            "images": [os.path.abspath(path)],
+            "images": [os.path.abspath(path)], "seed_used": seed_used,
             "size": list(img.size), "esrgan_model": model,
             "timings": {"total_s": round(time.time() - t0, 2),
                         **{k: round(v, 2) for k, v in (timings or {}).items()
@@ -615,6 +648,7 @@ def run_inpaint(spec, warnings=None, route="local"):
     if seed_used < 0:
         seed_used = random.randint(0, 2**31 - 1)
     cz_pipeline._LAST_SEED = seed_used
+    spec = _expand_spec(spec, seed_used)        # {a|b|c} + wildcards, then LoRA tags
     with Image.open(spec["input"]) as im, Image.open(spec["mask"]) as mk:
         bg = im.convert("RGB")
         mask = mk.convert("L")
