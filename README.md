@@ -394,6 +394,29 @@ requires `job_queue`; `enabled=false` removes the panel entirely.
 Also available from the CLI: `--txt2img --xyz "Steps=4,8,12" --xyz "Guidance=0, 3.5"`
 (see README_CLI.md) — same axes and validation, Ctrl+C assembles a partial sheet.
 
+## Variants `{a|b|c}` (prompt and negative)
+
+A prompt can carry *dynamic prompts* variant groups: one option is picked per image.
+
+```
+{a|b|c}            one option, picked at random (seed-bound) or in order
+{a|}               an empty option: one chance in two of nothing
+{2$$a|b|c}         two distinct options, joined with ", "
+{1-3$$a|b|c}       between one and three options
+{2$$ and $$a|b|c}  custom separator between the picked options
+{a|{b|c}}          groups nest, innermost first
+```
+
+- **Seed-bound**: same seed, same prompt, same picks. Each image of a batch has its own seed (base + i), so a batch explores the options. A prompt **without** any group makes no random draw: existing prompts and seeds give the same image as before.
+- **In order**: the *Read wildcards in order* checkbox (config `wildcards_in_order`) applies to groups too. Image *i* of the batch takes option *i % n* (with CLI `--xyz`, *i* is the cell number).
+- **Before `__wildcards__`**: groups resolve first, so a placeholder written in an option that is not picked is never read. A wildcard line may itself contain groups.
+- **Negative prompt**: expanded too, with its own draw (editing the positive does not change the negative picks).
+- **Where**: UI **Generate** (txt2img, img2img, Reference (Omni)), the **Inpaint / Outpaint** tab, the **job queue** and the **X/Y/Z grid** (the *Prompt S/R* axis works on the raw text, groups included), the **CLI** (`--prompt`, `--negative`, `--xyz` per cell, `--serve`), the **`czp` protocol** and **comic panels**. A style `{prompt}` placeholder is never taken for a group (a group needs a `|` or a `N$$` prefix).
+- **`<lora:...>` tags** are read on the expanded text: a tag inside an option only applies when that option is picked (UI, CLI, `--serve`, `czp`).
+- **Comic panels**: groups in a panel text, a casting description or negative, the style or the mood resolve **before** the `@Name` substitution. `{@Lea|@Sam} waits in the rain` cites ONE character: only its refs, LoRAs and negative are used. Such a panel gets a concrete seed stored in `project.json` at its first render, so a re-render and the detail pass keep the same picks.
+- A seed `-1` is resolved to a concrete value **before** expanding (Omni, the Inpaint tab, the CLI and `czp upscale` included), so the picks are replayable and the seed is written to the metadata. The metadata stores the **expanded** prompt.
+- The console logs every expansion: `[crispz][Variants] a {red|blue} car -> a red car`.
+
 ## Tag autocomplete (prompt fields)
 
 Suggestions appear under the caret while typing in the **prompt** and **negative**
@@ -730,6 +753,7 @@ the preview + trigger words like the Asset Browser's 🔎 button. The slot dropd
 refresh automatically. Gated/NSFW files may need the **CivitAI API key** (Advanced tab).
 Set `prompt_lora_tags` to `false` in `config.txt` to disable the parsing (tags are then
 stripped from the prompt but never applied).
+Inside a `{a|b}` variant group, a tag only applies when its option is picked (see *Variants*).
 
 ## Disabling the upscale (pure txt2img / pure img2img)
 
