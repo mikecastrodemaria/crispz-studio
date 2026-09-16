@@ -1,0 +1,330 @@
+"""custom-28 / custom-31 / custom-34: Improve prompt via Ollama, against a fake local
+Ollama server (standard library only).
+
+Ported unchanged from Fooocus2026 (tests/test_ollama_improve.py); only the import differs.
+The last class (TestCrispzAdaptations) covers what the crispz copy adds: settings passed
+with configure(), the transport (127.0.0.1, proxy ignored), keep_alive 0 by default and
+extra Ollama options.
+
+Run:  .venv/Scripts/python tests/test_prompt_improve.py
+"""
+import json
+import os
+import sys
+import threading
+import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import prompt_improve as I  # noqa: E402
+
+
+class FakeOllama(BaseHTTPRequestHandler):
+    last_generate = None
+    reply = '<think>let me polish</think>"a lone red fox, snowy pine forest, soft dawn light"'
+
+    def log_message(self, *a):
+        pass
+
+    def _send(self, obj, code=200):
+        b = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+    def do_GET(self):
+        if self.path == '/api/tags':
+            self._send({'models': [{'name': 'qwen3:8b'}, {'name': 'llama3.1:8b'}]})
+        else:
+            self._send({'error': 'nope'}, 404)
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+        if self.path == '/api/generate':
+            if body.get('model') == 'missing:1b':
+                return self._send({'error': 'model not found'}, 404)
+            if 'think' in body:   # un modele sans raisonnement refuse `think` (400) -> rejeu
+                return self._send({'error': 'model does not support thinking'}, 400)
+            FakeOllama.last_generate = body
+            return self._send({'response': FakeOllama.reply})
+        self._send({'error': 'nope'}, 404)
+
+
+class TestImprove(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.httpd = ThreadingHTTPServer(('127.0.0.1', 0), FakeOllama)
+        cls.base = f'http://127.0.0.1:{cls.httpd.server_address[1]}'
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+
+    def test_positive_rewrite_is_stripped_of_thinking_and_quotes(self):
+        out, model = I.improve('a fox', kind='positive', model='llama3.1:8b', base=self.base)
+        self.assertEqual(model, 'llama3.1:8b')
+        self.assertEqual(out, 'a lone red fox, snowy pine forest, soft dawn light')
+        body = FakeOllama.last_generate
+        self.assertIn('PROMPT: a fox', body['prompt'])
+        self.assertNotIn('think', body, 'rejoue sans think apres le 400')
+
+    def test_negative_uses_the_negative_instruction(self):
+        I.improve('blurry', kind='negative', model='llama3.1:8b', base=self.base)
+        self.assertIn('NEGATIVE PROMPT: blurry', FakeOllama.last_generate['prompt'])
+
+    def test_no_model_given_picks_the_first_installed(self):
+        _, model = I.improve('a fox', base=self.base)
+        self.assertEqual(model, 'qwen3:8b')
+
+    def test_list_models_returns_every_installed_model(self):
+        self.assertEqual(I.list_models(base=self.base), ['qwen3:8b', 'llama3.1:8b'])
+
+    def test_empty_prompt_is_a_clean_error_not_a_call(self):
+        with self.assertRaises(I.OllamaError):
+            I.improve('   ', base=self.base)
+
+    def test_a_missing_model_says_how_to_get_it(self):
+        with self.assertRaises(I.OllamaError) as cm:
+            I.improve('a fox', model='missing:1b', base=self.base)
+        self.assertIn('ollama pull missing:1b', str(cm.exception))
+
+    def test_ollama_down_gives_an_actionable_message(self):
+        with self.assertRaises(I.OllamaError) as cm:
+            I.improve('a fox', model='llama3.1:8b', base='http://127.0.0.1:9', timeout=2)
+        self.assertIn('Ollama unreachable', str(cm.exception))
+
+    def test_a_reply_that_is_only_thinking_is_an_error(self):
+        old = FakeOllama.reply
+        FakeOllama.reply = '<think>endless reasoning'
+        try:
+            with self.assertRaises(I.OllamaError):
+                I.improve('a fox', model='llama3.1:8b', base=self.base)
+        finally:
+            FakeOllama.reply = old
+
+
+class TestInstructions(unittest.TestCase):
+    def test_positive_and_negative_are_distinct(self):
+        self.assertIn('PROMPT:', I._instruction('positive'))
+        self.assertNotIn('NEGATIVE', I._instruction('positive'))
+        self.assertIn('NEGATIVE PROMPT:', I._instruction('negative'))
+
+    # custom-29: the syntax note only appears when the text uses {a|b|c} or __wildcards__
+    def test_plain_text_gets_no_syntax_note(self):
+        self.assertNotIn(I.SYNTAX_NOTE, I._instruction('positive', 'a fox'))
+        self.assertNotIn(I.SYNTAX_NOTE, I._instruction('positive', '{prompt} only'))
+
+    def test_variant_group_adds_the_note_before_the_label(self):
+        tpl = I._instruction('positive', 'a {shy|sad} fox')
+        self.assertIn(I.SYNTAX_NOTE, tpl)
+        self.assertLess(tpl.index(I.SYNTAX_NOTE), tpl.index('\n\nPROMPT:'))
+        self.assertTrue(tpl.endswith('PROMPT: {prompt}'))
+
+    def test_negative_label_is_kept_whole(self):
+        tpl = I._instruction('negative', '__neg-weight__, blurry')
+        self.assertIn(I.SYNTAX_NOTE, tpl)
+        self.assertTrue(tpl.endswith('\n\nNEGATIVE PROMPT: {prompt}'))
+        self.assertNotIn('NEGATIVE \n', tpl)
+
+    def test_wildcard_placeholder_is_enough_to_add_the_note(self):
+        self.assertIn(I.SYNTAX_NOTE, I._instruction('positive', '__color__ flower'))
+
+    # custom-31: user directives, after the syntax note, before the label
+    def test_directives_are_inserted_before_the_label(self):
+        tpl = I._instruction('positive', 'a fox', directives='in French, under 40 words')
+        self.assertIn(I.DIRECTIVES_HEAD + 'in French, under 40 words', tpl)
+        self.assertTrue(tpl.endswith('\n\nPROMPT: {prompt}'))
+        self.assertLess(tpl.index(I.DIRECTIVES_HEAD), tpl.index('\n\nPROMPT:'))
+
+    def test_directives_come_after_the_syntax_note(self):
+        tpl = I._instruction('negative', '__neg__, blurry', directives='keep it short')
+        self.assertLess(tpl.index(I.SYNTAX_NOTE), tpl.index(I.DIRECTIVES_HEAD))
+        self.assertTrue(tpl.endswith('\n\nNEGATIVE PROMPT: {prompt}'))
+
+    def test_blank_directives_change_nothing(self):
+        self.assertEqual(I._instruction('positive', 'a fox', directives='   '),
+                         I._instruction('positive', 'a fox'))
+        self.assertEqual(I._instruction('positive', 'a fox', directives=None),
+                         I._instruction('positive', 'a fox'))
+
+    def test_default_negative_is_a_usable_baseline(self):
+        neg = I.default_negative()
+        self.assertIn('watermark', neg)
+        self.assertIn('bad anatomy', neg)
+        self.assertNotIn('\n', neg)
+
+
+class TestFormatDetection(unittest.TestCase):
+    # custom-34
+    def test_tag_lists(self):
+        for text in ('1girl, red hair, smile, outdoors, sunset',
+                     'portrait of a woman, cinematic lighting, 85mm, film grain',
+                     'a fox',
+                     'masterpiece, (best quality:1.2), <lora:foo:0.8>, forest'):
+            self.assertEqual(I.detect_format(text), 'tags', text)
+
+    def test_prose(self):
+        for text in ('A young woman walks through a rainy street at night, her red coat '
+                     'glowing under the neon signs while taxis pass by.',
+                     'The dryad stands in a glittering forest. Her skin shimmers with rainbow light.',
+                     'an ancient myth dryad with glittery rainbow glowing skin standing in a '
+                     'misty forest at dawn with soft light through the trees'):
+            self.assertEqual(I.detect_format(text), 'prose', text)
+
+    def test_dynamic_syntax_does_not_tip_the_balance(self):
+        self.assertEqual(I.detect_format('{shy|sad|smile} girl, __color__ hair, outdoors'), 'tags')
+        self.assertEqual(I.detect_format('A {shy|sad} girl waits at the station. The train is late.'), 'prose')
+
+    def test_trailing_period_alone_is_not_prose(self):
+        self.assertEqual(I.detect_format('1girl, red hair, smile.'), 'tags')
+
+    def test_empty_is_tags(self):
+        self.assertEqual(I.detect_format(''), 'tags')
+        self.assertEqual(I.detect_format(None), 'tags')
+
+
+class TestFormatNote(unittest.TestCase):
+    def test_positive_gets_the_matching_note(self):
+        tags = I._instruction('positive', '1girl, red hair, smile')
+        prose = I._instruction('positive', 'A girl with red hair smiles at the camera on a sunny beach.')
+        self.assertIn(I.FORMAT_NOTES['tags'], tags)
+        self.assertNotIn(I.FORMAT_NOTES['prose'], tags)
+        self.assertIn(I.FORMAT_NOTES['prose'], prose)
+        self.assertNotIn(I.FORMAT_NOTES['tags'], prose)
+
+    def test_negative_never_gets_a_format_note(self):
+        tpl = I._instruction('negative', 'A long sentence describing everything to avoid here.')
+        for note in I.FORMAT_NOTES.values():
+            self.assertNotIn(note, tpl)
+
+    def test_note_comes_before_syntax_note_and_directives_and_label(self):
+        tpl = I._instruction('positive', '{shy|sad} girl, red hair', directives='in French')
+        self.assertLess(tpl.index('INPUT FORMAT'), tpl.index(I.SYNTAX_NOTE))
+        self.assertLess(tpl.index(I.SYNTAX_NOTE), tpl.index(I.DIRECTIVES_HEAD))
+        self.assertTrue(tpl.endswith('\n\nPROMPT: {prompt}'))
+
+    def test_empty_text_gets_no_note(self):
+        tpl = I._instruction('positive', '')
+        for note in I.FORMAT_NOTES.values():
+            self.assertNotIn(note, tpl)
+
+
+class TestSyntaxNoteOverTheWire(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.httpd = ThreadingHTTPServer(('127.0.0.1', 0), FakeOllama)
+        cls.base = f'http://127.0.0.1:{cls.httpd.server_address[1]}'
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+
+    def test_note_and_raw_text_are_sent_together(self):
+        I.improve('a {shy|sad|smile} fox', kind='positive', model='llama3.1:8b', base=self.base)
+        sent = FakeOllama.last_generate['prompt']
+        self.assertIn(I.SYNTAX_NOTE, sent)
+        self.assertIn('PROMPT: a {shy|sad|smile} fox', sent, 'the braces reach the model untouched')
+
+    def test_plain_prompt_is_sent_without_the_note(self):
+        I.improve('a fox', kind='positive', model='llama3.1:8b', base=self.base)
+        self.assertNotIn(I.SYNTAX_NOTE, FakeOllama.last_generate['prompt'])
+
+    # custom-31
+    def test_directives_travel_with_the_prompt(self):
+        I.improve('a fox', kind='positive', model='llama3.1:8b', base=self.base,
+                  directives='make it a winter night')
+        sent = FakeOllama.last_generate['prompt']
+        self.assertIn('make it a winter night', sent)
+        self.assertTrue(sent.endswith('PROMPT: a fox'))
+
+    def test_format_note_travels_with_a_prose_prompt(self):
+        I.improve('A red fox sleeps under a pine tree while snow falls quietly.', kind='positive',
+                  model='llama3.1:8b', base=self.base)
+        self.assertIn('INPUT FORMAT: prose', FakeOllama.last_generate['prompt'])
+
+    def test_default_negative_can_be_improved_like_any_text(self):
+        out, _ = I.improve(I.default_negative(), kind='negative', model='llama3.1:8b', base=self.base)
+        self.assertTrue(out)
+        self.assertIn('NEGATIVE PROMPT: lowres', FakeOllama.last_generate['prompt'])
+
+
+class TestCrispzAdaptations(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.httpd = ThreadingHTTPServer(('127.0.0.1', 0), FakeOllama)
+        cls.port = cls.httpd.server_address[1]
+        cls.base = f'http://127.0.0.1:{cls.port}'
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+
+    def tearDown(self):
+        I.configure({})
+
+    def test_endpoint_is_normalized(self):
+        self.assertEqual(I.normalize_endpoint(''), 'http://127.0.0.1:11434')
+        self.assertEqual(I.normalize_endpoint('http://localhost:11434/'), 'http://127.0.0.1:11434')
+        self.assertEqual(I.normalize_endpoint('http://LOCALHOST'), 'http://127.0.0.1')
+        self.assertEqual(I.normalize_endpoint('http://192.168.1.5:11434'), 'http://192.168.1.5:11434')
+        self.assertEqual(I.normalize_endpoint('http://localhostname:1'), 'http://localhostname:1')
+
+    def test_localhost_base_reaches_the_server(self):
+        _, model = I.improve('a fox', model='llama3.1:8b', base=f'http://localhost:{self.port}')
+        self.assertEqual(model, 'llama3.1:8b')
+
+    def test_system_proxy_is_ignored(self):
+        old = {k: os.environ.get(k) for k in ('HTTP_PROXY', 'http_proxy', 'NO_PROXY', 'no_proxy')}
+        os.environ['HTTP_PROXY'] = os.environ['http_proxy'] = 'http://127.0.0.1:9'
+        os.environ.pop('NO_PROXY', None)
+        os.environ.pop('no_proxy', None)
+        try:
+            self.assertEqual(I.list_models(base=self.base), ['qwen3:8b', 'llama3.1:8b'])
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_keep_alive_is_zero_by_default_and_configurable(self):
+        I.improve('a fox', model='llama3.1:8b', base=self.base)
+        self.assertEqual(FakeOllama.last_generate['keep_alive'], 0)
+        I.configure({'keep_alive': '5m', 'temperature': 0.2})
+        I.improve('a fox', model='llama3.1:8b', base=self.base)
+        self.assertEqual(FakeOllama.last_generate['keep_alive'], '5m')
+        self.assertEqual(FakeOllama.last_generate['options']['temperature'], 0.2)
+
+    def test_extra_options_are_merged(self):
+        I.improve('a fox', model='llama3.1:8b', base=self.base,
+                  options={'num_ctx': 8192, 'num_gpu': 0})
+        opts = FakeOllama.last_generate['options']
+        self.assertEqual((opts['num_ctx'], opts['num_gpu'], opts['temperature']), (8192, 0, 0.7))
+
+    def test_model_setting_is_used_when_no_model_is_given(self):
+        I.configure({'model': 'llama3.1:8b'})
+        _, model = I.improve('a fox', base=self.base)
+        self.assertEqual(model, 'llama3.1:8b')
+
+    def test_settings_drive_instructions_format_and_default_negative(self):
+        I.configure({'positive_instruction': 'Make it epic.' + chr(10) * 2 + 'PROMPT: {prompt}',
+                     'format': 'off', 'default_negative': 'ugly, blurry'})
+        tpl = I._instruction('positive', '1girl, red hair')
+        self.assertTrue(tpl.startswith('Make it epic.'))
+        for note in I.FORMAT_NOTES.values():
+            self.assertNotIn(note, tpl)
+        self.assertEqual(I.default_negative(), 'ugly, blurry')
+
+    def test_unknown_format_setting_falls_back_to_auto(self):
+        I.configure({'format': 'poetry'})
+        self.assertIn(I.FORMAT_NOTES['tags'], I._instruction('positive', '1girl, red hair'))
+
+
+if __name__ == '__main__':
+    unittest.main()

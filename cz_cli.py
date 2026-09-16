@@ -638,6 +638,18 @@ def cli_main(argv=None):
     parser.add_argument("--time-log", default=None,
                         help="If set, append the time of each run to this file (TSV)")
     parser.add_argument("--quiet", action="store_true", help="Reduce stdout verbosity")
+    parser.add_argument("--improve", action="store_true",
+                        help="Rewrite --prompt via Ollama (Improve prompt) before generating; "
+                             "the {a|b|c} / __wildcard__ syntax is kept. Printed on stderr.")
+    parser.add_argument("--improve-negative", action="store_true",
+                        help="Rewrite --negative via Ollama before generating (empty = start from the "
+                             "standard negative; Ollama down = that negative as is, with a warning)")
+    parser.add_argument("--directives", default="", metavar="TEXT",
+                        help="Free directives for --improve / --improve-negative, this run only "
+                             "(e.g. 'more cinematic, under 60 words')")
+    parser.add_argument("--improve-model", default=None, metavar="MODEL",
+                        help="Ollama model for --improve (default: ollama_improve.model in "
+                             "config.txt, else the first installed model)")
     parser.add_argument("--log-level", choices=["quiet", "info", "debug"], default=None,
                         help="Console log level on stderr. debug = full params/state (dev). "
                              "Default from env CRISPZ_LOG_LEVEL or 'info'.")
@@ -821,6 +833,29 @@ def cli_main(argv=None):
     # puis variantes {a|b|c} + wildcards du prompt et du negatif, liees a cette seed.
     # --xyz fait tout cela PAR CELLULE (_xyz_cli_run): ses axes Prompt / S/R agissent
     # sur le texte brut et chaque cellule garde sa propre seed.
+    # --improve / --improve-negative: reecriture Ollama AVANT tout le reste (variantes,
+    # wildcards, LoRA, XYZ travaillent ensuite sur le texte ameliore, syntaxe conservee).
+    if args.improve or args.improve_negative:
+        from cz_ollama import improve_prompt, improve_negative, OllamaError
+        try:
+            if args.improve:
+                if not (args.prompt or "").strip():
+                    parser.error("--improve needs --prompt")
+                args.prompt, _used = improve_prompt(args.prompt, "positive", args.improve_model,
+                                                    None, args.directives)
+                if not args.quiet:
+                    print(f"[improve] {_used}: {args.prompt}", file=sys.stderr)
+            if args.improve_negative:
+                args.negative, _used, _warn = improve_negative(args.negative, args.improve_model,
+                                                               None, args.directives)
+                if _warn:
+                    print(f"[improve] WARNING: Ollama unavailable, {_warn}", file=sys.stderr)
+                elif not args.quiet:
+                    print(f"[improve] {_used} (negative): {args.negative}", file=sys.stderr)
+        except OllamaError as e:
+            print(f"error: improve failed: {e}", file=sys.stderr)
+            return 2
+
     _xyz_cells = bool(args.xyz and args.txt2img)
     if not _xyz_cells:
         args.seed = resolve_seed(args.seed)

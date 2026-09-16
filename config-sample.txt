@@ -2,13 +2,15 @@
     "_hf_token_help": "Hugging Face token for GATED models (e.g. FLUX.1-Krea-dev). Create a READ token at https://huggingface.co/settings/tokens and accept the model license first. Leave empty if you ran 'huggingface-cli login'. config.txt is gitignored -> never commit your token.",
     "hf_token": "",
 
-    "ollama_url": "http://localhost:11434",
+    "ollama_url": "http://127.0.0.1:11434",
     "ollama_describe_prompt": "You are an expert text-to-image prompt writer. Look at the image and output ONE detailed prompt as comma-separated visual tags (subject, clothing, setting, lighting, style, quality). No preamble, no explanation, just the prompt.",
     "ollama_improve_prompt": "Rewrite the following text-to-image prompt to be more vivid and detailed while keeping the same subject and intent. Output ONLY the improved prompt (comma-separated), no preamble.\n\nPROMPT: {prompt}",
     "ollama_compose_prompt": "You are an expert text-to-image prompt writer. Below are descriptions of several reference images. Merge their key elements (subject, clothing, pose, setting, style) into ONE single coherent, detailed image prompt. Output ONLY the prompt (comma-separated), no preamble.\n\n{descriptions}",
     "ollama_vision_blocklist": [],
     "ollama_keep_alive": 0,
     "ollama_cpu": false,
+    "ollama_improve": {"enabled": true, "endpoint": "", "model": "", "timeout": 120, "temperature": 0.7, "keep_alive": 0, "positive_instruction": "", "negative_instruction": "", "default_negative": "", "format": "auto"},
+    "_ollama_improve_help": "Improve prompt / Improve negative (Ollama, shared prompt_improve module). enabled=false hides the buttons. endpoint: '' = the Ollama URL above. model: '' = the model picked in Prompt AI, else the first installed. keep_alive 0 unloads the model right after the answer (the GPU is shared with image generation). positive_instruction / negative_instruction: '' = built-in (a custom ollama_improve_prompt is still honored). default_negative: what Improve negative starts from on an empty box ('' = built-in SDXL baseline). format: auto | tags | prose | off (input format stated to the model for the positive prompt).",
     "job_queue": {"enabled": true},
     "_job_queue_help": "Job queue panel ('+ Queue' snapshots all settings incl. model; 'Run queue' chains them; ⏸ Pause finishes the current job then halts; Stop interrupts it mid-render and the interrupted job STAYS queued). The queue is saved to cache/queue.json after every change and every job, and restored at startup (persist=false to disable). enabled=false removes the UI entirely (zero cost).",
     "tag_autocomplete": {"enabled": true, "max_results": 8, "sources": ["https://raw.githubusercontent.com/DominikDoom/a1111-sd-webui-tagcomplete/main/tags/danbooru.csv"]},
@@ -19,8 +21,6 @@
     "_load_progress_help": "Live feedback while a model loads (first run downloads from HF = minutes of silence otherwise). Terminal shows a rewritten '[crispz][load] ... 45s | 3.2 GB in VRAM' line every heartbeat_s; the UI progress bar advances (VRAM allocated / target_vram_gb). enabled=false loads directly with no monitor thread (zero cost).",
     "caption_model": "blip-large",
     "_caption_model_help": "Local auto-describe model (no Ollama): blip-large (default) | blip-base",
-    "improve_local_keywords": "highly detailed, sharp focus, professional photography, intricate details, natural lighting, high quality, 8k",
-    "_improve_local_keywords_help": "Quality tags appended by 'Improve prompt' when no Ollama model is selected (local rule-based fallback, no model).",
 
     "performance_presets": {
         "Turbo (8 steps)": [8, 0.0],

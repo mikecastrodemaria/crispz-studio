@@ -6,18 +6,21 @@ Extrait de app.py. Appelle l'API HTTP locale d'Ollama (/api/tags, /api/show,
 """
 
 import os
-import json
-import urllib.request
 
 import cz_core
+import prompt_improve
+from prompt_improve import OllamaError  # noqa: F401  (re-export pour l'UI et la CLI)
 from cz_core import (
     CONFIG, DESCRIBE_INSTRUCTION, IMPROVE_INSTRUCTION, COMPOSE_INSTRUCTION,
     _prefs, _dbg, _pil_to_b64_jpeg,
 )
 
 # URL Ollama (Describe image->prompt + Improve prompt). Configurable, persistee.
-OLLAMA_URL = (os.environ.get("OLLAMA_URL") or _prefs.get("ollama_url")
-              or CONFIG.get("ollama_url") or "http://localhost:11434")
+# 127.0.0.1 par defaut, et un 'localhost' deja configure est reecrit: sous Windows,
+# Python tente ::1 d'abord et l'appel expire quand Ollama n'ecoute qu'en IPv4.
+OLLAMA_URL = prompt_improve.normalize_endpoint(
+    os.environ.get("OLLAMA_URL") or _prefs.get("ollama_url")
+    or CONFIG.get("ollama_url") or prompt_improve.DEFAULT_ENDPOINT)
 # Duree de maintien du modele Ollama en VRAM apres un appel (keep_alive). 0 =
 # decharge immediatement -> libere la VRAM avant la generation Z-Image.
 OLLAMA_KEEP_ALIVE = CONFIG.get("ollama_keep_alive", 0)
@@ -34,12 +37,10 @@ def _ollama_gen_opts():
 
 
 def _ollama_http(path, payload=None, base=None, timeout=8):
-    b = (base or OLLAMA_URL).rstrip("/")
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(b + path, data=data,
-                                 headers={"Content-Type": "application/json"} if data else {})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+    """Transport commun (Describe, Improve, Vision Mix) -> prompt_improve.http: proxy
+    systeme ignore (Ollama est local), `think` rejoue sans le champ sur HTTP 400, erreurs
+    en OllamaError au message actionnable."""
+    return prompt_improve.http(path, payload, base=base or OLLAMA_URL, timeout=timeout)
 
 
 def _ollama_vision_models(base=None):
@@ -83,34 +84,84 @@ def _ollama_describe(image, model, base=None):
     return (out.get("response") or "").strip()
 
 
+# ----------------------------------------------------------------------------
+# Improve (prompt_improve, module partage par la famille crispz)
+# ----------------------------------------------------------------------------
+# Consigne livree par les versions precedentes (config.txt / cz_core). Une valeur
+# IDENTIQUE n'est pas une personnalisation: la consigne positive du module s'applique.
+_SHIPPED_IMPROVE_INSTRUCTIONS = (
+    "Rewrite the following text-to-image prompt to be more vivid and detailed while keeping "
+    "the same subject and intent. Output ONLY the improved prompt (comma-separated), no "
+    "preamble.\n\nPROMPT: {prompt}",
+)
+
+
+def _improve_settings(config=None):
+    """Bloc `ollama_improve` de config.txt, complete pour la compatibilite:
+    - une ancienne consigne `ollama_improve_prompt` PERSONNALISEE devient la consigne
+      positive (si le bloc n'en donne pas);
+    - keep_alive absent -> `ollama_keep_alive` (0 par defaut: le modele quitte la VRAM,
+      partagee avec la generation d'image)."""
+    config = CONFIG if config is None else config
+    s = dict(config.get("ollama_improve") or {})
+    legacy = str(config.get("ollama_improve_prompt") or "").strip()
+    if (not s.get("positive_instruction") and legacy
+            and legacy not in [x.strip() for x in _SHIPPED_IMPROVE_INSTRUCTIONS]):
+        s["positive_instruction"] = legacy
+    if s.get("keep_alive") in (None, ""):
+        s["keep_alive"] = config.get("ollama_keep_alive", 0)
+    return s
+
+
+prompt_improve.configure(_improve_settings())
+IMPROVE_ENABLED = bool((CONFIG.get("ollama_improve") or {}).get("enabled", True))
+
+
+def _improve_base(base=None):
+    """Hote Ollama d'Improve: `ollama_improve.endpoint`, sinon l'URL de l'UI (meme hote
+    que Describe), sinon OLLAMA_URL."""
+    return prompt_improve._setting("endpoint", "") or base or OLLAMA_URL
+
+
+def _improve_options():
+    """Options Ollama propres a l'outil (CPU force...), fusionnees dans l'appel."""
+    return dict(_ollama_gen_opts().get("options") or {})
+
+
+def improve_prompt(text, kind="positive", model=None, base=None, directives=None):
+    """Reecrit `text` ('positive' ou 'negative'). Renvoie (texte, modele utilise).
+    Modele: celui de l'UI, sinon `ollama_improve.model`, sinon le premier installe.
+    Leve OllamaError (message actionnable): texte vide, Ollama arrete, aucun modele..."""
+    return prompt_improve.improve(text, kind=kind, model=model or None,
+                                  base=_improve_base(base), directives=directives,
+                                  options=_improve_options())
+
+
+def improve_negative(text, model=None, base=None, directives=None):
+    """Improve du negatif. Renvoie (negatif, modele|None, avertissement|None).
+    Case vide: on part du negatif standard (ollama_improve.default_negative) et le modele
+    l'etend; Ollama injoignable -> le negatif standard est insere TEL QUEL, avec un
+    avertissement qui dit pourquoi. Case remplie: erreur Ollama -> OllamaError."""
+    start = (text or "").strip()
+    if start:
+        out, used = improve_prompt(start, "negative", model, base, directives)
+        return out, used, None
+    start = prompt_improve.default_negative()
+    try:
+        out, used = improve_prompt(start, "negative", model, base, directives)
+        return out, used, None
+    except OllamaError as e:
+        return start, None, f"standard negative inserted as is ({e})"
+
+
+def list_text_models(base=None):
+    """Tous les modeles Ollama installes (Improve n'exige pas la vision)."""
+    return prompt_improve.list_models(base=_improve_base(base))
+
+
 def _ollama_improve(prompt_text, model, base=None):
-    """Reecrit un prompt pour le rendre plus riche, via Ollama (modele texte/vision).
-    Instruction editable dans config.txt (ollama_improve_prompt, {prompt} = le prompt)."""
-    pt = prompt_text or ""
-    instr = (IMPROVE_INSTRUCTION.replace("{prompt}", pt) if "{prompt}" in IMPROVE_INSTRUCTION
-             else f"{IMPROVE_INSTRUCTION}\n\nPROMPT: {pt}")
-    out = _ollama_http("/api/generate", {"model": model, "prompt": instr, **_ollama_gen_opts()},
-                       base=base, timeout=120)
-    return (out.get("response") or "").strip()
-
-
-_IMPROVE_LOCAL_KEYWORDS = CONFIG.get(
-    "improve_local_keywords",
-    "highly detailed, sharp focus, professional photography, intricate details, "
-    "natural lighting, high quality, 8k")
-
-
-def _local_improve(prompt_text):
-    """Amelioration LOCALE du prompt, SANS Ollama et sans modele (rule-based): ajoute les
-    mots-cles de qualite (config 'improve_local_keywords') encore absents du prompt.
-    Instantane, 100% offline. Fallback quand aucun modele Ollama n'est selectionne."""
-    pt = (prompt_text or "").strip().rstrip(",").strip()
-    low = pt.lower()
-    adds = [k.strip() for k in _IMPROVE_LOCAL_KEYWORDS.split(",") if k.strip()]
-    extra = [k for k in adds if k.lower() not in low]
-    if not extra:
-        return pt
-    return (pt + (", " if pt else "") + ", ".join(extra)).strip()
+    """Compat: reecriture du prompt positif (cf. improve_prompt)."""
+    return improve_prompt(prompt_text, "positive", model, base)[0]
 
 
 def _ollama_compose(captions, model, base=None):
