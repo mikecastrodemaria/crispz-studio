@@ -580,7 +580,9 @@ def detail_prompt(project, panel, subject=None):
     prompt vide est un resultat VALIDE et sur, pas un cas d'echec."""
     if subject:
         return subject.strip()
-    text = panel.get("text") or ""
+    # texte DEVELOPPE (meme seed que le rendu): dans '{@Lea|@Sam}' le sujet est
+    # le personnage reellement tire, pas le premier cite
+    text = _expand_text(panel.get("text") or "", int(panel.get("seed", -1)))
     m = _AT.search(text)
     while m:
         if m.group(0) != "@@":

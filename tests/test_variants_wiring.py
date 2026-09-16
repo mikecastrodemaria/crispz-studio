@@ -387,6 +387,18 @@ def test_comic_detail_prompt_picks_the_same_option_as_the_render():
         assert coat in cc.detail_prompt(p, panel)
 
 
+def test_comic_detail_prompt_subject_is_the_picked_character():
+    import cz_comic as cc
+    for seed in range(20):
+        p, page, panel = _comic_project("{@Lea|@Sam} waves", seed=seed)
+        r = cc.resolve_panel(p, page, panel)
+        subject = cc.detail_prompt(p, panel)
+        if r["refs"] == ["refs/sam.png"]:
+            assert subject == "a man", (seed, subject)
+        else:
+            assert subject.startswith("a woman"), (seed, subject)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
