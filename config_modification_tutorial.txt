@@ -18,7 +18,7 @@ local paths/tweaks stay private.)
 KEYS
 ----
 ollama_url              Ollama server URL (Describe + Improve prompt).
-                        e.g. "http://localhost:11434"
+                        e.g. "http://127.0.0.1:11434"
 ollama_describe_prompt  Instruction sent to the vision model to caption an image
                         into a prompt (Describe tab).
 ollama_improve_prompt   Instruction to rewrite/enrich the current prompt. Must
@@ -330,8 +330,16 @@ caption_model           Local auto-describe model (no Ollama): "blip-large"
                         (default, richer) | "blip-base" (lighter). Used by the
                         Describe fallback and Inpaint/Outpaint Auto-describe.
                         Also selectable in Prompt AI > Caption model (persisted).
-improve_local_keywords  Quality tags appended by "Improve prompt" when no Ollama
-                        model is selected (local rule-based fallback).
+ollama_improve          {"enabled": true, "endpoint": "", "model": "", "timeout": 120,
+                        "temperature": 0.7, "keep_alive": 0, "positive_instruction": "",
+                        "negative_instruction": "", "default_negative": "", "format": "auto"}
+                        Improve prompt / Improve negative. enabled=false hides the
+                        buttons. endpoint "" = ollama_url; model "" = the Improve
+                        model picked in Prompt AI, else the first installed.
+                        keep_alive 0 unloads right after the answer. Empty
+                        instructions = built-in (a custom ollama_improve_prompt is
+                        still honored). default_negative: start of Improve negative
+                        on an empty box. format: auto | tags | prose | off.
 checkpoints_extra_dir   Optional second checkpoints folder, merged into the single
                         "Z-Image checkpoint" dropdown ("" = disabled).
 

@@ -115,6 +115,24 @@ python app.py --vision-mix person.jpg outfit.jpg --save-mode local --output-dir 
 python app.py --vision-mix a.png b.png --ollama-model llava:13b-v1.6 --gen-steps 8
 ```
 
+## Improve the prompt before generating  — `--improve` (needs Ollama)
+
+```bash
+# Rewrite --prompt via Ollama, then generate ({a|b|c} and __wildcards__ are kept)
+python app.py --txt2img --prompt "a fox in the snow" --improve
+
+# With directives for this run, and a chosen model
+python app.py --txt2img --prompt "portrait of a knight" --improve \
+    --directives "more cinematic, under 40 words" --improve-model llama3.1:8b
+
+# Negative too (an empty --negative starts from a standard negative)
+python app.py --txt2img --prompt "a fox" --improve-negative
+```
+
+The rewritten text is printed on stderr. With `--improve`, Ollama down or no model =
+exit code 2 and nothing is generated. `--improve-negative` with Ollama down on an empty
+`--negative` uses the standard negative as is, with a warning.
+
 ## Upscale / detail an existing image (img2img)
 
 ```bash
