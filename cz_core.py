@@ -123,23 +123,146 @@ def profile_for_model(name):
     return int(DEFAULT_MODEL_PROFILE.get("steps", 8)), float(DEFAULT_MODEL_PROFILE.get("guidance", 0.0))
 
 
-# Strings d'instruction Ollama (editable dans config.txt).
-DESCRIBE_INSTRUCTION = CONFIG.get(
-    "ollama_describe_prompt",
+# Strings d'instruction Ollama (editable dans config.txt). Les exemples d'avant 1.36 --
+# ceux de config-sample.txt, recopies tels quels dans la plupart des config.txt -- ne
+# comptent pas comme une personnalisation : sinon l'ancienne consigne en tags masquerait
+# les nouvelles chez tous ceux qui ont copie l'exemple.
+LEGACY_DESCRIBE_INSTRUCTION = (
     "You are an expert text-to-image prompt writer. Look at the image and output ONE "
     "detailed prompt as comma-separated visual tags (subject, clothing, setting, lighting, "
     "style, quality). No preamble, no explanation, just the prompt.")
-IMPROVE_INSTRUCTION = CONFIG.get(
-    "ollama_improve_prompt",
+LEGACY_IMPROVE_INSTRUCTION = (
     "Rewrite the following text-to-image prompt to be more vivid and detailed while keeping "
     "the same subject and intent. Output ONLY the improved prompt (comma-separated), no "
     "preamble.\n\nPROMPT: {prompt}")
-COMPOSE_INSTRUCTION = CONFIG.get(
-    "ollama_compose_prompt",
+LEGACY_COMPOSE_INSTRUCTION = (
     "You are an expert text-to-image prompt writer. Below are descriptions of several "
     "reference images. Merge their key elements (subject, clothing, pose, setting, style) "
     "into ONE single coherent, detailed image prompt. Output ONLY the prompt (comma-"
     "separated), no preamble.\n\n{descriptions}")
+
+
+def _instruction(key, legacy, default):
+    """Consigne `key` de config.txt ; vide ou identique a l'ancien exemple -> `default`."""
+    v = CONFIG.get(key)
+    if not isinstance(v, str) or not v.strip() or v.strip() == legacy.strip():
+        return default
+    return v
+
+
+# Describe : un style d'analyse = une consigne, {words} = la longueur. "Prompt (prose)" est
+# la v4 mesuree le 2026-09-11 (Agents-A1-4B et muse-glimmer ; 3 images au prompt connu,
+# chaque description regeneree par klein 4B a la meme seed) : sans le medium en tete, un
+# portrait au crayon revenait en photo ; un texte cite ligne par ligne revenait avec ses
+# lignes melangees ; une absence enoncee ("No text is visible") ou une hesitation
+# ("appears to be") n'apporte rien au prompt. Le 2026-09-12, meme banc : l'epoque (que la
+# consigne "Dataset paragraph" de Captionz demande) remonte la fidelite du portrait de 0,54
+# a 0,65-0,66 sur les deux modeles. Les autres styles suivent les memes regles.
+_DESCRIBE_RULES = (
+    "Describe only what is present: never mention what is absent. State every detail as a "
+    "fact: no \"appears\", \"seems\", \"likely\", \"possibly\", \"as if\". No filler "
+    "(masterpiece, best quality, 8k, stunning, beautiful). Do not start with \"This image\". ")
+_DESCRIBE_TEXT_RULE = (
+    "Quote text only when it is a main element of the image (a sign, a title or a label in "
+    "the foreground): give it once, in reading order, as a single string in double quotes, "
+    "exactly as written; skip small or background text entirely. ")
+SHORT_CAPTION_STYLE = "Short caption"
+DESCRIBE_STYLES = {
+    "Prompt (prose)": (
+        "Describe this image as a text-to-image prompt, in one flowing paragraph of about "
+        "{words} words. Begin with the medium and style (for example: black-and-white ink "
+        "illustration, candid photograph, 3D render, oil painting). Then: main subject(s) "
+        "(count, age range, build, face, expression, hair); clothing and accessories "
+        "(materials, colors, fit); pose and action; setting from foreground to background, "
+        "with positions (left, right, center); camera (shot size, angle, lens, focus); "
+        "lighting (sources, direction, softness, color temperature); color palette with "
+        "precise color names; time of day, weather and era when they are identifiable; mood. "
+        + _DESCRIBE_TEXT_RULE + _DESCRIBE_RULES + "Output only the paragraph."),
+    "Prompt (tags)": (
+        "Describe this image as a text-to-image prompt made of about {words} words of "
+        "comma-separated visual tags, most important first: medium and style, subject, "
+        "clothing, pose, setting, camera, lighting, colors, mood. "
+        + _DESCRIBE_TEXT_RULE + _DESCRIBE_RULES + "Output only the tags."),
+    "Photo (technical)": (
+        "Describe this photograph as a text-to-image prompt, in one paragraph of about "
+        "{words} words, for a photographer who must reproduce it. Begin with the kind of "
+        "photograph (studio portrait, street, product, landscape...). Then: subject and pose; "
+        "shot size and camera angle; lens focal length and aperture, depth of field and what "
+        "is in focus; lighting setup (key, fill and rim lights, their direction, softness and "
+        "color temperature); color grading, contrast, film grain or noise; setting and "
+        "background. " + _DESCRIBE_TEXT_RULE + _DESCRIBE_RULES + "Output only the paragraph."),
+    "Art & style": (
+        "Describe this image as a text-to-image prompt, in one paragraph of about {words} "
+        "words, focused on how it is made. Begin with the medium and technique (ink, pencil, "
+        "watercolor, oil, digital painting, 3D render, pixel art...). Then: line work and "
+        "brush strokes, shading and rendering, color palette with precise color names, level "
+        "of detail, art movement or genre, composition; then the subject in a few words. "
+        + _DESCRIBE_TEXT_RULE + _DESCRIBE_RULES + "Output only the paragraph."),
+    "Composition & layout": (
+        "Describe this image as a text-to-image prompt, in one paragraph of about {words} "
+        "words, so that the same layout can be rebuilt. Begin with the medium and style. "
+        "Then place every element: foreground, middle ground and background; left, center "
+        "and right; relative sizes and distances; where the horizon and the vanishing point "
+        "sit; framing, camera height and angle; empty space. "
+        + _DESCRIBE_TEXT_RULE + _DESCRIBE_RULES + "Output only the paragraph."),
+    "Character sheet": (
+        "Describe the main character of this image as a text-to-image prompt, in one "
+        "paragraph of about {words} words, so that the same character can be drawn again. "
+        "Begin with the medium and style. Then: age range, build and height, face shape, "
+        "eyes, nose, lips, skin tone, hair (color, length, texture, style); outfit from the "
+        "inner layer to the outer one with materials, colors and fit; accessories; "
+        "distinguishing marks; pose and expression. Keep the setting to one short sentence. "
+        + _DESCRIBE_RULES + "Output only the paragraph."),
+    "Text & typography": (
+        "Describe this image as a text-to-image prompt, in one paragraph of about {words} "
+        "words, for an image whose text matters. Begin with the medium and style. Quote every "
+        "legible line of text exactly, in reading order, in double quotes; for each, give its "
+        "place, size, font style (serif, sans-serif, script, hand-lettered...), color and "
+        "material. Then describe the support (sign, poster, screen, label...) and the "
+        "setting. Never guess blurry or partial text. " + _DESCRIBE_RULES
+        + "Output only the paragraph."),
+    "Dataset paragraph": (
+        "Describe this image in one detailed paragraph of about {words} words: subjects and "
+        "characters, objects, setting, era if identifiable, medium and technique (photo, "
+        "painting, 3D render, illustration...), visual style and mood. Use concrete visual "
+        "terms. End with the aspect ratio and orientation. " + _DESCRIBE_RULES
+        + "Output only the paragraph."),
+    SHORT_CAPTION_STYLE: (
+        "Describe this image in one short sentence of at most {words} words: the medium, the "
+        "main subject and the setting. " + _DESCRIBE_RULES + "Output only the sentence."),
+}
+DESCRIBE_LENGTHS = {"Short": 60, "Medium": 120, "Long": 180, "Very long": 300}
+DEFAULT_DESCRIBE_STYLE, DEFAULT_DESCRIBE_LENGTH = "Prompt (prose)", "Long"
+CUSTOM_STYLE = "Custom (config.txt)"
+# Consigne personnelle de config.txt (style "Custom (config.txt)"), None sinon.
+DESCRIBE_CUSTOM = _instruction("ollama_describe_prompt", LEGACY_DESCRIBE_INSTRUCTION, None)
+
+
+def describe_instruction(style=None, length=None):
+    """Consigne envoyee au modele vision pour ce style et cette longueur (defauts sinon)."""
+    if style == CUSTOM_STYLE and DESCRIBE_CUSTOM:
+        return DESCRIBE_CUSTOM
+    tpl = DESCRIBE_STYLES.get(style) or DESCRIBE_STYLES[DEFAULT_DESCRIBE_STYLE]
+    words = 25 if style == SHORT_CAPTION_STYLE else DESCRIBE_LENGTHS.get(
+        length, DESCRIBE_LENGTHS[DEFAULT_DESCRIBE_LENGTH])
+    return tpl.replace("{words}", str(words))
+
+
+# Consigne de Describe par defaut (compat : importee telle quelle par d'anciens appelants).
+DESCRIBE_INSTRUCTION = describe_instruction(CUSTOM_STYLE if DESCRIBE_CUSTOM else DEFAULT_DESCRIBE_STYLE)
+IMPROVE_INSTRUCTION = _instruction(
+    "ollama_improve_prompt", LEGACY_IMPROVE_INSTRUCTION,
+    "Rewrite the following text-to-image prompt to be more vivid and detailed while keeping "
+    "the same subject, intent and every detail it already gives; add what is missing among "
+    "medium and style, camera, lighting and color. Keep its form: prose stays prose, a tag "
+    "list stays a tag list. No filler (masterpiece, best quality, 8k). Output ONLY the "
+    "improved prompt, no preamble.\n\nPROMPT: {prompt}")
+COMPOSE_INSTRUCTION = _instruction(
+    "ollama_compose_prompt", LEGACY_COMPOSE_INSTRUCTION,
+    "You are an expert text-to-image prompt writer. Below are descriptions of several "
+    "reference images. Merge their key elements (subject, clothing, pose, setting, style) "
+    "into ONE single coherent, detailed image prompt, written as one flowing paragraph that "
+    "starts with the medium and style. Output ONLY the prompt, no preamble.\n\n{descriptions}")
 
 
 def _load_prefs_raw():

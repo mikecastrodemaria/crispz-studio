@@ -190,11 +190,14 @@ def _filter_styles(query, selected):
 # Ollama (Describe image -> prompt, Improve prompt). + fallback local BLIP.
 # ----------------------------------------------------------------------------
 # Fonctions Ollama -> cz_ollama.py (les handlers UI _ui_* restent ici, plus bas).
+import cz_ollama  # noqa: E402
 from cz_ollama import (  # noqa: E402,F401
     OLLAMA_URL, OLLAMA_KEEP_ALIVE, OLLAMA_CPU, _ollama_gen_opts, _ollama_http,
     _ollama_vision_models, _ollama_describe, _ollama_improve, _ollama_compose,
     improve_prompt, improve_negative, list_text_models, IMPROVE_ENABLED, OllamaError,
+    set_describe_style, describe_style_choices,
 )
+from cz_core import DESCRIBE_LENGTHS, describe_instruction  # noqa: E402
 
 
 # Caption local BLIP (fallback Ollama), FaceSwap (InsightFace/inswapper) + restore
@@ -203,7 +206,7 @@ from cz_ollama import (  # noqa: E402,F401
 import cz_face
 from cz_face import (  # noqa: E402,F401
     _local_caption, _remove_bg, set_faceswap_restore, set_faceswap_quality,
-    set_caption_model, _current_caption_kind,
+    set_caption_model, _current_caption_kind, OLLAMA_CAPTION_PREFIX,
 )
 
 
@@ -1085,23 +1088,71 @@ def _set_performance(name):
 IMPROVE_NEGATIVE_UI = True
 
 
+def _caption_choices(vision_models):
+    """Choix du Caption model : BLIP local, puis les modeles vision Ollama detectes
+    ("ollama:<nom>"). Le choix courant reste dans la liste, meme avant la detection."""
+    ch = ["blip-large", "blip-base"] + [OLLAMA_CAPTION_PREFIX + m for m in (vision_models or [])]
+    cur = _current_caption_kind()
+    if cur not in ch:
+        ch.append(cur)
+    return ch
+
+
+def _remembered_vision_model():
+    """Modele vision choisi a la session precedente (preferences.json), ou None."""
+    try:
+        return cz_core._load_prefs_raw().get("ollama_model")
+    except Exception:
+        return None
+
+
+def _ui_detect_improve_models(url):
+    """Liste TOUS les modeles Ollama pour Improve (reecrire du texte n'exige pas la
+    vision). Ollama injoignable -> liste vide (le statut vient de _ui_detect_ollama)."""
+    try:
+        return gr.update(choices=list_text_models(base=url), value=None)
+    except Exception:
+        return gr.update(choices=[], value=None)
+
+
 def _ui_detect_ollama(url):
-    """Detecte Ollama: modeles VISION pour Describe, TOUS les modeles pour Improve (reecrire
-    du texte n'exige pas la vision). Renvoie (liste vision, liste Improve, statut)."""
+    """Detecte Ollama et liste UNIQUEMENT les modeles vision (Describe, Vision Mix, Caption
+    model). Appele aussi au chargement de la page : la liste restait vide jusqu'au clic
+    sur Detect, et Describe passait en silence par BLIP. Reprend le modele retenu."""
     try:
         models = _ollama_vision_models(base=url)
-        text_models = list_text_models(base=url)
     except Exception:
-        return (gr.update(choices=[], value=None), gr.update(choices=[], value=None),
-                "Ollama not reachable. Describe will use the local captioner fallback. "
-                "Improve needs Ollama.")
-    improve_dd = gr.update(choices=text_models, value=None)
+        return (gr.update(choices=[], value=None),
+                "Ollama not reachable. Describe will use the caption model fallback. "
+                "Improve needs Ollama.", gr.update(choices=_caption_choices([])))
     if not models:
-        return (gr.update(choices=[], value=None), improve_dd,
-                "Ollama OK but no VISION model. Pull one, e.g. `ollama pull llava` or `moondream`."
-                + (f" Improve can use {len(text_models)} text model(s)." if text_models else ""))
-    return (gr.update(choices=models, value=models[0]), improve_dd,
-            f"Ollama OK - {len(models)} vision model(s), {len(text_models)} model(s) for Improve.")
+        return (gr.update(choices=[], value=None),
+                "Ollama OK but no VISION model. Pull one, e.g. `ollama pull llava` or `moondream`.",
+                gr.update(choices=_caption_choices([])))
+    keep = _remembered_vision_model()
+    value = keep if keep in models else models[0]
+    return (gr.update(choices=models, value=value), f"Ollama OK - {len(models)} vision model(s).",
+            gr.update(choices=_caption_choices(models)))
+
+
+def _ui_remember_vision_model(model):
+    """Retient le modele vision choisi (preferences.json) pour le prochain lancement."""
+    if model:
+        try:
+            _save_prefs_keys({"ollama_model": model})
+        except Exception as e:
+            _dbg(f"save ollama_model pref failed: {e}")
+
+
+def _ui_set_describe_style(style, length):
+    """Style et longueur de Describe (Prompt AI) : actifs tout de suite, retenus ; renvoie
+    la consigne envoyee au modele (apercu)."""
+    s, n = set_describe_style(style, length)
+    try:
+        _save_prefs_keys({"describe_style": s, "describe_length": n})
+    except Exception as e:
+        _dbg(f"save describe style pref failed: {e}")
+    return describe_instruction(s, n)
 
 
 def _ui_describe(image, model, url):
@@ -1111,9 +1162,15 @@ def _ui_describe(image, model, url):
         return gr.update(), "Drop an image to describe first."
     if model:
         try:
-            return gr.update(value=_ollama_describe(image, model, base=url)), f"Described via {model}."
+            return (gr.update(value=_ollama_describe(image, model, base=url)),
+                    f"Described via {model} ({cz_ollama.DESCRIBE_STYLE}).")
         except Exception as e:
-            return gr.update(), f"Ollama describe failed: {e}"
+            # Ollama eteint ou modele absent : la legende du Caption model plutot que rien.
+            try:
+                return (gr.update(value=_local_caption(image)),
+                        f"Ollama describe failed ({e}); described via the caption model instead.")
+            except Exception as e2:
+                return gr.update(), f"Ollama describe failed: {e} (caption model failed too: {e2})"
     try:
         return gr.update(value=_local_caption(image)), "Described via local captioner (no Ollama model)."
     except Exception as e:
@@ -1160,6 +1217,9 @@ def _ui_set_caption_model(kind):
         _save_prefs_keys({"caption_model": k})
     except Exception as e:
         _dbg(f"save caption_model pref failed: {e}")
+    if k.startswith(OLLAMA_CAPTION_PREFIX):
+        return (f"Caption model set to **{k}** (saved). BLIP takes over if Ollama fails. Prefer a "
+                "small vision model: it runs right before the image model.")
     return f"Caption model set to **{k}** (saved; loads on next use)."
 
 
@@ -1172,7 +1232,7 @@ def _ui_compose(r1, r2, r3, r4, model, url):
     if not model:
         return gr.update(), "Select an Ollama vision model in Advanced > Prompt AI (Detect)."
     try:
-        caps = [_ollama_describe(im, model, base=url) for im in refs]
+        caps = [_ollama_describe(im, model, base=url, length="Medium") for im in refs]
     except Exception as e:
         return gr.update(), f"Describe failed: {e}"
     try:
@@ -4030,8 +4090,8 @@ def build_ui():
                             describe_img = _crop_input("Image to describe", 280)
                             describe_btn = gr.Button("Describe -> prompt", variant="primary", size="sm")
                             describe_status = gr.Markdown(
-                                "*Uses the Ollama vision model selected in Advanced > Prompt AI "
-                                "(or the local captioner if Ollama is off).*")
+                                "*Uses the Ollama vision model and the Describe style set in Advanced > Prompt AI "
+                                "(or the caption model if Ollama is off or fails).*")
 
                         with gr.Tab("Vision Mix"):
                             gr.Markdown("*Vision Mix: a vision model looks at your reference images "
@@ -4089,10 +4149,10 @@ def build_ui():
                                         ["Contain (outpaint)", "Cover (crop)"],
                                         value="Contain (outpaint)", label="Fit")
                             edit_autodescribe = gr.Checkbox(
-                                value=False, label="Auto-describe center (local model, no Ollama)",
+                                value=False, label="Auto-describe center (caption model)",
                                 info="Outpaint/Reframe: runs automatically when the prompt is EMPTY. "
                                      "Check it to also prepend a description when you DO have a "
-                                     "prompt. Local model (BLIP), set in Prompt AI > Caption model.")
+                                     "prompt. Uses the caption model set in Prompt AI (BLIP or Ollama).")
                             edit_strength = gr.Slider(
                                 0.3, 1.0, value=0.85, step=0.05, label="Strength",
                                 info="Inpaint/outpaint denoise. Outpaint & reframe: ~0.8 keeps the "
@@ -4465,12 +4525,15 @@ def build_ui():
                                                   label="Styles (combinable)", elem_id="cz_styles")
 
                     with gr.Tab("Prompt AI"):
-                        gr.Markdown("### Local captioner (no Ollama)")
+                        gr.Markdown("### Caption model (Auto-describe)")
                         caption_model_dd = gr.Dropdown(
-                            ["blip-large", "blip-base"],
+                            _caption_choices([]),
                             value=_current_caption_kind(), label="Caption model",
                             info="Used by Auto-describe (Inpaint/Outpaint) and the Describe "
-                                 "fallback. blip-large = richer captions. Loads on next use.")
+                                 "fallback. blip-large = richer captions, local. ollama:<model> = "
+                                 "one of your Ollama vision models (listed once Ollama is "
+                                 "detected): pick a small one, it runs right before the image "
+                                 "model; BLIP takes over if Ollama fails. Loads on next use.")
                         caption_model_status = gr.Markdown("")
                         gr.Markdown("### Ollama (optional)")
                         ollama_url = gr.Textbox(value=OLLAMA_URL, label="Ollama URL",
@@ -4483,8 +4546,25 @@ def build_ui():
                             [], label="Improve model (any text model)", interactive=True,
                             info="Empty = ollama_improve.model in config.txt, else the first "
                                  "installed model.")
-                        ollama_status = gr.Markdown("*Click Detect. If Ollama is off, Describe falls "
-                                                    "back to a local captioner.*")
+                        ollama_status = gr.Markdown("*Detecting Ollama... (Detect scans again). If "
+                                                    "Ollama is off, Describe falls back to the "
+                                                    "caption model.*")
+                        with gr.Row():
+                            describe_style_dd = gr.Dropdown(
+                                describe_style_choices(), value=cz_ollama.DESCRIBE_STYLE,
+                                label="Describe style",
+                                info="What Describe and Vision Mix ask the vision model for. "
+                                     "Prompt (prose) is the one measured for rebuilding an image.")
+                            describe_length_dd = gr.Dropdown(
+                                list(DESCRIBE_LENGTHS), value=cz_ollama.DESCRIBE_LENGTH,
+                                label="Length",
+                                info="Short 60, Medium 120, Long 180, Very long 300 words "
+                                     "(Short caption: one sentence).")
+                        with gr.Accordion("Instruction sent to the vision model", open=False):
+                            describe_preview = gr.Textbox(
+                                value=describe_instruction(cz_ollama.DESCRIBE_STYLE,
+                                                           cz_ollama.DESCRIBE_LENGTH),
+                                lines=6, max_lines=14, interactive=False, show_label=False)
                         gr.Markdown("---")
                         log_level_dd = gr.Dropdown(["quiet", "info", "debug"],
                                                    value={0: "quiet", 1: "info", 2: "debug"}.get(cz_core.LOG_LEVEL, "info"),
@@ -4871,8 +4951,13 @@ def build_ui():
                       [lora_status, gallery_url]).then(None, [gallery_url], None, js=_open_js)
         log_level_dd.change(set_log_level, [log_level_dd], [log_level_status])
         caption_model_dd.change(_ui_set_caption_model, [caption_model_dd], [caption_model_status])
-        detect_btn.click(_ui_detect_ollama, [ollama_url],
-                         [ollama_model, improve_model, ollama_status])
+        detect_btn.click(_ui_detect_ollama, [ollama_url], [ollama_model, ollama_status, caption_model_dd])
+        detect_btn.click(_ui_detect_improve_models, [ollama_url], [improve_model])
+        ollama_model.change(_ui_remember_vision_model, [ollama_model], None)
+        describe_style_dd.change(_ui_set_describe_style, [describe_style_dd, describe_length_dd],
+                                 [describe_preview])
+        describe_length_dd.change(_ui_set_describe_style, [describe_style_dd, describe_length_dd],
+                                  [describe_preview])
         describe_btn.click(_ui_describe, [describe_img, ollama_model, ollama_url], [prompt, describe_status])
         improve_btn.click(_ui_improve, [prompt, improve_model, ollama_url], [prompt, improve_status])
         improve_dir_btn.click(_ui_toggle_panel, [improve_dir_open],
@@ -4969,6 +5054,9 @@ def build_ui():
             _ui_compose, [cref1, cref2, cref3, cref4, ollama_model, ollama_url],
             [prompt, compose_status]
         ).then(_ui_generate, inputs=_gen_inputs, outputs=_gen_outputs)
+        # Au chargement de la page : detecte Ollama et reprend le modele vision retenu.
+        demo.load(_ui_detect_ollama, [ollama_url], [ollama_model, ollama_status, caption_model_dd])
+        demo.load(_ui_detect_improve_models, [ollama_url], [improve_model])
     global _DEMO
     _DEMO = demo  # pour autoriser a la volee les dossiers de sortie changes dans l'UI
     return demo

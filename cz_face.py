@@ -57,27 +57,40 @@ _CAPTION_REPOS = {
 
 
 _CAPTION_MODEL = None  # override UI (None = lire config.txt)
+# Un Caption model peut aussi etre un modele vision Ollama : "ollama:<nom>" (nom tel
+# qu'Ollama le liste, casse comprise). BLIP reste le repli si Ollama echoue.
+OLLAMA_CAPTION_PREFIX = "ollama:"
+
+
+def _valid_caption_kind(k):
+    return k in _CAPTION_REPOS or (k.startswith(OLLAMA_CAPTION_PREFIX)
+                                   and len(k) > len(OLLAMA_CAPTION_PREFIX))
+
+
+def _norm_caption_kind(kind):
+    k = str(kind or "").strip()
+    return k.lower() if k.lower() in _CAPTION_REPOS else k
 
 
 def _current_caption_kind():
     """Type de captioner courant: override UI (session) sinon preferences.json (persiste)
     sinon config.txt, sinon blip-large. Toute valeur inconnue (ex. 'florence2' retire)
     retombe sur blip-large."""
-    if _CAPTION_MODEL in _CAPTION_REPOS:
+    if _CAPTION_MODEL and _valid_caption_kind(_CAPTION_MODEL):
         return _CAPTION_MODEL
-    kind = str(_prefs.get("caption_model") or CONFIG.get("caption_model", "blip-large")).lower().strip()
-    return kind if kind in _CAPTION_REPOS else "blip-large"
+    kind = _norm_caption_kind(_prefs.get("caption_model") or CONFIG.get("caption_model", "blip-large"))
+    return kind if _valid_caption_kind(kind) else "blip-large"
 
 
 def set_caption_model(kind):
-    """Change le captioner local (UI). Invalide le cache -> recharge au prochain usage."""
+    """Change le captioner (UI). Invalide le cache BLIP -> recharge au prochain usage."""
     global _CAPTION_MODEL, _CAPTIONER
-    k = str(kind or "").lower().strip()
-    if k in _CAPTION_REPOS and k != _current_caption_kind():
+    k = _norm_caption_kind(kind)
+    if _valid_caption_kind(k) and k != _current_caption_kind():
         _CAPTION_MODEL = k
         _CAPTIONER = None
         _log(f"caption model -> {k} (will load on next use)")
-    elif k in _CAPTION_REPOS:
+    elif _valid_caption_kind(k):
         _CAPTION_MODEL = k
     return _current_caption_kind()
 
@@ -98,8 +111,21 @@ def _load_captioner():
 
 
 def _local_caption(image):
-    """Caption local SANS Ollama (BLIP). Modele configurable (config.txt 'caption_model':
-    blip-large par defaut / blip-base). Charge paresseusement; renvoie une phrase."""
+    """Legende d'une phrase pour l'Auto-describe et le repli de Describe. Le Caption model
+    "ollama:<nom>" passe par Ollama ; s'il echoue (eteint, modele absent, reponse vide),
+    BLIP prend le relais pour ne pas bloquer le rendu. Sinon BLIP local (blip-large par
+    defaut / blip-base), charge paresseusement."""
+    kind = _current_caption_kind()
+    if kind.startswith(OLLAMA_CAPTION_PREFIX):
+        model = kind[len(OLLAMA_CAPTION_PREFIX):]
+        try:
+            from cz_ollama import _ollama_caption
+            cap = _ollama_caption(image, model)
+            if cap:
+                return cap
+            _log(f"caption via Ollama ({model}): empty answer, falling back to BLIP")
+        except Exception as e:
+            _log(f"caption via Ollama ({model}) failed, falling back to BLIP: {e}")
     _kind, proc, mdl = _load_captioner()
     img = image.convert("RGB")
     inputs = proc(img, return_tensors="pt").to(DEVICE)

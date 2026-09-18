@@ -945,7 +945,7 @@ def cli_main(argv=None):
         vmodel = args.ollama_model or (_ollama_vision_models() or [None])[0]
         if not vmodel:
             parser.error("--vision-mix needs an Ollama vision model (none detected)")
-        caps = [_ollama_describe(im, vmodel) for im in imgs]
+        caps = [_ollama_describe(im, vmodel, length="Medium") for im in imgs]
         args.prompt = _ollama_compose(caps, vmodel)
         args.txt2img = True
         if not (args.quiet or args.print_output):

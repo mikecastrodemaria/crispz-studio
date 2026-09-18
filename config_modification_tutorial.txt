@@ -19,8 +19,19 @@ KEYS
 ----
 ollama_url              Ollama server URL (Describe + Improve prompt).
                         e.g. "http://127.0.0.1:11434"
-ollama_describe_prompt  Instruction sent to the vision model to caption an image
-                        into a prompt (Describe tab).
+ollama_describe_prompt  Empty = Describe uses the style picked in Prompt AI
+                        (Describe style + Length; the accordion under them shows
+                        the exact instruction). Any text here adds a "Custom
+                        (config.txt)" style. The pre-1.36 sample (comma-separated
+                        tags) counts as empty.
+ollama_num_ctx          Context Ollama loads the model with (default 8192: an image
+                        and a long answer fit). A Modelfile default can be 131072 =
+                        about twice the VRAM. 0 = leave Ollama's value.
+ollama_num_predict      Cap on the answer length in tokens (default 700): a looping
+                        model otherwise never stops. 0 = no cap.
+ollama_describe_temperature
+                        Describe sampling temperature (default 0.3 = faithful;
+                        null = the model's own).
 ollama_improve_prompt   Instruction to rewrite/enrich the current prompt. Must
                         contain {prompt} (replaced by your prompt). Edit the tone
                         here (e.g. ask for photographic detail, a language, etc.).
@@ -327,10 +338,13 @@ log_level               "quiet" | "info" | "debug". debug = full params/state/VR
                         in the console (also: run.bat --debug, or --log-level debug).
 
 hf_token                Hugging Face token for gated models (empty = anonymous).
-caption_model           Local auto-describe model (no Ollama): "blip-large"
-                        (default, richer) | "blip-base" (lighter). Used by the
-                        Describe fallback and Inpaint/Outpaint Auto-describe.
-                        Also selectable in Prompt AI > Caption model (persisted).
+caption_model           Auto-describe model: "blip-large" (default, richer, local)
+                        | "blip-base" (lighter) | "ollama:<vision model>" (listed in
+                        Prompt AI once Ollama is detected; blip-large takes over if
+                        Ollama fails - prefer a small model, it runs right before
+                        the image model). Used by the Describe fallback and
+                        Inpaint/Outpaint Auto-describe. Also selectable in Prompt AI
+                        > Caption model (persisted).
 ollama_improve          {"enabled": true, "endpoint": "", "model": "", "timeout": 120,
                         "temperature": 0.7, "keep_alive": 0, "positive_instruction": "",
                         "negative_instruction": "", "default_negative": "", "format": "auto"}

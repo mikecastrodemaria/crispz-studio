@@ -154,8 +154,9 @@ def test_ui_improve_negative_filled_box_and_ollama_down_keeps_the_text():
 
 def test_ui_detect_lists_text_models_for_improve():
     import cz_ui
-    vision, improve, status = cz_ui._ui_detect_ollama(URL)
+    improve = cz_ui._ui_detect_improve_models(URL)
     assert improve["choices"] == ["qwen3:8b", "llama3.1:8b"]
+    assert cz_ui._ui_detect_improve_models("http://127.0.0.1:9")["choices"] == []
 
 
 def test_ui_toggle_panel():

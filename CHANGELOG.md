@@ -4,6 +4,31 @@ All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased — Describe writes a prose prompt that rebuilds the image, in the style you pick
+
+Ported from crispz-klein 1.36.0-1.36.1. Describe asked the vision model for
+comma-separated tags in six categories: about 40 words, padded with "8k resolution",
+vague about the medium. Measured on 2026-09-11/12 with Agents-A1-4B and muse-glimmer
+(three images of known prompt, each description regenerated at the same seed): without
+the medium, a pencil portrait came back as a photograph; a text quoted line by line came
+back with its lines mixed; naming the era raised the portrait's fidelity from 0.54 to
+0.65. The default instruction is now one prose paragraph that starts with the medium and
+style, places every element, names camera, lighting, palette, era and mood, quotes a
+sign once in reading order, and never states absences or hedges; a deterministic cleanup
+removes those a small model writes anyway.
+
+**Prompt AI → Describe style**: *Prompt (prose)*, *Prompt (tags)*, *Photo (technical)*,
+*Art & style*, *Composition & layout*, *Character sheet*, *Text & typography*, *Dataset
+paragraph* (after Captionz) and *Short caption*; **Length** from 60 to 300 words; the
+instruction sent is shown, and the choice is remembered. Vision Mix describes its
+references in the same style. The pre-1.36 config samples no longer count as
+customizations. Ollama calls send `num_ctx` 8192 and `num_predict` 700 (Describe at
+temperature 0.3), and a reasoning model's monologue is stripped from every answer.
+Ollama is detected when the page loads and the vision model is remembered; Describe
+falls back to the caption model when Ollama fails; the caption model can be an Ollama
+vision model, with BLIP as fallback. Tests in `tests/test_describe_styles.py` and
+`tests/test_ollama_thinking.py`.
+
 ## Unreleased — Reference (Omni) gets the batch, the detailer and Upscale after generate
 
 Ported from crispz-klein 1.36.3. Reference (Omni) made one image and ignored three

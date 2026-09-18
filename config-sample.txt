@@ -3,9 +3,14 @@
     "hf_token": "",
 
     "ollama_url": "http://127.0.0.1:11434",
-    "ollama_describe_prompt": "You are an expert text-to-image prompt writer. Look at the image and output ONE detailed prompt as comma-separated visual tags (subject, clothing, setting, lighting, style, quality). No preamble, no explanation, just the prompt.",
+    "_ollama_describe_prompt_help": "Empty = Describe uses the style picked in Prompt AI (Describe style + Length). Any text here adds a 'Custom (config.txt)' style. The pre-1.36 tag instruction counts as empty.",
+    "ollama_describe_prompt": "",
     "ollama_improve_prompt": "Rewrite the following text-to-image prompt to be more vivid and detailed while keeping the same subject and intent. Output ONLY the improved prompt (comma-separated), no preamble.\n\nPROMPT: {prompt}",
     "ollama_compose_prompt": "You are an expert text-to-image prompt writer. Below are descriptions of several reference images. Merge their key elements (subject, clothing, pose, setting, style) into ONE single coherent, detailed image prompt. Output ONLY the prompt (comma-separated), no preamble.\n\n{descriptions}",
+    "_ollama_limits_help": "num_ctx = context Ollama loads the model with (8192 fits an image and a long answer; a Modelfile default can be 131072 = twice the VRAM). num_predict caps the answer in tokens (a looping model never stops otherwise). 0 = leave Ollama's value. describe_temperature: low = faithful descriptions (null = the model's own).",
+    "ollama_num_ctx": 8192,
+    "ollama_num_predict": 700,
+    "ollama_describe_temperature": 0.3,
     "ollama_vision_blocklist": [],
     "ollama_keep_alive": 0,
     "ollama_cpu": false,
@@ -20,7 +25,7 @@
     "load_progress": {"enabled": true, "target_vram_gb": 14.0, "heartbeat_s": 2.0},
     "_load_progress_help": "Live feedback while a model loads (first run downloads from HF = minutes of silence otherwise). Terminal shows a rewritten '[crispz][load] ... 45s | 3.2 GB in VRAM' line every heartbeat_s; the UI progress bar advances (VRAM allocated / target_vram_gb). enabled=false loads directly with no monitor thread (zero cost).",
     "caption_model": "blip-large",
-    "_caption_model_help": "Local auto-describe model (no Ollama): blip-large (default) | blip-base",
+    "_caption_model_help": "Auto-describe model: blip-large (default, local) | blip-base | ollama:<vision model> (listed in Prompt AI once Ollama is detected; blip-large takes over if Ollama fails)",
 
     "performance_presets": {
         "Turbo (8 steps)": [8, 0.0],
