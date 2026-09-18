@@ -286,9 +286,16 @@ def _detail_regions(image, boxes, prompt, seed, steps, denoise, kind,
         work = (crop.resize((max(32, int(cw * scale)), max(32, int(ch * scale))), Image.LANCZOS)
                 if scale > 1.0 else crop)
         try:
-            ref = cz_pipeline._refine_whole(pipe, work, denoise, int(steps), prompt or "", seed)
+            # Apres l'upscale, le cache de torch pouvait occuper toute la carte: la passe
+            # echouait sur "CUDA error: out of memory". On le vide et on retente une fois.
+            ref = cz_pipeline.retry_on_oom(f"detailer {kind} {i + 1}", cz_pipeline._refine_whole,
+                                           pipe, work, denoise, int(steps), prompt or "", seed)
         except Exception as e:
             _log(f"detailer: refine failed on {kind} {i + 1} ({e})")
+            if cz_pipeline.is_oom(e):
+                # Toujours saturee apres le vidage: les zones suivantes echoueraient pareil.
+                _log(f"detailer: still out of VRAM, remaining {kind}(s) skipped")
+                break
             continue
         ref = ref.resize((cw, ch), Image.LANCZOS)
         m = _feather_mask(cw, ch)[..., None]

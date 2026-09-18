@@ -1315,6 +1315,73 @@ def free_vram():
         torch.cuda.empty_cache()
 
 
+def is_oom(e):
+    """Vrai si `e` est un manque de VRAM, sous ses deux formes: celle de l'allocateur de
+    torch ("CUDA out of memory. Tried to allocate ...") et celle d'un appel CUDA direct
+    ("CUDA error: out of memory"). La seconde arrive quand le cache de torch a tout
+    reserve: un noyau charge a la demande ne trouve plus rien et ne peut rien reclamer a
+    ce cache (porte de crispz-klein 1.36.4)."""
+    s = str(e).lower()
+    return "out of memory" in s or "alloc_failed" in s
+
+
+def release_vram(offload=False, why=""):
+    """Rend au pilote la VRAM que le cache de torch garde en reserve, sans rien decharger.
+
+    torch ne vide son cache que quand SON allocateur echoue; les autres consommateurs
+    echouent sans pouvoir le recuperer. offload=True remet aussi sur le CPU les modeles
+    qu'un appel interrompu a laisses sur le GPU en offload 'model', pour CHAQUE pipeline
+    charge avec ses hooks (le base, et le pipeline Omni quand il est charge a part). Sur
+    crispz-klein, un transformer a moitie deplace par un OOM restait sur le GPU: 10,8 Go
+    coinces, et chaque rendu suivant echouait jusqu'au redemarrage. `why` journalise
+    l'etat de la VRAM apres coup."""
+    if offload:
+        seen = set()
+        for p in [_BASE_PIPE, *_DERIVED.values()]:
+            if p is None or id(p) in seen or not getattr(p, "_all_hooks", None):
+                continue
+            seen.add(id(p))
+            try:
+                p.maybe_free_model_hooks()   # diffusers: tout sur le CPU, hooks reposes
+            except Exception as e:
+                _dbg(f"release_vram: offload failed ({e})")
+    gc.collect()
+    if DEVICE != "cuda":
+        return
+    try:
+        torch.cuda.empty_cache()
+        if why:
+            free, total = torch.cuda.mem_get_info()
+            _log(f"VRAM released ({why}): {free / 1024 ** 3:.1f} GB free of "
+                 f"{total / 1024 ** 3:.1f}, torch holds "
+                 f"{torch.cuda.memory_allocated() / 1024 ** 3:.1f} GB "
+                 f"(reserved {torch.cuda.memory_reserved() / 1024 ** 3:.1f})")
+    except Exception as e:
+        _dbg(f"release_vram: {e}")
+
+
+def retry_on_oom(what, fn, *args, **kwargs):
+    """Appelle fn(*args, **kwargs); sur un manque de VRAM, rend la VRAM (cache de torch,
+    modeles restes sur le GPU) et retente UNE fois. Un second echec rend encore la VRAM
+    avant de remonter l'erreur: le processus reste utilisable pour le rendu suivant."""
+    err = None
+    for attempt in (1, 2):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            if not is_oom(e):
+                raise
+            # Le traceback retient les frames, donc leurs tenseurs sur le GPU: on le
+            # lache AVANT de vider le cache, sinon empty_cache ne recupere rien.
+            err = e.with_traceback(None)
+            err.__context__ = err.__cause__ = None
+        if attempt == 1:
+            _log(f"{what}: out of VRAM ({str(err).strip().splitlines()[0]}), "
+                 f"freeing it and retrying once")
+        release_vram(offload=True, why=what)
+    raise err
+
+
 # Au-dela de ce cote (px) on active l'attention slicing (whole-image 2K+ -> evite le
 # spill VRAM 32 Go). En-dessous (tuiles 1024, txt2img 1024/1536) -> slicing OFF =
 # attention SDPA native = RAPIDE (comme ComfyUI). Reglable via config attention_slice_above.

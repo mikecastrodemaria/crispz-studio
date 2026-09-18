@@ -1777,6 +1777,16 @@ def _ui_txt2img(prompt, negative, width, height, gen_steps, seed, guidance, upsc
     return result, rep
 
 
+def _vram_hint(e):
+    """Conseil joint au rapport quand un rendu echoue faute de VRAM, apres le vidage du
+    cache et le nouvel essai de cz_pipeline.retry_on_oom."""
+    if not cz_pipeline.is_oom(e):
+        return ""
+    return ("  \n**VRAM saturee**, meme apres vidage du cache : ferme les autres apps GPU "
+            "(ComfyUI...), baisse Image number, le factor d'upscale ou le nombre de "
+            "references. Si le rendu suivant echoue encore, redemarre crispz-studio.")
+
+
 def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                  input_mode, ref1, ref2, ref3, ref4, faceswap_enable, faceswap_src,
                  width, height, gen_steps, image_number, seed, guidance, offload_mode,
@@ -1887,12 +1897,13 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                     _log(f"random style #{i + 1}: {picked_styles}")
                 t0 = time.time()
                 try:
-                    img = generate_omni(refs, full_prompt, full_negative, width, height,
-                                        gen_steps, s)
+                    img = cz_pipeline.retry_on_oom("omni", generate_omni, refs, full_prompt,
+                                                   full_negative, width, height, gen_steps, s)
                 except Exception as e:
                     _log(f"omni error: {e}")
                     # Les images deja produites restent affichees et sauvees.
-                    return _done(images, "  \n".join(notes + [f"Omni error: {e}"]), img_paths)
+                    return _done(images, "  \n".join(notes + [f"Omni error: {e}{_vram_hint(e)}"]),
+                                 img_paths)
                 total_t += time.time() - t0
                 tag, gmode = "omni", "omni"
                 if auto_upscale:
@@ -1902,7 +1913,8 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                     base_img = img
                     eff_denoise = float(denoise) if do_refine else 0.0
                     try:
-                        img, ut = process_one(
+                        img, ut = cz_pipeline.retry_on_oom(
+                            "upscale", process_one,
                             base_img, esrgan_model, factor, eff_denoise, refine_steps,
                             full_prompt, s, tile, overlap, refine_tile=refine_tile,
                             refine_overlap=refine_overlap, do_esrgan=bool(do_esrgan),
@@ -1963,6 +1975,10 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                         omni_dst = None
                         _dbg(f"save failed: {e}")
                 img_paths.append(omni_dst)
+                # Entre deux images, le cache de torch revient au pilote (les noyaux charges
+                # a la demande n'y ont pas acces) : sur crispz-klein, c'est a la 4e image
+                # d'un lot Omni + upscale + detaileur que la carte etait pleine.
+                cz_pipeline.release_vram()
             progress(1.0, desc="Done")
             if not images:
                 return _done([], "Stopped before any image.")
@@ -2032,8 +2048,9 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                 return _lora_stop(_missing, images, [], img_paths)
             if style_random:
                 _log(f"random style #{i + 1}: {chosen}")
-            img, t = txt2img_run(fp, width, height, gen_steps, s, fn,
-                                 upscale=False, steps=refine_steps)
+            img, t = cz_pipeline.retry_on_oom("txt2img", txt2img_run, fp, width, height,
+                                              gen_steps, s, fn, upscale=False,
+                                              steps=refine_steps)
             total_t += t["txt2img"]
             tag, gmode = "txt2img", "txt2img"
             base_img = img   # image txt2img avant un eventuel upscale
@@ -2042,7 +2059,8 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
             if auto_upscale:
                 progress((i + 0.5) / n, desc=f"Upscaling {i + 1}/{n}")
                 eff_denoise = float(denoise) if do_refine else 0.0
-                img, ut = process_one(
+                img, ut = cz_pipeline.retry_on_oom(
+                    "upscale", process_one,
                     base_img, esrgan_model, factor, eff_denoise, refine_steps, fp, s,
                     tile, overlap, refine_tile=refine_tile, refine_overlap=refine_overlap,
                     do_esrgan=bool(do_esrgan), refine_first=bool(refine_first))
@@ -2105,6 +2123,7 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
                     dst = None
                     _dbg(f"save failed: {e}")
             img_paths.append(dst)
+            cz_pipeline.release_vram()   # comme en Omni: le cache revient au pilote
         progress(1.0, desc="Done")
         if not images:
             return _done([], "Stopped before any image.")

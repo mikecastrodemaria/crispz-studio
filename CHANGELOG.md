@@ -4,6 +4,23 @@ All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased — An out-of-VRAM error in a batch no longer leaves the app stuck
+
+Ported from crispz-klein 1.36.4. There, a Reference (Omni) batch with Upscale after
+generate and the detailer ran out of VRAM at the fourth image (`CUDA error: out of
+memory` on the face and hand passes), then every later render failed until a restart.
+Two causes: torch keeps freed VRAM in its cache and only gives it back when its own
+allocator fails, and a pass that failed half way left weights on the GPU in `model`
+offload.
+
+Each generation, upscale and detailer pass that runs out of VRAM now frees it (torch's
+cache, and in `model` offload the weights that any loaded pipeline left on the GPU) and
+retries once. If the retry fails too, the VRAM is freed again before the error is
+reported, so the next render can run, and the report says what to lower. The detailer
+skips the remaining faces or hands instead of failing on each one. Between two images
+of a batch (Omni and txt2img), the cache goes back to the driver. The log gives the free
+VRAM after each release. Tests in `tests/test_vram_retry.py`.
+
 ## Unreleased — Describe writes a prose prompt that rebuilds the image, in the style you pick
 
 Ported from crispz-klein 1.36.0-1.36.1. Describe asked the vision model for
