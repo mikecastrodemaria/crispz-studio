@@ -304,9 +304,10 @@ civitai_api_key         Optional CivitAI API token. In the Asset Browser (LoRAs/
                         models work without one.
 date_subfolders         true (default) -> save into out/YYYY-MM-DD/ subfolders
                         (like Fooocus). The galleries/Asset Browser scan recursively.
-save_pre_upscale        false (default). true -> in txt2img + auto-upscale, ALSO save the
-                        original txt2img image (before ESRGAN/refine), tagged 'txt2img',
-                        next to the final upscaled one. Toggle in Advanced > Generation.
+save_pre_upscale        false (default). true -> in txt2img or Reference (Omni) + auto-upscale,
+                        ALSO save the original image (before ESRGAN/refine), tagged 'txt2img'
+                        or 'omni', next to the final upscaled one. Toggle in Advanced >
+                        Generation.
 wildcards_in_order      false (default) -> __name__ picks a RANDOM line (reproducible per
                         seed). true -> in a batch, image i takes line (i % nb_lines) of the
                         wildcard file (deterministic sweep). Toggle in Advanced > Generation.

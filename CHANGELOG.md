@@ -4,6 +4,20 @@ All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased — Reference (Omni) gets the batch, the detailer and Upscale after generate
+
+Ported from crispz-klein 1.36.3. Reference (Omni) made one image and ignored three
+settings without a word: **Image number** (always one image), the face / hand
+**detailer**, and **Upscale after generate**. It now runs like txt2img: the batch replays
+the composition with seed + i (variants, wildcards and random style drawn per image);
+with the toggle on, each image goes through the Upscale pipeline (ESRGAN + refine, with
+the Upscale / img2img settings), saved as `omni_upscaled` with the `omni+upscale` mode in
+its metadata, and `save_pre_upscale` keeps the image from before; then the face and hand
+detailers run on the final image. An upscale that fails keeps the Omni image and says
+why; an Omni error in the middle of a batch keeps the images already made. The Omni
+tab's **Edit** button and the job queue go through the same path. Tests in
+`tests/test_omni_batch.py`.
+
 ## Unreleased — Improve prompt and negative: directives, format and syntax kept
 
 Improve is rebuilt on `prompt_improve.py`, the module shared by the crispz family

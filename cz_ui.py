@@ -1808,28 +1808,109 @@ def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
             _dbg(f"omni: {len(refs)} ref(s), size={int(width)}x{int(height)}")
             if not refs:
                 return _done([], "Omni: add at least one reference image.")
-            full_prompt, full_negative, picked_styles, _missing = _prep(base_seed, 0)
-            if _missing:
-                return _lora_stop(_missing)
-            try:
-                img = generate_omni(refs, full_prompt, full_negative, width, height, gen_steps,
-                                    base_seed)
-            except Exception as e:
-                _log(f"omni error: {e}")
-                return _done([], f"Omni error: {e}")
-            omni_dst = None
-            if save_mode != "display":
+            # Comme en txt2img : lot « Image number » (chaque image rejoue la composition
+            # avec seed+i, variantes, wildcards et style aleatoire re-tires par image), puis
+            # upscale et detaileur. Omni ne faisait qu'une image et ignorait ces trois
+            # reglages sans un mot.
+            n = max(1, int(image_number))
+            images, img_paths, notes, total_t, upscaled = [], [], [], 0.0, False
+            for i in range(n):
+                if cz_pipeline._STOP:
+                    _log(f"stop requested after {i}/{n} image(s)")
+                    break
+                s = base_seed if cz_pipeline._NO_SEED_INCREMENT else base_seed + i
+                progress(i / n, desc=f"Image {i + 1}/{n}")
+                full_prompt, full_negative, picked_styles, _missing = _prep(s, i)
+                if _missing:
+                    return _lora_stop(_missing, images, notes, img_paths)
+                if style_random:
+                    _log(f"random style #{i + 1}: {picked_styles}")
+                t0 = time.time()
                 try:
-                    omni_dst = build_output_path(None, save_mode, output_dir, output_format,
-                                                 tag="omni", seed=base_seed, size=img.size)
-                    if omni_dst:
-                        save_image(img, omni_dst, output_format, meta=_gen_meta(
-                            "omni", full_prompt, full_negative, base_seed, gen_steps, cz_pipeline.GUIDANCE,
-                            img.size, styles=picked_styles, extra={"refs": len(refs)}))
-                        _dbg(f"saved: {omni_dst}")
+                    img = generate_omni(refs, full_prompt, full_negative, width, height,
+                                        gen_steps, s)
                 except Exception as e:
-                    _dbg(f"save failed: {e}")
-            return _done([img], f"omni - **{img.size[0]}x{img.size[1]}** from {len(refs)} ref(s)", [omni_dst])
+                    _log(f"omni error: {e}")
+                    # Les images deja produites restent affichees et sauvees.
+                    return _done(images, "  \n".join(notes + [f"Omni error: {e}"]), img_paths)
+                total_t += time.time() - t0
+                tag, gmode = "omni", "omni"
+                if auto_upscale:
+                    # Meme chainage qu'en txt2img : Upscale (ESRGAN + refine), sans action
+                    # manuelle.
+                    progress((i + 0.5) / n, desc=f"Upscaling {i + 1}/{n}")
+                    base_img = img
+                    eff_denoise = float(denoise) if do_refine else 0.0
+                    try:
+                        img, ut = process_one(
+                            base_img, esrgan_model, factor, eff_denoise, refine_steps,
+                            full_prompt, s, tile, overlap, refine_tile=refine_tile,
+                            refine_overlap=refine_overlap, do_esrgan=bool(do_esrgan),
+                            refine_first=bool(refine_first))
+                    except Exception as e:
+                        # L'image Omni est deja faite : on la garde et on dit pourquoi.
+                        _log(f"omni upscale error: {e}")
+                        img = base_img
+                        notes.append(f"[image {i + 1}: upscale skipped: {e}]")
+                    else:
+                        total_t += ut.get("esrgan", 0.0) + ut.get("refine", 0.0)
+                        tag, gmode, upscaled = "omni_upscaled", "omni+upscale", True
+                        # Option : sauver AUSSI l'image Omni d'origine (avant l'upscale).
+                        if cz_pipeline._SAVE_PRE_UPSCALE and save_mode != "display":
+                            try:
+                                pre_dst = build_output_path(
+                                    None, save_mode, output_dir, output_format, tag="omni",
+                                    seed=s, size=base_img.size, index=(i + 1 if n > 1 else 0))
+                                if pre_dst:
+                                    save_image(base_img, pre_dst, output_format, meta=_gen_meta(
+                                        "omni", full_prompt, full_negative, s, gen_steps,
+                                        cz_pipeline.GUIDANCE, base_img.size,
+                                        styles=picked_styles, extra={"refs": len(refs)}))
+                                    _dbg(f"saved pre-upscale: {pre_dst}")
+                            except Exception as e:
+                                _dbg(f"pre-upscale save failed: {e}")
+                # Detaileur auto (visages, mains) sur l'image FINALE (apres l'upscale eventuel).
+                if cz_detailer.DETAILER_ENABLED:
+                    progress((i + 0.85) / n, desc=f"Detailing faces {i + 1}/{n}")
+                    try:
+                        img, _nf = cz_detailer.detail_faces(
+                            img, full_prompt, s, steps=int(refine_steps),
+                            progress=lambda t: progress((i + 0.9) / n, desc=t))
+                    except Exception as e:
+                        _log(f"detailer failed: {e}")
+                if cz_detailer.HAND_ENABLED:
+                    progress((i + 0.92) / n, desc=f"Detailing hands {i + 1}/{n}")
+                    try:
+                        img, _nh = cz_detailer.detail_hands(
+                            img, full_prompt, s, steps=int(refine_steps),
+                            progress=lambda t: progress((i + 0.95) / n, desc=t))
+                    except Exception as e:
+                        _log(f"hand detailer failed: {e}")
+                images.append(img)
+                omni_dst = None
+                if save_mode != "display":
+                    try:
+                        omni_dst = build_output_path(None, save_mode, output_dir, output_format,
+                                                     tag=tag, seed=s, size=img.size,
+                                                     index=(i + 1 if n > 1 else 0))
+                        if omni_dst:
+                            save_image(img, omni_dst, output_format, meta=_gen_meta(
+                                gmode, full_prompt, full_negative, s, gen_steps,
+                                cz_pipeline.GUIDANCE, img.size, styles=picked_styles,
+                                extra={"refs": len(refs)}))
+                            _dbg(f"saved: {omni_dst}")
+                    except Exception as e:
+                        omni_dst = None
+                        _dbg(f"save failed: {e}")
+                img_paths.append(omni_dst)
+            progress(1.0, desc="Done")
+            if not images:
+                return _done([], "Stopped before any image.")
+            suffix = " (stopped)" if cz_pipeline._STOP else ""
+            rep = (f"{'omni+upscale' if upscaled else 'omni'} x{len(images)} - "
+                   f"**{images[0].size[0]}x{images[0].size[1]}** in **{total_t:.1f}s** "
+                   f"from {len(refs)} ref(s){suffix}")
+            return _done(images, "  \n".join([rep] + notes), img_paths)
         if use_input and input_image is not None:
             # Refine (img2img) decoche -> denoise 0 = saute la passe de diffusion (lente).
             eff_denoise = float(denoise) if do_refine else 0.0
@@ -3789,8 +3870,8 @@ def build_ui():
                     # Chainage txt2img -> upscale (gauche) + Improve prompt (droite), alignes.
                     auto_upscale_cb = gr.Checkbox(
                         value=bool(CONFIG.get("default_auto_upscale", False)), scale=4,
-                        label="Upscale after generate — chain each txt2img image through the "
-                              "Upscale pipeline (ESRGAN + refine), no manual step")
+                        label="Upscale after generate — chain each txt2img or Reference (Omni) image "
+                              "through the Upscale pipeline (ESRGAN + refine), no manual step")
                     improve_btn = gr.Button("Improve prompt", scale=1, min_width=130,
                                             visible=IMPROVE_ENABLED)
                     improve_dir_btn = gr.Button("✎", scale=0, min_width=44,

@@ -11,7 +11,8 @@ SwarmUI. On top of crispz's upscaler it adds:
 
 - **Text → Image** (`ZImagePipeline`): generate from a prompt, with an optional
   **Upscale after generate** toggle (under the Generate button) that auto-chains each
-  image through the ESRGAN + refine pipeline — no manual step. CLI equivalent:
+  image — txt2img or Reference (Omni) — through the ESRGAN + refine pipeline, no manual
+  step. CLI equivalent:
   `--txt2img --upscale` (see README_CLI.md).
 - **Image → Upscale** (the crispz pipeline): Real-ESRGAN + Z-Image refine, 4K tiling —
   plus one-click **🎲 Vary (subtle / strong)** (pure img2img re-roll of an input image,
@@ -351,6 +352,11 @@ is in place: once a Z-Image Omni/Edit model ships, set it in `config.txt`
 (`"zimage_omni_model": "<HF repo or local diffusers folder>"`) **and restart** —
 the tab appears and multi-reference works. Use **Models → Check Omni availability**
 to see if it has been released.
+
+When it runs, it runs like txt2img: **Image number** makes a batch (each image with
+seed + i, variants and wildcards drawn per image), **Upscale after generate** chains
+each image through ESRGAN + refine, and the face / hand **detailer** runs on the final
+image.
 
 ## Job queue
 
