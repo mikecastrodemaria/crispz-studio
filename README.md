@@ -568,6 +568,41 @@ fidelity to the swapped pixels) — 0.5–0.7 suits a 128 px swap. GFPGAN ignore
 > applied to an existing image. The swap here transfers the *exact* face as a
 > post-process. Different trade-offs, not a better/worse pair.
 
+### Where the swap runs, and what it replaces
+
+The swap is the **last** step of a render. The order is: generation (txt2img, img2img
+or Reference (Omni)) → **Upscale after generate** → face / hand **detailer** → **face
+swap**. It runs on every image of a batch, and each swapped image is saved as its own
+file, tagged `faceswap`. Two consequences:
+
+- **Turn the face detailer off when the swap is on.** The detailer re-renders faces at
+  a larger size, then the swap replaces them anyway: the time is spent for nothing, and
+  an identity the detailer drifted is not the one you asked for.
+- **Every face found in the result is replaced** by the source face (the largest face
+  of the source image). On a group shot, everyone gets the same face.
+
+### One set of models for every crispz app
+
+The five files are the same in every app of the family (about 1.43 GB in total):
+`inswapper_128.onnx` (the swap), `codeformer.onnx` and `gfpgan_1.4.onnx` (restore),
+`dfl_xseg.onnx` (occlusion mask), `bisenet_resnet_34.onnx` (face-region mask). If
+another crispz app already has them, either copy its `faceswap/` folder into this one,
+or point `faceswap_model_path`, `faceswap_codeformer_path`, `faceswap_restore_path`,
+`faceswap_occluder_path` and `faceswap_parser_path` in `config.txt` to that folder, so a
+single copy serves every app. A missing auxiliary model is fetched once from the
+facefusion repository on Hugging Face; `inswapper_128.onnx` is never downloaded unless
+you set `faceswap_model_url`.
+
+## Try-on and casting: Reference (Omni) + face swap
+
+Dressing a person with a garment from a product shot, or changing a head, needs the
+**Reference (Omni)** tab, hidden here until an Omni/Edit model is set (see *Reference
+(Omni)*). The method and the measured results live in the crispz-klein README
+([Try-on and casting](https://github.com/mikecastrodemaria/crispz-klein#try-on-and-casting-reference-omni--face-swap)), where Omni runs on FLUX.2 Klein. The face swap
+works here on its own, on txt2img and img2img renders: turn the face **detailer off**,
+turn **Apply face swap to result** on, and the face of the source image replaces every
+face of the render.
+
 ## Text -> Image
 
 ```bash
