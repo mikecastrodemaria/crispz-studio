@@ -88,18 +88,17 @@ from cz_core import (  # noqa: E402,F401
 # le reste est laisse tel quel. Utilise par l'UI (_apply_preset) et la CLI (--preset).
 PRESETS = {
     "Custom": {},
-    # Reglages facon ComfyUI Ultimate SD Upscale (x2, tuiles 1024, denoise bas, offload
-    # none sur grosse carte). Le tiling plafonne deja la VRAM -> PAS d'offload (qui ralentit).
+    # Reglages facon ComfyUI Ultimate SD Upscale (x2, tuiles 1024, denoise bas). Les
+    # presets ne touchent PLUS a l'offload (sauf Low VRAM): forcer 'none' ecrasait le
+    # verdict du test VRAM 'auto' et gelait les cartes 20 Go (spill RAM partagee).
     "Benchmark (fast)":    {"factor": 2.0, "denoise": 0.12, "steps": 12, "tile": 1024, "overlap": 32,
-                            "refine_tile": 1024, "refine_overlap": 64, "cpu_offload": "none"},
-    "Photo (balanced)":    {"factor": 2.0, "denoise": 0.30, "steps": 12, "refine_tile": 0, "cpu_offload": "none"},
+                            "refine_tile": 1024, "refine_overlap": 64},
+    "Photo (balanced)":    {"factor": 2.0, "denoise": 0.30, "steps": 12, "refine_tile": 0},
     "Subtle (clean-up)":   {"factor": 2.0, "denoise": 0.12, "steps": 16, "refine_tile": 0},
     "Detailed (creative)": {"factor": 2.0, "denoise": 0.40, "steps": 16},
     "Portrait (faces)":    {"factor": 2.0, "denoise": 0.22, "steps": 14},
-    # 4K: le tiling plafonne la VRAM -> offload none (l'offload ne sert plus a rien et
-    # ralentit 5-10x sur grosse carte). Mettre offload sequential SEULEMENT si <16 Go.
     "4K (tiled)":          {"factor": 4.0, "denoise": 0.20, "steps": 12, "tile": 1024, "overlap": 32,
-                            "refine_tile": 1024, "refine_overlap": 64, "cpu_offload": "none"},
+                            "refine_tile": 1024, "refine_overlap": 64},
     "Low VRAM (8-12GB)":   {"denoise": 0.30, "steps": 12, "tile": 512, "refine_tile": 1024, "refine_overlap": 64, "cpu_offload": "sequential"},
 }
 # param interne -> flag CLI, pour appliquer un preset sans ecraser un flag explicite.
@@ -4592,20 +4591,36 @@ def build_ui():
                         log_level_status = gr.Markdown("")
 
                     with gr.Tab("Models"):
-                        offload = gr.Dropdown(choices=list(cz_pipeline.OFFLOAD_CHOICES), value="none",
+                        offload = gr.Dropdown(choices=list(cz_pipeline.OFFLOAD_CHOICES),
+                                              value=cz_pipeline.OFFLOAD_MODE,
                                               label="CPU offload (VRAM)",
-                                              info="How much of the model to move to CPU RAM to save VRAM. Details below.")
+                                              info="auto = free-VRAM test at model load picks the fastest SAFE "
+                                                   "mode. Details below.")
+                        with gr.Row():
+                            offload_retest_btn = gr.Button("Re-test VRAM (auto)", size="sm", scale=0)
+                            offload_status_md = gr.Markdown(cz_pipeline.offload_status())
+                        offload_retest_btn.click(lambda: cz_pipeline.retest_offload(),
+                                                 outputs=[offload_status_md])
                         with gr.Accordion("ℹ️  What is CPU offload?", open=False):
                             gr.Markdown(
                                 "**CPU offload** moves part of the model weights from VRAM (GPU) to RAM (CPU) "
                                 "between steps so large models fit on low-VRAM cards. It is **not** quantization "
                                 "— weights stay BF16, they just shuttle between RAM and GPU.\n\n"
+                                "- **auto** (default) — at model load, measures the *free* VRAM (all processes "
+                                "counted) and picks `none` only when the model + activations provably fit; "
+                                "otherwise `model`/`sequential`. The verdict is cached per GPU + model "
+                                "(cache/hw_profile.json) — use **Re-test VRAM** after closing/opening another "
+                                "GPU app.\n"
                                 "- **none** — everything stays in VRAM. **Fastest.** Use it when you have enough "
-                                "VRAM (e.g. RTX 5090 / 24GB+ → keep `none`).\n"
+                                "VRAM (e.g. RTX 5090 / 24GB+).\n"
                                 "- **model** — offload per submodule. ~half the VRAM, small slowdown. Good balance "
                                 "on 12–16GB cards.\n"
                                 "- **sequential** — aggressive, module-by-module. Runs in ~9GB but much slower "
-                                "(5–10×). For small cards (8–12GB).")
+                                "(5–10×). For small cards (8–12GB).\n\n"
+                                "⚠️ On Windows, an over-committed model does **not** crash: the NVIDIA driver's "
+                                "*Sysmem Fallback* silently spills it to shared RAM and renders become 50–100× "
+                                "slower with no error. `auto` exists to avoid exactly that; for a hard OOM error "
+                                "instead of a freeze, set *Prefer No Sysmem Fallback* in the NVIDIA Control Panel.")
 
                         with gr.Accordion("\U0001F4E6 Checkpoints (switch model)", open=True):
                             ckpt_dir_tb = gr.Textbox(value=cz_pipeline.CHECKPOINTS_DIR, label="Checkpoints folder")

@@ -70,7 +70,7 @@
     "default_overlap": 32,
     "default_refine_tile": 0,
     "default_refine_overlap": 64,
-    "default_cpu_offload": "none",
+    "default_cpu_offload": "auto",
     "attention_slice_above": 1664,
     "auto_refine_tile_above": 1664,
     "auto_refine_tile": "auto",

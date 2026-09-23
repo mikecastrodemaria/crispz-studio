@@ -492,7 +492,9 @@ def cli_main(argv=None):
                         help="Overlap (feather) of the Z-Image diffusion tiles")
     parser.add_argument("--cpu-offload", choices=list(cz_pipeline.OFFLOAD_CHOICES),
                         default=cz_pipeline.OFFLOAD_MODE,   # config default_cpu_offload / env CZ_OFFLOAD
-                        help="CPU offload of the diffusion pass (VRAM). none=all in VRAM | "
+                        help="CPU offload of the diffusion pass (VRAM). auto=free-VRAM test "
+                             "at model load picks the fastest SAFE mode (default) | "
+                             "none=all in VRAM (fastest, needs room) | "
                              "model=offload per submodule (good tradeoff) | "
                              "sequential=more aggressive, slower. Requires accelerate.")
     parser.add_argument("--guidance", type=float, default=0.0,

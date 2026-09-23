@@ -4,6 +4,29 @@ All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased — CPU offload defaults to `auto`: a boot VRAM test picks the fastest safe mode
+
+On Windows, a model that does not fit in VRAM does not crash: the NVIDIA driver's
+*Sysmem Fallback* silently spills it to shared RAM and renders become 50–100× slower
+with no error (measured on a 20 GB RTX A4500: a 52 s txt2img showing no progress after
+5+ minutes in `none`). The shipped default was `none`, so every fresh install on a
+20 GB card hit this.
+
+CPU offload now has an `auto` mode, the default everywhere. At model load it measures
+the real free VRAM (`torch.cuda.mem_get_info`, every process counted) against the
+model footprint plus an activation margin, and promotes to `none` only when the card
+provably has room; otherwise `model` or `sequential`. The verdict is cached per
+GPU + torch build + model in `cache/hw_profile.json` (a *Re-test VRAM* button in
+Models re-runs the test after closing another GPU app). A runtime safety net checks
+VRAM saturation after the first denoise step in `none`, and if the estimate was too
+optimistic switches to `model`, retries the job once and records the downgrade so the
+next boot starts in the safe mode. Resolution order: explicit UI/CLI choice, then the
+`CZ_OFFLOAD` env var, then `default_cpu_offload` in config.txt (both actually read
+now), then `auto`. Presets no longer force `cpu_offload: none` (Low VRAM keeps
+`sequential`). The logic lives in the standalone `cz_hw.py`, vendored to the whole
+crispz family.
+
+
 ## Unreleased — An out-of-VRAM error in a batch no longer leaves the app stuck
 
 Ported from crispz-klein 1.36.4. There, a Reference (Omni) batch with Upscale after
