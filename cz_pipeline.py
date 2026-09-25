@@ -1489,6 +1489,59 @@ def release_vram(offload=False, why=""):
         _dbg(f"release_vram: {e}")
 
 
+def _load_lora(pipe, *args, **kwargs):
+    """pipe.load_lora_weights avec des tenseurs REELS (low_cpu_mem_usage=False).
+
+    Une build diffusers/peft qui ne connait pas ce parametre le refuse par TypeError:
+    on rappelle alors sans lui plutot que de faire echouer la pose (le defaut y cree les
+    couches sur 'meta' -- cf. _apply_loras)."""
+    try:
+        return pipe.load_lora_weights(*args, low_cpu_mem_usage=False, **kwargs)
+    except TypeError as e:
+        if "low_cpu_mem_usage" not in str(e):
+            raise
+        _dbg(f"load_lora_weights without low_cpu_mem_usage ({e})")
+        return pipe.load_lora_weights(*args, **kwargs)
+
+
+def _offload_hooks(pipe):
+    """Nombre de hooks d'offload 'model' poses par diffusers sur ce pipe (0 = aucun)."""
+    return len(getattr(pipe, "_all_hooks", None) or [])
+
+
+def restore_offload(pipe, why=""):
+    """Remet le pipe dans son etat d'offload EFFECTIF s'il a ete laisse sur le CPU.
+
+    diffusers RETIRE les hooks d'offload avant de poser une LoRA et les remet apres.
+    Quand le chargement echoue entre les deux, personne ne les remet: le pipe reste sur
+    le CPU, son `_execution_device` passe a cpu, et TOUS les rendus suivants echouent
+    sur "Cannot generate a cpu tensor from a generator of type cuda" -- jusqu'au
+    redemarrage de l'app. Releve le 2026-09-23 avec deux LoRA DoRA (crispz-klein 1.36.6).
+    Renvoie True si l'etat a ete retabli."""
+    if DEVICE != "cuda" or pipe is None:
+        return False
+    try:
+        dev = pipe._execution_device
+    except Exception:
+        return False
+    if str(getattr(dev, "type", dev)) == "cuda":
+        return False
+    off = _effective_offload()
+    try:
+        if off == "model":
+            pipe.enable_model_cpu_offload()
+        elif off == "sequential":
+            pipe.enable_sequential_cpu_offload()
+        else:
+            pipe.to(DEVICE)
+    except Exception as e:
+        _log(f"pipeline left on the CPU and NOT restored ({e}): restart crispz-studio")
+        return False
+    _log(f"pipeline was left on the CPU{' after ' + why if why else ''} -> offload "
+         f"'{off}' restored in place (no reload)")
+    return True
+
+
 def retry_on_oom(what, fn, *args, **kwargs):
     """Appelle fn(*args, **kwargs); sur un manque de VRAM, rend la VRAM (cache de torch,
     modeles restes sur le GPU) et retente UNE fois. Un second echec rend encore la VRAM
@@ -1664,6 +1717,12 @@ def _apply_loras(pipe, force=False):
     eff = _effective_loras()
     if not force and _APPLIED_LORAS == eff:
         return True
+    # low_cpu_mem_usage=False a CHAQUE chargement (cf. _load_lora): le defaut de
+    # diffusers cree les couches de l'adaptateur sur 'meta' puis y copie les poids. Une
+    # DoRA dont diffusers filtre les cles 'dora_scale' laisse alors des parametres sans
+    # donnees, et le premier deplacement leve "Cannot copy out of meta tensor". Avec des
+    # tenseurs reels, une cle manquante garde sa valeur d'init.
+    had_hooks = _offload_hooks(pipe)
     old_paths = [p for p, _ in _APPLIED_LORAS]
     new_paths = [p for p, _ in eff]
     try:
@@ -1684,8 +1743,8 @@ def _apply_loras(pipe, force=False):
                 # Passer le dossier + weight_name (et non le chemin complet) : sinon
                 # diffusers en mode offline (HF_HUB_OFFLINE) refuse "must specify a
                 # weight_name". Marche aussi online et avec un fichier local direct.
-                pipe.load_lora_weights(os.path.dirname(p) or ".",
-                                       weight_name=os.path.basename(p), adapter_name=an)
+                _load_lora(pipe, os.path.dirname(p) or ".",
+                           weight_name=os.path.basename(p), adapter_name=an)
                 names.append(an)
                 weights.append(float(w))
             else:
@@ -1698,6 +1757,11 @@ def _apply_loras(pipe, force=False):
         return True
     except Exception as e:
         _log(f"LoRA hot-swap failed ({e}); falling back to a full reload")
+        # diffusers a retire les hooks d'offload avant de charger et n'a pas eu le temps
+        # de les remettre: sans ca, le pipe reste sur le CPU et TOUS les rendus suivants
+        # echouent, y compris ceux qui n'ont rien a voir avec cette LoRA.
+        if had_hooks and not _offload_hooks(pipe):
+            restore_offload(pipe, "a failed LoRA load")
         _APPLIED_LORAS = []
         return False
 
@@ -2217,6 +2281,10 @@ def _ensure_base():
     key = (BASE_REPO, ZIMAGE_TRANSFORMER, OFFLOAD_MODE)
     _dbg(f"_ensure_base key={key} cached={_LOADED_KEY}")
     if _BASE_PIPE is not None and _LOADED_KEY == key:
+        # Filet: un pipe laisse sur le CPU par un echec anterieur (LoRA, offload) ferait
+        # echouer CE rendu sur "Cannot generate a cpu tensor from a generator of type
+        # cuda", et tous les suivants.
+        restore_offload(_BASE_PIPE, "an earlier failure")
         if _apply_loras(_BASE_PIPE):
             _dbg("base pipeline: reusing cached (no reload)")
             return _BASE_PIPE

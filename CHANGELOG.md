@@ -4,6 +4,28 @@ All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased — A DoRA LoRA no longer takes the whole session down
+
+Picking a DoRA LoRA could fail to apply with `LoRA hot-swap failed (Cannot copy out of
+meta tensor)`, and cost a full model reload every time. Found on crispz-klein (1.36.6),
+fixed the same way here.
+
+diffusers creates the adapter layers on the `meta` device and copies the weights in
+afterwards. It also drops the `dora_scale` keys of a DoRA checkpoint, so some parameters
+never receive data and the first move raises. LoRAs are now loaded with
+`low_cpu_mem_usage=False`: the layers hold real tensors, and a missing key keeps its
+initial value. A DoRA still applies as a plain LoRA — diffusers drops its magnitude.
+
+diffusers also removes the offload hooks before loading a LoRA and puts them back after.
+When the load fails in between, nobody puts them back: the pipeline stays on the CPU, its
+execution device becomes `cpu`, and every render after that fails on `Cannot generate a
+cpu tensor from a generator of type cuda`. A failed load now restores the offload in
+place, and the cached base pipeline is checked before it is handed out
+(`restore_offload`), so a pipeline left on the CPU repairs itself instead of asking for a
+restart.
+
+Tests in `tests/test_lora_offload.py`.
+
 ## Unreleased — CPU offload defaults to `auto`: a boot VRAM test picks the fastest safe mode
 
 On Windows, a model that does not fit in VRAM does not crash: the NVIDIA driver's
