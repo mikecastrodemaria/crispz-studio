@@ -181,9 +181,10 @@ class _FakePipeline(types.ModuleType):
         return Image.new("RGB", (w, h), "#204060"), {"txt2img": 1.5}
 
     def generate_omni(self, refs, prompt, negative, w, h, steps, seed, **kw):
-        # **kw: les kwargs optionnels que certains forks passent a l'appel omni
-        # (guidance, honor_size, steps_explicit). Un fake a signature figee
-        # echouerait sur le fork sans rien dire du vrai comportement.
+        # **kw: the optional kwargs some forks pass to the omni call
+        # (guidance, honor_size, steps_explicit). A fake with a frozen
+        # signature would fail there without saying anything about the real
+        # behaviour.
         self.calls["omni"] = (len(refs), prompt, negative, w, h, steps, seed)
         self.calls["omni_kw"] = kw
         return Image.new("RGB", (w, h), "#106040")
@@ -390,18 +391,20 @@ def test_main_forced_remote_unreachable_is_code_4():
 
 
 def test_ops_is_a_subset_of_the_v1_vocabulary():
-    # PROTOCOL_OPS = le vocabulaire v1 (fige, identique dans tous les forks),
-    # OPS = ce que CET outil implemente. La CLI valide l'op contre le
-    # vocabulaire, jamais contre OPS: sinon un op non implemente sortirait en
-    # usage argparse (code 2, sur stderr) au lieu du JSON code 3.
+    # PROTOCOL_OPS = the v1 vocabulary (frozen, identical in every fork),
+    # OPS = what THIS tool implements. The CLI validates the op against the
+    # vocabulary, never against OPS: otherwise an op the tool does not
+    # implement would come out as an argparse usage (code 2, on stderr)
+    # instead of the JSON code 3.
     assert set(cp.OPS) <= set(cp.PROTOCOL_OPS)
     assert "edit" in cp.PROTOCOL_OPS and "inpaint" in cp.PROTOCOL_OPS
     assert cp.caps_dict()["ops"] == list(cp.OPS)
 
 
 def test_main_unsupported_op_is_code_3():
-    # on simule un outil qui n'implemente pas 'edit' (OPS reduit): l'op reste
-    # dans le vocabulaire v1, donc la CLI l'accepte et repond code 3 en JSON.
+    # simulate a tool that does not implement 'edit' (OPS reduced): the op
+    # stays in the v1 vocabulary, so the CLI accepts it and answers code 3
+    # in JSON.
     old = cp.OPS
     cp.OPS = ("caps", "gen")
     try:

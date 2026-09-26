@@ -171,7 +171,10 @@ SwarmUI. On top of crispz's upscaler it adds:
   JSON, e.g. single backslashes in a Windows path) is now reported loudly at
   startup instead of silently falling back to the sample.
   Exit codes: 0 ok · 1 run error · 2 bad spec · 3 unsupported op/protocol ·
-  4 no route. One image per call — the caller loops. LoRAs hot-swap per call
+  4 no route. Every op of the v1 vocabulary always answers in JSON — one a family
+  tool does not implement comes back as code 3 with the reason, never a usage dump
+  on stderr (`caps.ops` lists the ops this build implements). One image per call —
+  the caller loops. LoRAs hot-swap per call
   (`spec.loras`, or `<lora:file:weight>` tags right inside the prompt —
   extracted before the text encoder sees them). Config
   `cli_protocol.instance_url`.

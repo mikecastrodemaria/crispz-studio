@@ -4,6 +4,22 @@ All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased — `czp`: an op the tool does not implement answers JSON, not an argparse usage
+
+The CLI validated the op name against `OPS`, the list of ops **this tool** implements, so a
+tool without (say) `edit` refused it with an argparse usage dump on stderr and exit 2 — which
+a machine caller cannot read — and the explicit `op 'edit' not supported by <tool>` reply in
+`main()` was unreachable dead code. The op vocabulary of protocol v1 now lives in
+`PROTOCOL_OPS` (frozen, identical in every family tool) and `OPS` stays what the tool
+implements: every op of the vocabulary gets the one-line JSON answer, with exit code 3 when
+the tool does not implement it. Nothing changes for a caller of this build, which implements
+all five (`caps`, `gen`, `upscale`, `edit`, `inpaint`).
+
+The protocol test suite hid it: the test that simulates a tool without `edit` shrank `OPS`,
+which shrank the argparse choices with it, so its `SystemExit(2)` escaped the test and cut the
+file short — 9 of 24 tests ran, all printing OK, and the file exited 2. `tests/test_protocol.py`
+runs 24 of 24 now and pins `OPS` as a subset of the vocabulary.
+
 ## Unreleased — A DoRA LoRA no longer takes the whole session down
 
 Picking a DoRA LoRA could fail to apply with `LoRA hot-swap failed (Cannot copy out of
