@@ -27,8 +27,8 @@ def test_caps_lists_models_and_loras_from_dirs():
         os.environ["LORAS_DIR"] = os.path.join(d, "lo")
         caps = cp.caps_dict()
         assert caps["models"] == ["b.safetensors", "sub/a.gguf"]
-        assert caps["loras"] == ["ink.safetensors"]     # _index ignore
-        assert caps["model_loaded"] == ""               # czp froid
+        assert caps["loras"] == ["ink.safetensors"]     # _index ignored
+        assert caps["model_loaded"] == ""               # cold czp
     finally:
         os.environ.pop("CHECKPOINTS_DIR", None)
         os.environ.pop("LORAS_DIR", None)
@@ -37,7 +37,12 @@ def test_caps_lists_models_and_loras_from_dirs():
 
 def test_caps_reports_the_loaded_model_on_the_instance_side():
     fake = types.ModuleType("cz_pipeline")
-    fake.ZIMAGE_TRANSFORMER = r"D:\models\zit\cool-model.safetensors"
+    # A full checkpoint path: caps must report the file name only.
+    # os.path.join keeps the separator of the running OS - a backslash is
+    # not a separator under Linux, so a path hardcoded Windows-style only
+    # ever passed on Windows (the CI runs on Linux).
+    fake.ZIMAGE_TRANSFORMER = os.path.join("D:" + os.sep, "models", "zit",
+                                           "cool-model.safetensors")
     fake.BASE_REPO = "some/base"
     old = sys.modules.get("cz_pipeline")
     sys.modules["cz_pipeline"] = fake
