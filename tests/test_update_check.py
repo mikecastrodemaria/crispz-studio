@@ -151,7 +151,7 @@ def test_a_diverged_branch_blocks():
         write(os.path.join(w.work, "b.txt"), "local\n")
         git(w.work, "commit", "-am", "local commit")
         st = w.assess()
-        assert st["status"] == "blocked" and "divergente" in st["why"], st
+        assert st["status"] == "blocked" and "diverged" in st["why"], st
     finally:
         w.close()
     print("OK test_a_diverged_branch_blocks")
@@ -167,7 +167,7 @@ def test_no_upstream_or_no_repo_offers_nothing():
         git(d, "add", ".")
         git(d, "commit", "-m", "x")
         st = U.assess()
-        assert st["status"] == "skip" and "branche" in st["why"], st
+        assert st["status"] == "skip" and "no remote branch" in st["why"], st
         assert U.main([]) == 0
     finally:
         shutil.rmtree(d, ignore_errors=True)

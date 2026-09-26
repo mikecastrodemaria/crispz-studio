@@ -38,9 +38,9 @@ def _git(*args, timeout=15):
                            encoding="utf-8", errors="replace", timeout=timeout)
         return p.returncode, ((p.stdout or "") + (p.stderr or "" if p.returncode else "")).strip()
     except FileNotFoundError:
-        return None, "git introuvable"
+        return None, "git not found"
     except subprocess.TimeoutExpired:
-        return None, f"pas de reponse en {timeout} s"
+        return None, f"no answer in {timeout} s"
 
 
 def _lines(out):
@@ -54,15 +54,15 @@ def assess(fetch=True):
     if code is None:
         return {"status": "skip", "why": out}
     if code != 0 or out != "true":
-        return {"status": "skip", "why": "ce dossier n'est pas un depot git"}
+        return {"status": "skip", "why": "this folder is not a git repository"}
     code, up = _git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
     if code != 0 or not up:
-        return {"status": "skip", "why": "la branche courante ne suit aucune branche distante"}
+        return {"status": "skip", "why": "the current branch tracks no remote branch"}
     if fetch:
         code, out = _git("fetch", "--quiet", up.split("/", 1)[0], timeout=FETCH_TIMEOUT)
         if code != 0:
-            last = _lines(out)[-1][:90] if _lines(out) else "fetch en echec"
-            return {"status": "skip", "why": f"GitHub injoignable ({last})"}
+            last = _lines(out)[-1][:90] if _lines(out) else "fetch failed"
+            return {"status": "skip", "why": f"GitHub unreachable ({last})"}
     _, behind = _git("rev-list", "--count", "HEAD..@{u}")
     _, ahead = _git("rev-list", "--count", "@{u}..HEAD")
     behind = int(behind) if str(behind).isdigit() else 0
@@ -73,7 +73,7 @@ def assess(fetch=True):
     info = {"upstream": up, "behind": behind, "ahead": ahead, "log": _lines(log)}
     if ahead:
         return {**info, "status": "blocked",
-                "why": f"branche divergente: {ahead} commit(s) local(aux) absent(s) de GitHub"}
+                "why": f"diverged branch: {ahead} local commit(s) missing from GitHub"}
     # Ce que les commits a recuperer touchent (un renommage compte comme suppression + ajout).
     _, changed = _git("diff", "--name-only", "--no-renames", "HEAD", "@{u}")
     _, added = _git("diff", "--name-only", "--no-renames", "--diff-filter=A", "HEAD", "@{u}")
@@ -86,7 +86,7 @@ def assess(fetch=True):
     info["local"] = sorted(local)
     if overlap or clobber:
         return {**info, "status": "blocked", "overlap": overlap, "clobber": clobber,
-                "why": "la mise a jour toucherait du travail local"}
+                "why": "the update would touch local work"}
     return {**info, "status": "safe"}
 
 
@@ -101,36 +101,35 @@ def main(argv):
         pass
     guard = "--guard" in argv
     if not guard and os.environ.get("CRISPZ_NO_UPDATE_CHECK", "") == "1":
-        print("    Verification desactivee (CRISPZ_NO_UPDATE_CHECK=1).")
+        print("    Check disabled (CRISPZ_NO_UPDATE_CHECK=1).")
         return 0
     st = assess(fetch=True)
     s = st["status"]
     if s == "skip":
-        print(f"    Pas de verification: {st['why']}.")
+        print(f"    No check: {st['why']}.")
         return 0
     if s == "uptodate":
-        extra = f" ({_plural(st['ahead'], 'commit')} local non pousse)" if st.get("ahead") else ""
-        print(f"    A jour{extra}.")
+        extra = f" ({_plural(st['ahead'], 'commit')} local, not pushed)" if st.get("ahead") else ""
+        print(f"    Up to date{extra}.")
         return 0
     n = st["behind"]
-    print(f"    {_plural(n, 'nouveau commit').replace('nouveau commits', 'nouveaux commits')} "
-          f"sur GitHub ({st['upstream']}):")
+    print(f"    {_plural(n, 'new commit')} on GitHub ({st['upstream']}):")
     for ln in st["log"]:
         print(f"      {ln[:100]}")
     if n > len(st["log"]):
-        print(f"      ... et {n - len(st['log'])} autre(s)")
+        print(f"      ... and {n - len(st['log'])} more")
     if s == "blocked":
-        print(f"    [BLOQUE] {st['why']}.")
+        print(f"    [BLOCKED] {st['why']}.")
         for p in st.get("overlap", []):
-            print(f"      modifie ici ET par la mise a jour : {p}")
+            print(f"      changed here AND by the update: {p}")
         for p in st.get("clobber", []):
-            print(f"      present ici hors de git, ajoute par la mise a jour : {p}")
-        print("    Rien n'a ete touche.")
+            print(f"      here outside git, added by the update: {p}")
+        print("    Nothing was touched.")
         return 11
     kept = st.get("local") or []
     if kept:
-        print(f"    {_plural(len(kept), 'fichier')} modifie(s) ici, que la mise a jour ne "
-              f"touche pas: conserve(s) tel(s) quel(s).")
+        print(f"    {_plural(len(kept), 'file')} changed here that the update does not "
+              f"touch: kept as they are.")
     return 0 if guard else 10
 
 

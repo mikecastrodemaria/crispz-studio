@@ -38,25 +38,25 @@ def load_prefs():
         merged.update({k: v for k, v in data.items() if k in DEFAULTS})
         return merged
     except Exception as e:
-        print(f"[AVERT] preferences.json illisible ({e}), fallback defauts.")
+        print(f"[WARN] preferences.json unreadable ({e}), falling back to defaults.")
         return dict(DEFAULTS)
 
 
 def save_prefs(prefs):
     with open(PREFS_PATH, "w", encoding="utf-8") as f:
         json.dump(prefs, f, indent=2, ensure_ascii=False)
-    print(f"Sauve: {PREFS_PATH}")
+    print(f"Saved: {PREFS_PATH}")
 
 
 def ask(label, default, cast=str):
-    shown = f"{default}" if default != "" else "(vide)"
+    shown = f"{default}" if default != "" else "(empty)"
     raw = input(f"{label} [{shown}]: ").strip()
     if raw == "":
         return default
     try:
         return cast(raw)
     except ValueError:
-        print(f"  Valeur invalide, garde {shown}.")
+        print(f"  Invalid value, keeping {shown}.")
         return default
 
 
@@ -67,12 +67,12 @@ def ask_choice(label, choices, default):
         return default
     if raw in choices:
         return raw
-    print(f"  Choix invalide, garde {default}.")
+    print(f"  Invalid choice, keeping {default}.")
     return default
 
 
 def ask_yes_no(label, default=True):
-    suffix = "[O/n]" if default else "[o/N]"
+    suffix = "[Y/n]" if default else "[y/N]"
     raw = input(f"{label} {suffix}: ").strip().lower()
     if raw == "":
         return default
@@ -85,65 +85,65 @@ def main():
 
     prefs = load_prefs()
 
-    print("=== crispz - CLI interactive ===")
+    print("=== crispz - interactive CLI ===")
 
     # 1) Chemins / modeles
-    esrgan_dir = ask("Dossier ESRGAN", prefs.get("esrgan_dir") or app.ESRGAN_DIR, str)
+    esrgan_dir = ask("ESRGAN folder", prefs.get("esrgan_dir") or app.ESRGAN_DIR, str)
     app.set_esrgan_dir(esrgan_dir)
-    zimage_model = ask("Modele Z-Image (repo HF ou chemin local)",
+    zimage_model = ask("Z-Image model (HF repo or local path)",
                        prefs.get("zimage_model") or app.BASE_REPO, str)
     app.set_zimage_model(zimage_model)
 
     models = app.list_esrgan_models()
     if not models:
-        print(f"[ERREUR] Aucun modele ESRGAN dans {app.ESRGAN_DIR}.")
+        print(f"[ERROR] No ESRGAN model in {app.ESRGAN_DIR}.")
         return 1
 
     print(f"\nESRGAN_DIR: {app.ESRGAN_DIR}")
     print(f"Z-Image   : {app.BASE_REPO}")
-    print(f"Modeles ESRGAN disponibles: {len(models)}\n")
+    print(f"ESRGAN models available: {len(models)}\n")
 
     # 2) Source : fichier ou dossier
-    src = input("Image source OU dossier (batch): ").strip().strip('"')
+    src = input("Source image OR folder (batch): ").strip().strip('"')
     while not src:
-        src = input("  Requis: ").strip().strip('"')
+        src = input("  Required: ").strip().strip('"')
     is_batch = os.path.isdir(src)
 
     # 3) Modele ESRGAN
-    print("\nModeles ESRGAN:")
+    print("\nESRGAN models:")
     for i, m in enumerate(models):
         marker = " *" if m == prefs.get("model") else ""
         print(f"  [{i}] {m}{marker}")
     default_idx = models.index(prefs["model"]) if prefs.get("model") in models else 0
-    raw = input(f"Choix [{default_idx}]: ").strip()
+    raw = input(f"Choice [{default_idx}]: ").strip()
     try:
         model_name = models[int(raw)] if raw else models[default_idx]
     except (ValueError, IndexError):
         model_name = models[default_idx]
-        print(f"  Choix invalide, garde {model_name}")
+        print(f"  Invalid choice, keeping {model_name}")
 
     # 4) Pipeline
-    factor = ask("Facteur (1.0-4.0)", prefs["factor"], float)
-    denoise = ask("Denoise (0.0-0.8, ~0.30 conseille)", prefs["denoise"], float)
-    steps = ask("Steps diffusion (4-30)", prefs["steps"], int)
-    prompt = ask("Prompt optionnel", prefs["prompt"], str)
-    seed = ask("Seed (-1 = aleatoire)", prefs["seed"], int)
-    tile = ask("Tile ESRGAN (0 = desactive)", prefs["tile"], int)
-    overlap = ask("Overlap tiling", prefs["overlap"], int)
+    factor = ask("Factor (1.0-4.0)", prefs["factor"], float)
+    denoise = ask("Denoise (0.0-0.8, ~0.30 advised)", prefs["denoise"], float)
+    steps = ask("Diffusion steps (4-30)", prefs["steps"], int)
+    prompt = ask("Optional prompt", prefs["prompt"], str)
+    seed = ask("Seed (-1 = random)", prefs["seed"], int)
+    tile = ask("ESRGAN tile (0 = off)", prefs["tile"], int)
+    overlap = ask("Tiling overlap", prefs["overlap"], int)
 
     # 5) Sauvegarde
-    print("\nMode de sauvegarde:")
-    print("  display    = pas de save, affiche le timing seulement")
-    print("  local      = sauve dans <output_dir> relatif au projet")
-    print("  alongside  = sauve dans le dossier de la source")
-    print("  custom     = sauve dans <output_dir> tel quel (absolu)")
+    print("\nSave mode:")
+    print("  display    = no save, prints the timing only")
+    print("  local      = saves in <output_dir>, relative to the project")
+    print("  alongside  = saves next to the source file")
+    print("  custom     = saves in <output_dir> as given (absolute)")
     save_mode = ask_choice("save_mode", ["display", "local", "alongside", "custom"], prefs["save_mode"])
     if save_mode in ("local", "custom"):
         output_dir = ask("output_dir", prefs["output_dir"], str)
     else:
         output_dir = prefs["output_dir"]
-    output_format = ask_choice("Format de sortie", ["png", "webp", "jpg"], prefs["output_format"])
-    time_log = ask("Time-log (chemin TSV, vide = pas de log)", prefs.get("time_log", ""), str)
+    output_format = ask_choice("Output format", ["png", "webp", "jpg"], prefs["output_format"])
+    time_log = ask("Time-log (TSV path, empty = no log)", prefs.get("time_log", ""), str)
 
     # 6) Recap
     print("\n--- Recap ---")
@@ -152,7 +152,7 @@ def main():
     print(f"  factor       : {factor}")
     print(f"  denoise      : {denoise}")
     print(f"  steps        : {steps}")
-    print(f"  prompt       : {prompt or '(vide)'}")
+    print(f"  prompt       : {prompt or '(empty)'}")
     print(f"  seed         : {seed}")
     print(f"  tile         : {tile}")
     print(f"  overlap      : {overlap}")
@@ -161,8 +161,8 @@ def main():
     print(f"  output_format: {output_format}")
     print(f"  time_log     : {time_log or '(none)'}\n")
 
-    if not ask_yes_no("Lancer ?", True):
-        print("Annule.")
+    if not ask_yes_no("Run?", True):
+        print("Cancelled.")
         return 0
 
     new_prefs = {
@@ -204,7 +204,7 @@ def main():
 
     if rc == 0:
         print()
-        if ask_yes_no("Sauver ces reglages comme preferences ?", True):
+        if ask_yes_no("Save these settings as preferences?", True):
             save_prefs(new_prefs)
     return rc
 

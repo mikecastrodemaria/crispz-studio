@@ -29,7 +29,7 @@ def arch_name(major, minor):
     for ma, mi, name, cuda in ARCHS:
         if (major, minor) >= (ma, mi):
             return name, cuda
-    return f"ancienne (sm_{major}{minor})", "?"
+    return f"older (sm_{major}{minor})", "?"
 
 
 def offload_reco(vram_gb):
@@ -42,33 +42,33 @@ def offload_reco(vram_gb):
     (mesure ~3 s/step contre ~1,1 s/step en 'model'), a reserver aux petites cartes.
     """
     if vram_gb >= 30:
-        return ("none", "les modeles compacts (GGUF Q8, Z-Image) tiennent entiers. "
-                        "Pour un gros modele bf16 (~33 Go), passer a 'model'.")
+        return ("none", "compact models (GGUF Q8, Z-Image) fit whole. "
+                        "For a big bf16 model (~33 GB), switch to 'model'.")
     if vram_gb >= 20:
-        return ("model", "un transformer entier tient sur le GPU; l'encodeur texte "
-                         "est evince apres l'encodage du prompt.")
+        return ("model", "a whole transformer fits on the GPU; the text encoder is "
+                         "evicted once the prompt is encoded.")
     # Seuil a 11 et non 12: une carte vendue "12 Go" expose ~11,6-11,9 Go. Les mettre
     # en 'sequential' couterait ~3x le temps par step (mesure) sans necessite.
     if vram_gb >= 11:
-        return ("model", "privilegier les quantifications GGUF (Q8 ~12,7 Go, Q4 ~7 Go) "
-                         "pour garder de la marge.")
+        return ("model", "prefer the GGUF quantizations (Q8 ~12.7 GB, Q4 ~7 GB) "
+                         "to keep some headroom.")
     if vram_gb >= 7:
-        return ("sequential", "carte juste: GGUF Q4 conseille, 1024px maxi, "
-                              "et s'attendre a des steps lents.")
-    return ("sequential", "VRAM tres limitee: GGUF Q4, 768-1024px, ESRGAN seul si besoin.")
+        return ("sequential", "tight card: GGUF Q4 advised, 1024px max, "
+                              "and expect slow steps.")
+    return ("sequential", "very limited VRAM: GGUF Q4, 768-1024px, ESRGAN alone if needed.")
 
 
 def main():
     try:
         import torch
     except ImportError:
-        print("[ERREUR] PyTorch absent.")
+        print("[ERROR] PyTorch missing.")
         return 1
 
     print(f"torch {torch.__version__} | cuda {torch.version.cuda}")
     if not torch.cuda.is_available():
-        print("CUDA non disponible: la generation tournera en CPU (tres lent, deconseille).")
-        print("Reco: machine sans GPU NVIDIA, prefere la passe ESRGAN seule (denoise = 0).")
+        print("CUDA unavailable: generation will run on the CPU (very slow, not advised).")
+        print("Advice: no NVIDIA GPU here, prefer the ESRGAN pass alone (denoise = 0).")
         return 2
 
     i = 0
@@ -82,8 +82,8 @@ def main():
 
     print(f"GPU             : {name}")
     print(f"Architecture    : {gen}  [{sm}]")
-    print(f"VRAM            : {vram_gb:.1f} Go")
-    print(f"BF16 natif      : {'oui' if bf16 else 'non (Turing/Pascal, FP16 conseille)'}")
+    print(f"VRAM            : {vram_gb:.1f} GB")
+    print(f"BF16 native     : {'yes' if bf16 else 'no (Turing/Pascal, FP16 advised)'}")
 
     # --- LE check qui compte: ce build torch sait-il compiler pour ce GPU ? ---
     # Un torch sans le sm_ de la carte se charge mais casse a la 1re allocation
@@ -93,17 +93,17 @@ def main():
     except Exception:
         arch_list = []
     supported = (not arch_list) or (sm in arch_list)
-    print(f"Support {sm:<7}: {'oui' if supported else 'NON'}"
-          f"  (build torch: {', '.join(arch_list[-4:]) if arch_list else 'inconnu'})")
+    print(f"Support {sm:<7}: {'yes' if supported else 'NO'}"
+          f"  (torch build: {', '.join(arch_list[-4:]) if arch_list else 'unknown'})")
     if not supported:
         print()
         print("=" * 62)
-        print(f"[INCOMPATIBLE] Ce build PyTorch ne contient pas de noyaux {sm}.")
-        print(f"   {gen} exige CUDA {cuda_min}+; ce torch est compile pour CUDA "
+        print(f"[INCOMPATIBLE] This PyTorch build has no {sm} kernels.")
+        print(f"   {gen} needs CUDA {cuda_min}+; this torch is built for CUDA "
               f"{torch.version.cuda}.")
-        print("   Symptome typique: 'WinError 127 ... torch_cuda.dll' ou")
+        print("   Typical symptom: 'WinError 127 ... torch_cuda.dll' or")
         print("   'no kernel image is available for execution on the device'.")
-        print("   Correctif:")
+        print("   Fix:")
         print("     pip uninstall -y torch torchvision torchaudio")
         print(f"     pip install torch torchvision torchaudio "
               f"--index-url https://download.pytorch.org/whl/cu{cuda_min.replace('.', '')}")
@@ -113,28 +113,28 @@ def main():
     # --- Recommandations (echelonnees selon la VRAM reelle) ---
     off, why = offload_reco(vram_gb)
     if vram_gb >= 20:
-        tile, note = 0, "image entiere (tile=0)"
+        tile, note = 0, "whole image (tile=0)"
     elif vram_gb >= 12:
         tile, note = 768, "tile 768, overlap 32"
     elif vram_gb >= 8:
         tile, note = 512, "tile 512, overlap 32"
     else:
-        tile, note = 384, "tile 384, overlap 32, baisser si OOM"
+        tile, note = 384, "tile 384, overlap 32, lower it on OOM"
     if vram_gb >= 24:
-        zsize = "jusqu'a 2048px de cote en image entiere"
+        zsize = "up to 2048px a side, whole image"
     elif vram_gb >= 12:
-        zsize = "jusqu'a ~1536px, au-dela tuiler la passe diffusion (refine_tile)"
+        zsize = "up to ~1536px, tile the diffusion pass beyond that (refine_tile)"
     else:
-        zsize = "rester <= 1024px sur la passe diffusion"
+        zsize = "stay <= 1024px on the diffusion pass"
 
     print()
-    print("--- Reco reglages (config.txt / onglet Advanced) ---")
+    print("--- Suggested settings (config.txt / Advanced tab) ---")
     print(f"CPU offload     : {off}  <- {why}")
     print(f"Tiling ESRGAN   : {note}   (default_tile={tile})")
-    print(f"Passe diffusion : {zsize}")
-    print(f"Dtype           : {'BF16 (defaut)' if bf16 else 'FP16 (mettre DTYPE=torch.float16)'}")
-    print(f"Attention slice : {'inutile' if vram_gb >= 16 else 'utile (deja auto dans le code)'}")
-    print(f"Denoise         : 0.20-0.30 conservateur, 0.30-0.40 avec prompt detaille")
+    print(f"Diffusion pass  : {zsize}")
+    print(f"Dtype           : {'BF16 (default)' if bf16 else 'FP16 (set DTYPE=torch.float16)'}")
+    print(f"Attention slice : {'not needed' if vram_gb >= 16 else 'useful (already automatic in the code)'}")
+    print(f"Denoise         : 0.20-0.30 conservative, 0.30-0.40 with a detailed prompt")
     return 0
 
 

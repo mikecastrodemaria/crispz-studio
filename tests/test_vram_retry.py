@@ -199,7 +199,7 @@ def test_ui_omni_reports_what_to_lower_when_the_retry_fails():
         cz_ui.generate_omni = always
         gal, rep = _call(image_number=1)[:2]
     assert not gal, gal
-    assert "Omni error" in rep and "VRAM saturee" in rep and "redemarre" in rep, rep
+    assert "Omni error" in rep and "VRAM full" in rep and "restart" in rep, rep
     assert rel.calls == [True, True], rel.calls
 
 

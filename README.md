@@ -1172,8 +1172,8 @@ Two flags make it easy to call crispz from another tool (separate process):
 - `--print-output` : stdout contains ONLY the absolute path of each saved image
   (one per line), nothing else. The human-readable report is suppressed. This is
   the machine-parsable contract for retrieving the result.
-- `--report-vram` : run VRAM peak on **stderr** (line `[VRAM] pic alloue:
-  X.XX Go | pic reserve: Y.YY Go`). On stderr, so it does not pollute the stdout
+- `--report-vram` : run VRAM peak on **stderr** (line `[VRAM] peak allocated:
+  X.XX GB | peak reserved: Y.YY GB`). On stderr, so it does not pollute the stdout
   of `--print-output`. Used to size VRAM coexistence (e.g. with Fooocus).
 
 ```bash

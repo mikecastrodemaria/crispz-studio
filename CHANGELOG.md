@@ -4,6 +4,22 @@ All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+## Unreleased — The app's own messages are in English
+
+Part of what the app printed was still French, inside an otherwise English interface:
+the two out-of-VRAM panels in the UI, the `[VRAM]` peak report, the time-log warning,
+a handful of pipeline log lines (sampler fallback, offload, auto-tiling, guidance),
+and every line of `_hw_check.py` (the boot hardware report), `_update_check.py` (the
+GitHub update proposal and the `update.bat` / `update.sh` guard) and `cli_interactive.py`.
+All of it reads English now, same wording otherwise. The interactive CLI shows `[Y/n]`
+and still takes `o` / `oui` as yes.
+
+Two contracts changed with it: `--report-vram` prints
+`[VRAM] peak allocated: X.XX GB | peak reserved: Y.YY GB` (was `pic alloue ... Go`), so a
+script parsing that line needs updating, and `_update_check.py`'s `why` field is English
+(the exit codes 0 / 10 / 11 are untouched — the launchers only read those). The `.bat` and
+`.sh` launchers still echo French, and so do the code comments.
+
 ## Unreleased — `czp`: an op the tool does not implement answers JSON, not an argparse usage
 
 The CLI validated the op name against `OPS`, the list of ops **this tool** implements, so a
