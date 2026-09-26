@@ -48,6 +48,12 @@ from prompt_variants import has_variants
 
 PROTOCOL = 1
 TOOL = "crispz-studio"
+# The op vocabulary of protocol v1: frozen, identical in every family
+# tool. czp accepts all of it on the command line so that an op THIS tool
+# does not implement still gets a JSON answer with exit code 3 - a machine
+# caller cannot read an argparse usage dump on stderr.
+PROTOCOL_OPS = ("caps", "gen", "upscale", "edit", "inpaint")
+# What this tool implements: a subset of the vocabulary (all of it today).
 OPS = ("caps", "gen", "upscale", "edit", "inpaint")
 
 # What this MODEL FAMILY can do at all (diffusers pipelines that exist for
@@ -768,7 +774,7 @@ def _read_spec(path):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="czp", description="crispz family CLI protocol v1 (JSON in/out)")
-    parser.add_argument("op", choices=list(OPS))
+    parser.add_argument("op", choices=list(PROTOCOL_OPS))
     parser.add_argument("--spec", metavar="FILE",
                         help="spec JSON ('-' = stdin); required for gen")
     parser.add_argument("--local", action="store_true",
