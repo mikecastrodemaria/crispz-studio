@@ -38,7 +38,11 @@ jobs:
       - name: Install (CPU torch)
         run: |
           python -m pip install --upgrade pip
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          # torchvision WITH torch, from the same index: a downstream dependency
+          # (insightface/basicsr) otherwise pulls it from PyPI, where it is built
+          # against CUDA torch -> "operator torchvision::nms does not exist" at
+          # import time, which takes transformers' vision classes down with it.
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
       - name: Run test suite
         run: python tools/run_tests.py -v
