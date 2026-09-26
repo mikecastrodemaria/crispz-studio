@@ -23,8 +23,11 @@ The launchers speak English as well: `boot_check.bat`, `install.bat` / `install.
 `update.bat` / `update.sh`, `run.bat` / `run.sh`, `cli.sh`, including the python
 one-liners they carry (the model count, the new-config-keys notice). The boot update
 prompt is now `choice /C YN` — **Y** updates, and **N** is still the default after
-20 s, so an unattended boot behaves exactly as before. Only the comments are still
-French: `REM` / `#` in the launchers, and the code comments.
+20 s, so an unattended boot behaves exactly as before.
+
+The code comments are a separate pass, under way: `cz_protocol.py` and its tests read
+English (the family's public contract, so it goes first); `cz_pipeline.py`, `cz_ui.py`
+and the launchers' `REM` / `#` are still French.
 
 ## Unreleased — `czp`: an op the tool does not implement answers JSON, not an argparse usage
 

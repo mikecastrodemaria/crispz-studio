@@ -107,9 +107,9 @@ def _faces_available():
 
 
 def _models_dir(kind):
-    """Dossier des modeles ('checkpoints'|'loras'), memes priorites que
-    cz_pipeline (env > preferences > config > defaut) mais sans l'importer:
-    caps doit rester leger."""
+    """Model folder ('checkpoints'|'loras'), same priorities as cz_pipeline
+    (env > preferences > config > default) but without importing it: caps
+    must stay light."""
     from cz_core import HERE, _prefs
     return (os.environ.get(kind.upper() + "_DIR")
             or _prefs.get(f"{kind}_dir") or CONFIG.get(f"{kind}_dir")
@@ -117,9 +117,9 @@ def _models_dir(kind):
 
 
 def _list_model_files(kind, exts=(".safetensors", ".gguf")):
-    """Fichiers modeles disponibles (chemins relatifs POSIX, tries). Simple
-    listage disque - la SOURCE DE VERITE des modeles reste chaque outil, les
-    appelants (wizard comics2crispz) ne configurent aucun chemin."""
+    """Available model files (POSIX relative paths, sorted). A plain disk
+    listing - each tool stays the SOURCE OF TRUTH for its models, callers
+    (the comics2crispz wizard) configure no path at all."""
     d = _models_dir(kind)
     out = []
     if os.path.isdir(d):
@@ -134,9 +134,9 @@ def _list_model_files(kind, exts=(".safetensors", ".gguf")):
 
 
 def _model_loaded():
-    """Modele actif de CE process: renseigne cote instance (endpoint
-    cli_caps), '' cote czp froid (cz_pipeline pas importe - et on ne
-    l'importe PAS pour ca)."""
+    """The model active in THIS process: filled in on the instance side
+    (endpoint cli_caps), '' on the cold czp side (cz_pipeline is not
+    imported - and we do NOT import it for this)."""
     mod = sys.modules.get("cz_pipeline")
     if mod is None:
         return ""
@@ -147,21 +147,21 @@ def _model_loaded():
 
 
 def _hands_available():
-    """Le detailer de mains peut-il tourner ? Check leger, rien n'est importe.
+    """Can the hand detailer run? A light check, nothing is imported.
 
-    A L'EXECUTION il ne demande qu'onnxruntime + le .onnx exporte une fois dans
-    cache/. 'ultralytics' ne sert qu'a CET export, dans un sous-process -- sa
-    docstring dans cz_detailer explique pourquoi il ne doit surtout pas vivre dans
-    le process de diffusion (il corrompt les poids partages pendant les transferts
-    d'offload). Exiger ultralytics ici declarait donc la feature absente chez
-    quiconque avait suivi ce conseil et exporte le .onnx depuis un venv jetable:
-    le detecteur etait pret, et l'app repondait 'detail_hands: false'."""
+    AT RUNTIME it only needs onnxruntime + the .onnx exported once into cache/.
+    'ultralytics' serves THAT export only, in a subprocess -- its docstring in
+    cz_detailer explains why it must never live in the diffusion process (it
+    corrupts the shared weights during offload transfers). Requiring ultralytics
+    here therefore declared the feature missing for anyone who had followed that
+    advice and exported the .onnx from a throwaway venv: the detector was ready,
+    and the app answered 'detail_hands: false'."""
     import importlib.util
     import os
     if importlib.util.find_spec("onnxruntime") is None:
         return False
     if importlib.util.find_spec("ultralytics") is not None:
-        return True                     # l'export peut se faire a la demande
+        return True                     # the export can happen on demand
     try:
         import cz_detailer
         from cz_core import HERE
@@ -273,9 +273,9 @@ def validate_spec(spec, op="gen"):
     if op == "gen" and not out["prompt"]:
         raise SpecError("empty 'prompt'")
     if op == "edit":
-        # edit = image + INSTRUCTION -> image, via le pipeline omni/edit de
-        # l'outil (Qwen-Image-Edit, Z-Image Omni). Sans ce modele: refus
-        # net (code 3) - jamais une image NEUVE generee en douce a la place.
+        # edit = image + INSTRUCTION -> image, through the tool's omni/edit
+        # pipeline (Qwen-Image-Edit, Z-Image Omni). Without that model: a flat
+        # refusal (code 3) - never a BRAND NEW image quietly made instead.
         if not out["prompt"]:
             raise SpecError("edit requires 'prompt' (the edit instruction)")
         inp = str(spec.get("input") or "").strip()
@@ -290,7 +290,7 @@ def validate_spec(spec, op="gen"):
         spec = dict(spec)
         spec["refs"] = [inp]
         if not spec.get("width") or not spec.get("height"):
-            # taille par defaut = celle de l'image (alignee 32, bornee)
+            # default size = the image's own (aligned to 32, clamped)
             try:
                 from PIL import Image
                 with Image.open(inp) as im:
@@ -300,8 +300,8 @@ def validate_spec(spec, op="gen"):
             except Exception as e:
                 raise SpecError(f"input unreadable: {e}")
     if op == "inpaint":
-        # inpaint = image + MASQUE (blanc = a redessiner) + prompt local ->
-        # image. Refus net (code 3) quand la famille n'a pas de pipeline.
+        # inpaint = image + MASK (white = to redraw) + local prompt -> image.
+        # Flat refusal (code 3) when the family has no such pipeline.
         if not FAMILY_CAPS["inpaint"]:
             raise SpecError(f"inpaint not supported by {TOOL}: this model "
                             f"family has no inpaint pipeline", code=3)
@@ -406,9 +406,9 @@ def validate_spec(spec, op="gen"):
     if count is not None and int(count) != 1:
         warnings.append("count forced to 1 (v1: one image per call, loop on "
                         "the caller side)")
-    # Detailer ADetailer-style: true/false force, absent (None) = le reglage
-    # courant de l'outil (config face_detailer) pour les visages, OFF pour
-    # les mains (ultralytics optionnel - jamais implicite).
+    # ADetailer-style detailer: true/false forces it, absent (None) = the
+    # tool's current setting (config face_detailer) for faces, OFF for hands
+    # (ultralytics is optional - never implicit).
     for key in ("detail_faces", "detail_hands"):
         v = spec.get(key)
         out[key] = None if v is None else bool(v)
@@ -475,9 +475,9 @@ def run_gen(spec, warnings=None, route="local"):
         img, timings = cz_pipeline.txt2img_run(
             spec["prompt"], spec["width"], spec["height"], steps,
             seed_used, spec.get("negative", ""))
-    # Passe detailer (visages ADetailer-style, mains YOLO) - la meme que le
-    # CLI --detail-faces/--detail-hands. Un echec (paquet optionnel absent,
-    # detecteur KO) DEGRADE en warning, jamais en panneau perdu.
+    # Detailer pass (ADetailer-style faces, YOLO hands) - the same one as the
+    # CLI's --detail-faces/--detail-hands. A failure (optional package missing,
+    # detector down) DEGRADES to a warning, never to a lost panel.
     timings = dict(timings or {})
     nf = nh = 0
     df, dh = spec.get("detail_faces"), spec.get("detail_hands")
@@ -537,11 +537,11 @@ def _pick_esrgan(models, factor):
 
 
 def run_upscale(spec, warnings=None, route="local"):
-    """Upscale UNE image (ESRGAN + refine, le pipeline de l'outil) depuis un
-    spec VALIDE. Sortie print de la famille: les cases BD generees a ~1 MP
-    remontent a la resolution d'impression par ici. Le prompt (optionnel)
-    guide la passe de refine - JAMAIS le prompt de scene sur un crop, regle
-    maison: l'appelant envoie une description LOCALE ou rien."""
+    """Upscale ONE image (ESRGAN + refine, the tool's pipeline) from a VALID
+    spec. The family's print output: comic panels generated at ~1 MP come up
+    to print resolution through here. The prompt (optional) guides the refine
+    pass - NEVER the scene prompt on a crop, house rule: the caller sends a
+    LOCAL description or nothing."""
     import cz_pipeline
     import cz_esrgan
     from PIL import Image
@@ -601,7 +601,7 @@ def run_upscale(spec, warnings=None, route="local"):
 
 
 def handle_upscale_json(spec_json):
-    """Cote INSTANCE (endpoint api_name='cli_upscale')."""
+    """INSTANCE side (endpoint api_name='cli_upscale')."""
     try:
         spec, warnings = validate_spec(json.loads(spec_json or "{}"),
                                        op="upscale")
@@ -615,8 +615,8 @@ def handle_upscale_json(spec_json):
 
 
 def handle_edit_json(spec_json):
-    """Cote INSTANCE (endpoint api_name='cli_edit'): image + instruction ->
-    image via le pipeline omni/edit (refs = [input])."""
+    """INSTANCE side (endpoint api_name='cli_edit'): image + instruction ->
+    image through the omni/edit pipeline (refs = [input])."""
     try:
         spec, warnings = validate_spec(json.loads(spec_json or "{}"),
                                        op="edit")
@@ -632,11 +632,11 @@ def handle_edit_json(spec_json):
 
 
 def run_inpaint(spec, warnings=None, route="local"):
-    """Inpaint UNE image depuis un spec VALIDE: la zone BLANCHE du masque est
-    redessinee selon le prompt (pipeline inpaint de l'outil, meme code que
-    l'onglet Inpaint). Le prompt decrit ce qui doit apparaitre DANS la zone
-    (description locale - regle maison: jamais le prompt de scene sur un
-    fragment). Hors masque: pixels d'origine, jointure fondue."""
+    """Inpaint ONE image from a VALID spec: the WHITE area of the mask is
+    redrawn from the prompt (the tool's inpaint pipeline, the same code as the
+    Inpaint tab). The prompt describes what must appear IN the area (a local
+    description - house rule: never the scene prompt on a fragment). Outside
+    the mask: original pixels, feathered seam."""
     import random
     import cz_pipeline
     from PIL import Image
@@ -683,8 +683,8 @@ def run_inpaint(spec, warnings=None, route="local"):
 
 
 def handle_inpaint_json(spec_json):
-    """Cote INSTANCE (endpoint api_name='cli_inpaint'): image + masque +
-    prompt -> image (zone blanche redessinee)."""
+    """INSTANCE side (endpoint api_name='cli_inpaint'): image + mask +
+    prompt -> image (the white area is redrawn)."""
     try:
         spec, warnings = validate_spec(json.loads(spec_json or "{}"),
                                        op="inpaint")
@@ -819,7 +819,7 @@ def main(argv=None):
         inst = probe_instance(url)
         if inst:
             if args.op == "gen" and spec.get("model"):
-                # (upscale: spec.model = modele ESRGAN, sans danger remote)
+                # (upscale: spec.model = the ESRGAN model, harmless remote)
                 warnings.append("model override ignored on the remote route "
                                 "(the running instance keeps its model)")
                 spec["model"] = None

@@ -102,13 +102,13 @@ def _omni_config(value="some/omni-model"):
 
 
 def test_caps_refs_follow_omni_support_and_config():
-    # Familles sans pipeline omni (krea/krea2): refs=False QUOI QUE dise la
-    # config - jamais promettre une capacite dont le chargement leve.
+    # Families with no omni pipeline (krea/krea2): refs=False WHATEVER the
+    # config says - never promise a capability whose loading would raise.
     if not cp.OMNI_SUPPORTED:
         with _omni_config():
             assert cp.caps_dict()["supports"]["refs"] is False
         return
-    # Config vide -> retombe sur le defaut de la famille (qwen-edit en a un)
+    # Empty config -> falls back to the family default (qwen-edit has one)
     with _omni_config(""):
         assert cp.caps_dict()["supports"]["refs"] == bool(cp.OMNI_DEFAULT)
     with _omni_config():
@@ -119,7 +119,7 @@ def test_caps_refs_follow_omni_support_and_config():
 
 def test_validate_refs_dropped_with_warning_when_unavailable():
     if cp.OMNI_SUPPORTED and cp.OMNI_DEFAULT:
-        return                       # omni dispo par defaut: rien a dropper
+        return                       # omni there by default: nothing to drop
     ctx = _omni_config() if not cp.OMNI_SUPPORTED else _omni_config("")
     with ctx:
         spec, warnings = cp.validate_spec(
@@ -214,15 +214,15 @@ def test_run_gen_saves_image_and_reports_seed():
                  "out_dir": d})
             res = cp.run_gen(spec, warnings)
         assert res["ok"] and res["route"] == "local"
-        # seed -1 resolu en valeur concrete AVANT la generation: le seed
-        # rapporte est celui passe au pipeline (rejouable), et _LAST_SEED est
-        # pose pour le 'Reuse last seed' de l'UI.
+        # seed -1 is resolved to a concrete value BEFORE generating: the seed
+        # reported is the one passed to the pipeline (replayable), and _LAST_SEED
+        # is set for the UI's 'Reuse last seed'.
         assert res["seed_used"] >= 0
         assert fake.calls["gen"][4] == res["seed_used"]
         assert fake._LAST_SEED == res["seed_used"]
         assert len(res["images"]) == 1 and os.path.isfile(res["images"][0])
         assert res["images"][0].startswith(os.path.abspath(d))
-        # steps par defaut = default_gen_steps de l'outil (varie par fork)
+        # default steps = the tool's default_gen_steps (varies per fork)
         from cz_core import CONFIG as _cfg
         assert fake.calls["gen"][1:4] == \
             (128, 96, int(_cfg.get("default_gen_steps", 8)))
@@ -277,7 +277,7 @@ def test_handle_gen_json_remote_refuses_model_override():
                 {"protocol": 1, "prompt": "x", "width": 64, "height": 64,
                  "model": "other.safetensors", "out_dir": d}))
         assert res["ok"] and res["route"] == "remote"
-        assert fake.calls["model"] is None                 # jamais applique
+        assert fake.calls["model"] is None                 # never applied
         assert any("model override ignored" in w for w in res["warnings"])
     finally:
         shutil.rmtree(d, ignore_errors=True)
@@ -363,8 +363,8 @@ def test_main_gen_routes_to_running_instance():
 
 
 def test_main_accepts_utf8_bom_spec():
-    # PowerShell 5.1 (Set-Content -Encoding utf8) ecrit un BOM: le protocole
-    # doit l'accepter, Windows est le terrain principal.
+    # PowerShell 5.1 (Set-Content -Encoding utf8) writes a BOM: the protocol
+    # has to accept it, Windows is the main ground here.
     d = tempfile.mkdtemp(prefix="cz_proto_bom_")
     try:
         sp = os.path.join(d, "spec.json")
