@@ -41,7 +41,7 @@ if exist ".venv\Scripts\python.exe" set "RUNPY=.venv\Scripts\python.exe"
 if not defined RUNPY (
     where py >nul 2>&1 && ( set "RUNPY=py -3.10" ) || ( set "RUNPY=python" )
 )
-echo Interpreteur: !RUNPY!
+echo Interpreter: !RUNPY!
 
 REM --- 0. Etat avant: version torch + empreinte du fichier de deps ---
 set REQFILE=requirements.txt
@@ -49,11 +49,11 @@ if "!ISOLATED!"=="1" if exist "requirements-lock.txt" set REQFILE=requirements-l
 set "TORCH_BEFORE="
 for /f "delims=" %%v in ('!RUNPY! -c "import torch;print(torch.__version__)" 2^>nul') do set "TORCH_BEFORE=%%v"
 if defined TORCH_BEFORE (
-    echo torch installe: !TORCH_BEFORE!
+    echo torch installed: !TORCH_BEFORE!
     !RUNPY! -m pip freeze > "%TEMP%\cz_pip_before.txt" 2>nul
-    echo   ^(snapshot des versions: %TEMP%\cz_pip_before.txt^)
+    echo   ^(version snapshot: %TEMP%\cz_pip_before.txt^)
 ) else (
-    echo torch non installe ^(premiere install ? lance install.bat^).
+    echo torch not installed ^(first install? run install.bat^).
 )
 set "HASH_BEFORE="
 if exist "!REQFILE!" for /f "delims=" %%h in ('certutil -hashfile "!REQFILE!" MD5 ^| findstr /R "^[0-9a-f][0-9a-f]*$"') do set "HASH_BEFORE=%%h"
@@ -63,7 +63,7 @@ REM --- 1. git pull ---
 if "!DOPULL!"=="1" (
     where git >nul 2>&1
     if errorlevel 1 (
-        echo [AVERT] git introuvable -^> pull saute. Mets a jour les fichiers a la main.
+        echo [WARN] git not found -^> pull skipped. Update the files by hand.
     ) else (
         REM Ne jamais ecraser du travail local: _update_check.py --guard bloque si les
         REM commits a recuperer touchent un fichier modifie ici, ou ajoutent un fichier
@@ -72,14 +72,14 @@ if "!DOPULL!"=="1" (
         !RUNPY! _update_check.py --guard
         if errorlevel 1 (
             echo.
-            echo   Commit / stash ces fichiers d'abord, ou relance avec --no-pull pour ne
-            echo   resynchroniser que les dependances.
+            echo   Commit / stash those files first, or run again with --no-pull to
+            echo   resync the dependencies only.
             pause & exit /b 1
         )
-        echo Recuperation des commits ^(git pull^)...
+        echo Fetching the commits ^(git pull^)...
         git pull --ff-only
         if errorlevel 1 (
-            echo [ERREUR] git pull a echoue ^(branche divergente ?^). Resous a la main.
+            echo [ERROR] git pull failed ^(diverged branch?^). Sort it out by hand.
             pause & exit /b 1
         )
     )
@@ -95,10 +95,10 @@ if "!FORCEDEPS!"=="1" set "NEEDDEPS=1"
 if not defined TORCH_BEFORE set "NEEDDEPS=1"
 
 if "!NEEDDEPS!"=="0" (
-    echo Dependances: !REQFILE! inchange -^> rien a reinstaller.
-    echo   ^(--force-deps pour forcer^)
+    echo Dependencies: !REQFILE! unchanged -^> nothing to reinstall.
+    echo   ^(--force-deps to force it^)
 ) else (
-    echo Dependances: mise a jour depuis !REQFILE! ...
+    echo Dependencies: updating from !REQFILE! ...
     set "REQTMP=%TEMP%\cz_req_nopillow.txt"
     findstr /V /B /C:"pillow==" "!REQFILE!" > "!REQTMP!"
     !RUNPY! -m pip install -r "!REQTMP!"
@@ -108,8 +108,8 @@ if "!NEEDDEPS!"=="0" (
         !RUNPY! -m pip install --no-deps --upgrade "pillow==12.3.0" >nul 2>&1
     )
     if errorlevel 1 (
-        echo [ERREUR] pip install a echoue. L'environnement peut etre incoherent.
-        echo   Restauration possible: !RUNPY! -m pip install -r "%TEMP%\cz_pip_before.txt"
+        echo [ERROR] pip install failed. The environment may be inconsistent.
+        echo   Possible restore: !RUNPY! -m pip install -r "%TEMP%\cz_pip_before.txt"
         pause & exit /b 1
     )
 )
@@ -119,44 +119,44 @@ REM --- 3. torch a-t-il ete remplace ? (piege classique: build +cuXXX -^> CPU) -
 set "TORCH_AFTER="
 for /f "delims=" %%v in ('!RUNPY! -c "import torch;print(torch.__version__)" 2^>nul') do set "TORCH_AFTER=%%v"
 if defined TORCH_BEFORE if not "!TORCH_BEFORE!"=="!TORCH_AFTER!" (
-    echo [ATTENTION] torch a change: !TORCH_BEFORE!  -^>  !TORCH_AFTER!
-    echo    Si le suffixe +cuXXX a disparu, le GPU ne sera plus utilise.
-    echo    Restauration: !RUNPY! -m pip install torch==!TORCH_BEFORE! --index-url https://download.pytorch.org/whl/cu128
+    echo [WARNING] torch changed: !TORCH_BEFORE!  -^>  !TORCH_AFTER!
+    echo    If the +cuXXX suffix is gone, the GPU will not be used any more.
+    echo    Restore: !RUNPY! -m pip install torch==!TORCH_BEFORE! --index-url https://download.pytorch.org/whl/cu128
     echo.
 )
 
 REM --- 4. Verifications finales ---
-echo Verification de l'installation...
+echo Checking the install...
 !RUNPY! _hw_check.py
 set "HW=!errorlevel!"
 echo.
 if "!HW!"=="3" (
-    echo [BLOQUANT] torch ne supporte plus cette carte ^(voir le correctif ci-dessus^).
+    echo [BLOCKING] torch no longer supports this card ^(see the fix above^).
     pause & exit /b 3
 )
 !RUNPY! -c "from diffusers import ZImagePipeline, ZImageImg2ImgPipeline; print('diffusers: ZImage pipelines OK')"
 if errorlevel 1 (
-    echo [ERREUR] diffusers ne fournit plus les pipelines ZImage.
-    echo   Relance install.bat, ou restaure: !RUNPY! -m pip install -r "%TEMP%\cz_pip_before.txt"
+    echo [ERROR] diffusers no longer ships the ZImage pipelines.
+    echo   Run install.bat again, or restore: !RUNPY! -m pip install -r "%TEMP%\cz_pip_before.txt"
     pause & exit /b 1
 )
 !RUNPY! -c "import cz_ui; print('app: imports OK')"
 if errorlevel 1 (
-    echo [ERREUR] l'application ne s'importe plus. Voir la trace ci-dessus.
+    echo [ERROR] the application no longer imports. See the traceback above.
     pause & exit /b 1
 )
 echo.
 
 REM --- 5. Nouveautes de config: signaler les cles ajoutees dans le sample ---
 if exist "config.txt" if exist "config-sample.txt" (
-    !RUNPY! -c "import json;a=json.load(open('config.txt',encoding='utf-8'));b=json.load(open('config-sample.txt',encoding='utf-8'));n=[k for k in b if k not in a and not k.startswith('_')];print('Nouvelles cles de config disponibles: '+', '.join(n) if n else 'config.txt a jour.')" 2>nul
-    echo   ^(config.txt n'est jamais ecrase: ajoute les cles voulues a la main^)
+    !RUNPY! -c "import json;a=json.load(open('config.txt',encoding='utf-8'));b=json.load(open('config-sample.txt',encoding='utf-8'));n=[k for k in b if k not in a and not k.startswith('_')];print('New config keys available: '+', '.join(n) if n else 'config.txt is up to date.')" 2>nul
+    echo   ^(config.txt is never overwritten: add the keys you want by hand^)
 )
 echo.
 
 echo === Update OK ===
-if exist "CHANGELOG.md" echo Nouveautes: voir CHANGELOG.md
-echo Lance: run.bat  ^(ou boot_check.bat pour un diagnostic complet^)
+if exist "CHANGELOG.md" echo What's new: see CHANGELOG.md
+echo Run: run.bat  ^(or boot_check.bat for a full diagnostic^)
 REM Code de sortie explicite: boot_check.bat distingue ainsi une mise a jour terminee
 REM d'une mise a jour en echec (un avertissement de l'etape 5 laissait errorlevel a 1).
 endlocal & exit /b 0

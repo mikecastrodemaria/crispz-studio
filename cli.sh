@@ -17,7 +17,7 @@ if command -v python3.10 >/dev/null 2>&1; then
 elif command -v python3 >/dev/null 2>&1; then
     PYCMD="python3"
 else
-    echo "[ERREUR] Python introuvable."
+    echo "[ERROR] Python not found."
     exit 1
 fi
 

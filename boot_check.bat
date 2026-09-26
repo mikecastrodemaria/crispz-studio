@@ -58,7 +58,7 @@ if not defined RUNPY (
 echo [1/5] Python : !RUNPY!
 !RUNPY! --version 2>nul
 if errorlevel 1 (
-    echo    [ERREUR] Python introuvable. Installe Python 3.10+ puis lance install.bat.
+    echo    [ERROR] Python not found. Install Python 3.10+ then run install.bat.
     pause & exit /b 1
 )
 echo.
@@ -69,23 +69,23 @@ REM fichier modifie ici ni n'ajoute un fichier deja present hors de git. Sans re
 REM en 20 s: N, l'app demarre telle quelle. --no-update ou CRISPZ_NO_UPDATE_CHECK=1:
 REM etape sautee. Hors ligne, sans git ou sans branche suivie: elle le dit et passe.
 if "!NOUPDATE!"=="0" (
-    echo [MAJ] Mises a jour GitHub...
+    echo [UPDATE] GitHub updates...
     !RUNPY! _update_check.py
     set "UPD=!errorlevel!"
     if "!UPD!"=="10" (
-        choice /C ON /T 20 /D N /M "    Mettre a jour maintenant ? N par defaut dans 20 s"
+        choice /C YN /T 20 /D N /M "    Update now? N by default in 20 s"
         if errorlevel 2 (
-            echo    Demarrage sans mise a jour. Plus tard : update.bat
+            echo    Starting without updating. Later: update.bat
         ) else (
             call "%~dp0update.bat"
             if errorlevel 1 (
-                echo    [ERREUR] Mise a jour interrompue, voir ci-dessus. L'app n'est pas lancee.
+                echo    [ERROR] Update interrupted, see above. The app was not started.
                 pause & exit /b 1
             )
-            echo    Mise a jour faite. Suite des verifications...
+            echo    Update done. Back to the checks...
         )
     )
-    if "!UPD!"=="11" echo    Demarrage sans mise a jour.
+    if "!UPD!"=="11" echo    Starting without updating.
     echo.
 )
 
@@ -93,45 +93,45 @@ REM --- 2. Etat du driver / de la carte (informations brutes) ---
 echo [2/5] Driver NVIDIA...
 nvidia-smi --query-gpu=name,driver_version,memory.total,memory.used,temperature.gpu --format=csv,noheader,nounits > "%TEMP%\cz_gpu.txt" 2>nul
 if errorlevel 1 (
-    echo    [INFO] nvidia-smi introuvable ^(pas de GPU NVIDIA, ou drivers absents^).
+    echo    [INFO] nvidia-smi not found ^(no NVIDIA GPU, or drivers missing^).
 ) else (
     for /f "tokens=1,2,3,4,5 delims=," %%a in (%TEMP%\cz_gpu.txt) do (
-        echo    Carte   : %%a
+        echo    Card    : %%a
         echo    Driver  : %%b
-        echo    VRAM    : %%d / %%c MB utilises   ^| Temp: %%e C
+        echo    VRAM    : %%d / %%c MB used   ^| Temp: %%e C
     )
     del "%TEMP%\cz_gpu.txt" >nul 2>&1
 )
 echo.
 
 REM --- 3. LE check: torch supporte-t-il CETTE carte ? + recommandations ---
-echo [3/5] PyTorch / GPU / reglages conseilles...
+echo [3/5] PyTorch / GPU / suggested settings...
 echo.
 !RUNPY! _hw_check.py
 set "HW=!errorlevel!"
 echo.
 if "!HW!"=="1" (
-    echo    [ERREUR] PyTorch absent -^> lance install.bat.
+    echo    [ERROR] PyTorch missing -^> run install.bat.
     pause & exit /b 1
 )
 if "!HW!"=="3" (
-    echo    [BLOQUANT] torch ne supporte pas cette carte ^(voir le correctif ci-dessus^).
-    echo    L'app planterait a la premiere allocation CUDA. Arret.
+    echo    [BLOCKING] torch does not support this card ^(see the fix above^).
+    echo    The app would crash on the first CUDA allocation. Stopping.
     pause & exit /b 3
 )
-if "!HW!"=="2" echo    [AVERT] Mode CPU: la generation sera tres lente.
+if "!HW!"=="2" echo    [WARN] CPU mode: generating will be very slow.
 
 REM --- 4. Pipeline diffusers de cette famille de modele ---
 echo [4/5] diffusers...
 !RUNPY! -c "from diffusers import ZImagePipeline, ZImageImg2ImgPipeline; print('    ZImage pipelines OK')" 2>nul
-if errorlevel 1 echo    [ATTENTION] ZImage pipelines indisponibles -^> lance install.bat / update.bat.
+if errorlevel 1 echo    [WARNING] ZImage pipelines unavailable -^> run install.bat / update.bat.
 echo.
 
 REM --- 5. Modeles: on lit les VRAIS dossiers de la config, pas un chemin en dur ---
-echo [5/5] Modeles...
+echo [5/5] Models...
 REM %% : en batch un %% litteral s'ecrit double, sinon cmd mange le format Python.
-!RUNPY! -c "import os,cz_pipeline as p;[print('    %%-11s %%3d fichier(s)  %%s' %% (n, (len([f for f in os.listdir(d) if f.lower().endswith(('.safetensors','.gguf','.ckpt','.pt','.sft'))]) if os.path.isdir(d) else 0), d if os.path.isdir(d) else '(dossier absent)')) for n,d in (('checkpoints',p.CHECKPOINTS_DIR),('extra',p.CHECKPOINTS_EXTRA_DIR),('loras',p.LORAS_DIR)) if d]" 2>nul
-if errorlevel 1 echo    [INFO] impossible de lire la config ^(config.txt absent ? lance install.bat^).
+!RUNPY! -c "import os,cz_pipeline as p;[print('    %%-11s %%3d file(s)  %%s' %% (n, (len([f for f in os.listdir(d) if f.lower().endswith(('.safetensors','.gguf','.ckpt','.pt','.sft'))]) if os.path.isdir(d) else 0), d if os.path.isdir(d) else '(folder missing)')) for n,d in (('checkpoints',p.CHECKPOINTS_DIR),('extra',p.CHECKPOINTS_EXTRA_DIR),('loras',p.LORAS_DIR)) if d]" 2>nul
+if errorlevel 1 echo    [INFO] could not read the config ^(config.txt missing? run install.bat^).
 echo.
 
 REM --- Optimisations CUDA (sans effet si pas de GPU NVIDIA) ---
@@ -147,14 +147,14 @@ REM --- Exposition reseau (--lan / --web): Gradio lit ces variables nativement -
 set "CF_PORT=7860"
 if defined EXPOSE (
     echo ----------------------------------------------------
-    echo  [SECURITE] Exposition reseau demandee ^(--!EXPOSE!^).
-    echo  crispz-studio n'a AUCUNE authentification et sert ton dossier de
-    echo  sortie ainsi que tes dossiers de modeles. N'expose que sur un reseau
-    echo  de confiance. Voir la section "Scope" de SECURITY.md.
+    echo  [SECURITY] Network exposure requested ^(--!EXPOSE!^).
+    echo  crispz-studio has NO authentication and serves your output folder
+    echo  as well as your model folders. Only expose it on a network you
+    echo  trust. See the "Scope" section of SECURITY.md.
     echo ----------------------------------------------------
     set GRADIO_SERVER_NAME=0.0.0.0
     set GRADIO_SERVER_PORT=!CF_PORT!
-    echo Acces LAN :
+    echo LAN access:
     for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do echo    http://%%a:!CF_PORT!
     echo.
 )
@@ -166,16 +166,16 @@ if /I "!EXPOSE!"=="web" (
     if defined CF_PORT set GRADIO_SERVER_PORT=!CF_PORT!
     where cloudflared >nul 2>&1
     if errorlevel 1 (
-        echo [ERREUR] cloudflared introuvable dans le PATH.
-        echo    Installe-le : winget install --id Cloudflare.cloudflared
+        echo [ERROR] cloudflared not found in PATH.
+        echo    Install it: winget install --id Cloudflare.cloudflared
         pause & exit /b 1
     )
     if defined CF_TUNNEL (
-        echo [Cloudflare] Tunnel nomme : !CF_TUNNEL!
+        echo [Cloudflare] Named tunnel: !CF_TUNNEL!
         start "Cloudflare Tunnel" cloudflared tunnel run !CF_TUNNEL!
     ) else (
-        echo [Cloudflare] Quick tunnel ephemere: l'URL https://xxxx.trycloudflare.com
-        echo              s'affiche dans la fenetre "Cloudflare Tunnel".
+        echo [Cloudflare] Ephemeral quick tunnel: the https://xxxx.trycloudflare.com URL
+        echo              shows up in the "Cloudflare Tunnel" window.
         start "Cloudflare Tunnel" cloudflared tunnel --url http://localhost:!CF_PORT!
     )
     echo.
@@ -183,19 +183,19 @@ if /I "!EXPOSE!"=="web" (
 
 if "!NORUN!"=="1" (
     echo ====================================================
-    echo    Diagnostic termine ^(--no-run: app non lancee^).
+    echo    Diagnostic done ^(--no-run: app not started^).
     echo ====================================================
     endlocal & exit /b 0
 )
 echo ====================================================
-echo    Checks OK. Lancement de crispz-studio...
+echo    Checks OK. Starting crispz-studio...
 echo ====================================================
 timeout /t 2 /nobreak >nul
 call "%~dp0run.bat" %PASSTHRU%
 if /I "!EXPOSE!"=="web" (
     echo.
     echo ----------------------------------------------------
-    echo  Arrete. Pense a fermer la fenetre du tunnel Cloudflare.
+    echo  Stopped. Remember to close the Cloudflare tunnel window.
     echo ----------------------------------------------------
 )
 endlocal

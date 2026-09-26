@@ -17,8 +17,14 @@ and still takes `o` / `oui` as yes.
 Two contracts changed with it: `--report-vram` prints
 `[VRAM] peak allocated: X.XX GB | peak reserved: Y.YY GB` (was `pic alloue ... Go`), so a
 script parsing that line needs updating, and `_update_check.py`'s `why` field is English
-(the exit codes 0 / 10 / 11 are untouched — the launchers only read those). The `.bat` and
-`.sh` launchers still echo French, and so do the code comments.
+(the exit codes 0 / 10 / 11 are untouched — the launchers only read those).
+
+The launchers speak English as well: `boot_check.bat`, `install.bat` / `install.sh`,
+`update.bat` / `update.sh`, `run.bat` / `run.sh`, `cli.sh`, including the python
+one-liners they carry (the model count, the new-config-keys notice). The boot update
+prompt is now `choice /C YN` — **Y** updates, and **N** is still the default after
+20 s, so an unattended boot behaves exactly as before. Only the comments are still
+French: `REM` / `#` in the launchers, and the code comments.
 
 ## Unreleased — `czp`: an op the tool does not implement answers JSON, not an argparse usage
 

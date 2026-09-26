@@ -41,12 +41,12 @@ echo Python     = !RUNPY!
 echo ESRGAN_DIR = !ESRGAN_DIR!
 if defined CRISPZ_LOG_LEVEL echo Log level  = !CRISPZ_LOG_LEVEL!  (run.bat --debug)
 echo.
-echo --- Detection hardware ---
+echo --- Hardware detection ---
 !RUNPY! _hw_check.py
 echo.
 
-echo --- Lancement de l'UI Gradio ---
-echo Ouvre http://127.0.0.1:7860 dans ton navigateur
+echo --- Starting the Gradio UI ---
+echo Open http://127.0.0.1:7860 in your browser
 echo.
 !RUNPY! app.py
 endlocal

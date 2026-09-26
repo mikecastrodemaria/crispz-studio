@@ -19,7 +19,7 @@ if command -v python3.10 >/dev/null 2>&1; then
 elif command -v python3 >/dev/null 2>&1; then
     PYCMD="python3"
 else
-    echo "[ERREUR] Python introuvable."
+    echo "[ERROR] Python not found."
     exit 1
 fi
 
@@ -38,11 +38,11 @@ echo "Python     = $RUNPY"
 echo "ESRGAN_DIR = $ESRGAN_DIR"
 [ -n "$CRISPZ_LOG_LEVEL" ] && echo "Log level  = $CRISPZ_LOG_LEVEL  (run.sh --debug)"
 echo
-echo "--- Detection hardware ---"
+echo "--- Hardware detection ---"
 $RUNPY _hw_check.py
 echo
 
-echo "--- Lancement de l'UI Gradio ---"
-echo "Ouvre http://127.0.0.1:7860 dans ton navigateur"
+echo "--- Starting the Gradio UI ---"
+echo "Open http://127.0.0.1:7860 in your browser"
 echo
 $RUNPY app.py

@@ -38,9 +38,9 @@ if "!USE_VENV!"=="0" set ISOLATED=0
 
 echo === crispz - install Windows ===
 if "!ISOLATED!"=="1" (
-    echo Mode: venv ISOLE ^(reproductible, torch dedie^)
+    echo Mode: ISOLATED venv ^(reproducible, dedicated torch^)
 ) else (
-    echo Mode: venv partage / systeme ^(herite du torch global^)
+    echo Mode: shared / system venv ^(inherits the global torch^)
 )
 echo.
 
@@ -49,7 +49,7 @@ where py >nul 2>&1
 if errorlevel 1 (
     where python >nul 2>&1
     if errorlevel 1 (
-        echo [ERREUR] Python introuvable. Installe Python 3.10+ depuis python.org.
+        echo [ERROR] Python not found. Install Python 3.10+ from python.org.
         exit /b 1
     )
     set PYCMD=python
@@ -57,26 +57,26 @@ if errorlevel 1 (
     py -3.10 -c "import sys" >nul 2>&1
     if errorlevel 1 ( set PYCMD=py ) else ( set PYCMD=py -3.10 )
 )
-echo Python de base: !PYCMD!
+echo Base Python: !PYCMD!
 !PYCMD! --version
 echo.
 
 REM 2) torch + CUDA. En mode ISOLE, torch vient de requirements-lock.txt: on ne
 REM    verifie rien ici. En mode partage/systeme, il doit deja etre present.
 if "!ISOLATED!"=="1" (
-    echo Mode isole: torch sera installe dans le venv depuis le lock. Rien a verifier.
+    echo Isolated mode: torch is installed in the venv from the lock. Nothing to check.
 ) else (
     !PYCMD! -c "import torch,sys; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), torch.version.cuda); sys.exit(0 if torch.cuda.is_available() else 2)"
     if errorlevel 2 (
         echo.
-        echo [AVERT] PyTorch present mais CUDA non disponible. La generation en CPU sera tres lente.
+        echo [WARN] PyTorch present but CUDA unavailable. Generating on the CPU will be very slow.
         goto torch_ok
     )
     if errorlevel 1 (
         echo.
-        echo [ERREUR] PyTorch introuvable. Installe d'abord ton build PyTorch + CUDA, puis relance.
-        echo Exemple ^(CUDA 12.8^): !PYCMD! -m pip install torch --index-url https://download.pytorch.org/whl/cu128
-        echo Ou relance sans --shared pour un venv isole qui installe son propre torch.
+        echo [ERROR] PyTorch not found. Install your PyTorch + CUDA build first, then run this again.
+        echo Example ^(CUDA 12.8^): !PYCMD! -m pip install torch --index-url https://download.pytorch.org/whl/cu128
+        echo Or run again without --shared for an isolated venv that installs its own torch.
         exit /b 1
     )
 )
@@ -92,7 +92,7 @@ if not "!ISOLATED!"=="1" (
     ) else (
         !PYCMD! -c "import xformers" >nul 2>&1
         if not errorlevel 1 (
-            echo [AVERT] xformers installe mais ne charge pas ^(DLL/ABI torch incompatible^). Desinstallation.
+            echo [WARN] xformers installed but does not load ^(torch DLL/ABI mismatch^). Uninstalling.
             !PYCMD! -m pip uninstall -y xformers
         )
     )
@@ -104,34 +104,34 @@ set RUNPY=!PYCMD!
 if "!USE_VENV!"=="1" (
     if not exist ".venv\Scripts\python.exe" (
         if "!ISOLATED!"=="1" (
-            echo Creation du venv .venv ^(ISOLE^)...
+            echo Creating the .venv ^(ISOLATED^)...
             !PYCMD! -m venv .venv
         ) else (
-            echo Creation du venv .venv ^(--system-site-packages: herite de torch^)...
+            echo Creating the .venv ^(--system-site-packages: inherits torch^)...
             !PYCMD! -m venv --system-site-packages .venv
         )
     ) else (
-        echo Venv .venv deja present, reutilise en l'etat.
-        echo   Pour repartir propre: supprime .venv puis relance.
+        echo .venv already there, reused as is.
+        echo   For a clean start: delete .venv then run this again.
     )
     if exist ".venv\Scripts\python.exe" (
         set RUNPY=.venv\Scripts\python.exe
         .venv\Scripts\python.exe -m pip install --quiet --upgrade pip setuptools wheel
     ) else (
-        echo [AVERT] creation du venv impossible -^> repli sur le Python courant.
+        echo [WARN] could not create the venv -^> falling back to the current Python.
     )
 ) else (
-    echo Mode --no-venv: install sur le Python courant.
+    echo Mode --no-venv: installing on the current Python.
 )
-echo Interpreteur d'install: !RUNPY!
+echo Install interpreter: !RUNPY!
 echo.
 
 REM 5) Installer les deps. En mode isole on prefere le lock (versions exactes
 REM    validees, torch cu128 inclus). Sinon requirements.txt (bornes larges).
 set REQFILE=requirements.txt
 if "!ISOLATED!"=="1" if exist "requirements-lock.txt" set REQFILE=requirements-lock.txt
-echo Installation des dependances depuis !REQFILE! ...
-if "!REQFILE!"=="requirements-lock.txt" echo   ^(inclut torch cu128, ~3,5 Go de telechargement la premiere fois^)
+echo Installing the dependencies from !REQFILE! ...
+if "!REQFILE!"=="requirements-lock.txt" echo   ^(includes torch cu128, ~3.5 GB to download the first time^)
 REM Pillow est filtre du fichier: gradio 5.50 declare pillow^<12 et refuserait
 REM de resoudre avec le pin 12.x. Il est pose juste apres, en --no-deps.
 REM Le pin reste dans le lock pour que Dependabot voie la version corrigee.
@@ -143,7 +143,7 @@ set "REQTMP=%TEMP%\cz_req_nopillow.txt"
 findstr /V /B /C:"pillow==" /C:"onnxruntime==" "!REQFILE!" > "!REQTMP!"
 !RUNPY! -m pip install -r "!REQTMP!"
 if errorlevel 1 (
-    echo [ERREUR] echec pip install. Verifie le log ci-dessus.
+    echo [ERROR] pip install failed. Check the log above.
     exit /b 1
 )
 echo.
@@ -155,15 +155,15 @@ REM   qu'en 12.x. Cette borne de gradio est conservatrice: verifie sur cette
 REM   base de code, Pillow 12 fonctionne. On installe donc apres coup, sans
 REM   redeclencher la resolution qui refuserait la combinaison.
 set "PILLOW_PIN=pillow==12.3.0"
-echo Installation de !PILLOW_PIN! ^(a part: contourne la borne pillow^<12 de gradio^)...
+echo Installing !PILLOW_PIN! ^(apart: works around gradio's pillow^<12 bound^)...
 !RUNPY! -m pip install --no-deps --upgrade "!PILLOW_PIN!"
-if errorlevel 1 echo [AVERT] echec install Pillow -^> version heritee conservee.
+if errorlevel 1 echo [WARN] Pillow install failed -^> inherited version kept.
 echo.
 
 REM 6) Verifier que diffusers expose le pipeline de cette famille de modele
 !RUNPY! -c "from diffusers import !CHECK_PIPE!; print('!CHECK_PIPE! OK')"
 if errorlevel 1 (
-    echo [ERREUR] diffusers ne contient pas !CHECK_PIPE!.
+    echo [ERROR] diffusers does not contain !CHECK_PIPE!.
     exit /b 1
 )
 echo.
@@ -171,25 +171,25 @@ echo.
 REM 7) Deps optionnelles. Le lock les contient deja; en mode non-isole il faut
 REM    encore passer par les fichiers dedies.
 if "!FACESWAP!"=="1" if not "!REQFILE!"=="requirements-lock.txt" (
-    echo Installation des deps FaceSwap ^(insightface + onnxruntime-gpu^)...
+    echo Installing the FaceSwap deps ^(insightface + onnxruntime-gpu^)...
     !RUNPY! -m pip install -r requirements-faceswap.txt
-    if errorlevel 1 echo [AVERT] echec install FaceSwap ^(non bloquant^). La feature restera desactivee.
-    echo Installation des extras ^(rembg pour Remove BG^)...
+    if errorlevel 1 echo [WARN] FaceSwap install failed ^(not blocking^). The feature stays off.
+    echo Installing the extras ^(rembg for Remove BG^)...
     !RUNPY! -m pip install -r requirements-extra.txt
-    if errorlevel 1 echo [AVERT] echec install extras ^(non bloquant^).
+    if errorlevel 1 echo [WARN] extras install failed ^(not blocking^).
     echo.
 )
 
 REM 8) Dossiers de modeles
 for %%D in (upscale_models checkpoints loras faceswap) do if not exist "%%D" mkdir "%%D"
-echo Dossiers prets: upscale_models (ESRGAN), checkpoints, loras, faceswap.
+echo Folders ready: upscale_models (ESRGAN), checkpoints, loras, faceswap.
 echo.
 
 REM 9) Config locale: copie config-sample.txt -> config.txt si absent
 if not exist "config.txt" (
     if exist "config-sample.txt" (
         copy /Y "config-sample.txt" "config.txt" >nul
-        echo config.txt cree depuis config-sample.txt ^(edite-le pour tes reglages^).
+        echo config.txt created from config-sample.txt ^(edit it for your settings^).
     )
 )
 echo.
@@ -197,15 +197,15 @@ echo.
 REM 10) Modele inswapper (FaceSwap) - opt-in ^(528 Mo, licence^): --faceswap-model
 if "!FACESWAP_MODEL!"=="1" (
     if not exist "faceswap\inswapper_128.onnx" (
-        echo Telechargement du modele inswapper_128.onnx ^(~528 Mo^)...
+        echo Downloading the inswapper_128.onnx model ^(~528 MB^)...
         !RUNPY! -c "import urllib.request; urllib.request.urlretrieve('https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx', 'faceswap/inswapper_128.onnx'); print('inswapper OK')"
     ) else (
-        echo Modele inswapper deja present.
+        echo inswapper model already there.
     )
     echo.
 )
 
-echo === Install OK. Lance run.bat ===
-echo     Options: --shared ^(venv qui herite du torch global^)  --no-venv ^(Python courant^)
-echo              --no-faceswap ^(sauter insightface^)  --faceswap-model ^(telecharger inswapper^)
+echo === Install OK. Run run.bat ===
+echo     Options: --shared ^(venv inheriting the global torch^)  --no-venv ^(current Python^)
+echo              --no-faceswap ^(skip insightface^)  --faceswap-model ^(download inswapper^)
 endlocal
