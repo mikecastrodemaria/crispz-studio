@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# CLI interactive pour crispz.
-# Utilise .venv s'il existe; --no-venv (ou --system) force le Python courant.
+# The interactive CLI for crispz.
+# Uses .venv when it exists; --no-venv (or --system) forces the current Python.
 
 set -e
 cd "$(dirname "$0")"

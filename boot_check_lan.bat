@@ -1,4 +1,4 @@
 @echo off
-REM Boot check + acces LAN (0.0.0.0:7860). Voir boot_check.bat pour le detail.
-REM AUCUNE authentification: reseau de confiance uniquement (cf. SECURITY.md).
+REM Boot check + LAN access (0.0.0.0:7860). See boot_check.bat for the detail.
+REM NO authentication at all: a trusted network only (see SECURITY.md).
 call "%~dp0boot_check.bat" --lan %*

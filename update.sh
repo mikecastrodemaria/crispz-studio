@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Update crispz-studio (Unix): recupere les commits GitHub puis remet les
-# dependances en phase avec le lock, SANS casser l'installation existante.
+# Update crispz-studio (Unix): fetches the GitHub commits then brings the
+# dependencies back in line with the lock, WITHOUT breaking the existing install.
 #
-#   --force-deps   reinstaller les deps meme si rien n'a change
-#   --no-pull      sauter le git pull (resynchroniser les deps seulement)
-#   --shared       utiliser requirements.txt au lieu du lock
+#   --force-deps   reinstall the deps even when nothing has changed
+#   --no-pull      skip the git pull (resynchronise the deps only)
+#   --shared       use requirements.txt instead of the lock
 set -uo pipefail
 cd "$(dirname "$0")"
 
@@ -21,15 +21,15 @@ echo "=== crispz-studio - update ==="
 RUNPY=python3
 [ -x ".venv/bin/python" ] && RUNPY=".venv/bin/python"
 [ -x "env/bin/python" ] && RUNPY="env/bin/python"
-# git-bash / msys2 sous Windows: le venv est en Scripts/, pas bin/. Sans ca on
-# tomberait sur le python du shell (souvent sans pip) au lieu de celui du projet.
+# git-bash / msys2 under Windows: the venv is in Scripts/, not bin/. Without this we
+# would land on the shell's python (often without pip) instead of the project's.
 [ -x ".venv/Scripts/python.exe" ] && RUNPY=".venv/Scripts/python.exe"
 echo "Interpreter: $RUNPY"
 
 REQFILE=requirements.txt
 [ "$ISOLATED" = "1" ] && [ -f requirements-lock.txt ] && REQFILE=requirements-lock.txt
 
-# 0) etat avant (rollback + detection du remplacement de torch)
+# 0) the state before (rollback + detecting a torch replacement)
 TORCH_BEFORE="$("$RUNPY" -c 'import torch;print(torch.__version__)' 2>/dev/null || true)"
 SNAP="${TMPDIR:-/tmp}/cz_pip_before.txt"
 if [ -n "$TORCH_BEFORE" ]; then
@@ -43,13 +43,13 @@ hash_of() { [ -f "$1" ] && (md5sum "$1" 2>/dev/null || md5 -q "$1" 2>/dev/null) 
 HASH_BEFORE="$(hash_of "$REQFILE")"
 echo
 
-# 1) git pull -- refuse d'ecraser des modifications locales non commitees
+# 1) git pull -- refuses to overwrite uncommitted local changes
 if [ "$DOPULL" = "1" ]; then
   if ! command -v git >/dev/null 2>&1; then
     echo "[WARN] git not found -> pull skipped."
   elif ! "$RUNPY" _update_check.py --guard; then
-    # Bloque seulement si les commits a recuperer touchent un fichier modifie ici ou
-    # ajoutent un fichier deja present hors de git (cf. _update_check.py).
+    # Blocks only when the commits to fetch touch a file modified here or add a file
+    # already present outside git (see _update_check.py).
     echo
     echo "  Commit / stash those files first, or run again with --no-pull to"
     echo "  resync the dependencies only."
@@ -61,7 +61,7 @@ if [ "$DOPULL" = "1" ]; then
   echo
 fi
 
-# 2) deps: seulement si le fichier a change (ou --force-deps)
+# 2) deps: only when the file has changed (or --force-deps)
 HASH_AFTER="$(hash_of "$REQFILE")"
 NEEDDEPS=0
 [ "$HASH_BEFORE" != "$HASH_AFTER" ] && NEEDDEPS=1
@@ -71,8 +71,8 @@ if [ "$NEEDDEPS" = "0" ]; then
   echo "Dependencies: $REQFILE unchanged -> nothing to reinstall. (--force-deps to force it)"
 else
   echo "Dependencies: updating from $REQFILE ..."
-  # Pillow est hors du lock (borne pillow<12 de gradio) -> pose a part, sinon un
-  # update ferait REGRESSER la version corrigee. Cf. install.sh.
+  # Pillow is outside the lock (gradio's pillow<12 bound) -> installed apart,
+  # otherwise an update would REGRESS the fixed version. See install.sh.
   REQTMP="${TMPDIR:-/tmp}/cz_req_nopillow.txt"
   grep -v '^pillow==' "$REQFILE" > "$REQTMP"
   if "$RUNPY" -m pip install -r "$REQTMP"; then
@@ -85,7 +85,7 @@ else
 fi
 echo
 
-# 3) torch a-t-il ete remplace ? (piege: build +cuXXX -> roue CPU)
+# 3) has torch been replaced ? (the trap: a +cuXXX build -> a CPU wheel)
 TORCH_AFTER="$("$RUNPY" -c 'import torch;print(torch.__version__)' 2>/dev/null || true)"
 if [ -n "$TORCH_BEFORE" ] && [ "$TORCH_BEFORE" != "$TORCH_AFTER" ]; then
   echo "[WARNING] torch changed: $TORCH_BEFORE -> $TORCH_AFTER"
@@ -94,7 +94,7 @@ if [ -n "$TORCH_BEFORE" ] && [ "$TORCH_BEFORE" != "$TORCH_AFTER" ]; then
   echo
 fi
 
-# 4) verifications
+# 4) checks
 echo "Checking the install..."
 "$RUNPY" _hw_check.py; HW=$?
 echo
@@ -109,7 +109,7 @@ fi
   echo "[ERROR] the application no longer imports."; exit 1; }
 echo
 
-# 5) nouvelles cles de config apparues dans le sample
+# 5) the new config keys that appeared in the sample
 if [ -f config.txt ] && [ -f config-sample.txt ]; then
   "$RUNPY" -c "import json;a=json.load(open('config.txt',encoding='utf-8'));b=json.load(open('config-sample.txt',encoding='utf-8'));n=[k for k in b if k not in a and not k.startswith('_')];print('New config keys available: '+', '.join(n) if n else 'config.txt is up to date.')" 2>/dev/null
   echo "  (config.txt is never overwritten: add the keys you want by hand)"

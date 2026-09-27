@@ -1,22 +1,22 @@
 @echo off
-REM Install pour crispz (Windows).
+REM Install for crispz (Windows).
 REM
-REM Defaut: venv .venv ISOLE (n'herite PAS du site-packages global) installe
-REM depuis requirements-lock.txt -> environnement reproductible, versions
-REM maitrisees, aucun risque de casser un autre projet. Telecharge son propre
-REM torch (~3,5 Go).
+REM Default: an ISOLATED .venv (it does NOT inherit the global site-packages)
+REM installed from requirements-lock.txt -> a reproducible environment, versions
+REM under control, no risk of breaking another project. It downloads its own
+REM torch (~3.5 GB).
 REM
-REM   --shared    ancien comportement: venv --system-site-packages qui HERITE du
-REM               torch global. Plus leger sur le disque, mais fait aussi heriter
-REM               diffusers/accelerate/numpy/pillow -> versions non choisies et
-REM               partagees avec les autres forks crispz.
-REM   --no-venv   installe directement sur le Python courant.
+REM   --shared    the old behaviour: a --system-site-packages venv that INHERITS
+REM               the global torch. Lighter on the disk, but it also inherits
+REM               diffusers/accelerate/numpy/pillow -> versions nobody chose, and
+REM               shared with the other crispz forks.
+REM   --no-venv   installs straight onto the current Python.
 
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-REM Pipeline attendu pour cette famille de modele. SEULE ligne qui differe
-REM entre crispz-studio (ZImage), crispz-krea (Flux) et crispz-qwen-edit (Qwen).
+REM The pipeline expected for this model family. The ONLY line that differs
+REM between crispz-studio (ZImage), crispz-krea (Flux) and crispz-qwen-edit (Qwen).
 set CHECK_PIPE=ZImageImg2ImgPipeline
 
 REM --- flags ---
@@ -44,7 +44,7 @@ if "!ISOLATED!"=="1" (
 )
 echo.
 
-REM 1) Python de base
+REM 1) The base Python
 where py >nul 2>&1
 if errorlevel 1 (
     where python >nul 2>&1
@@ -61,8 +61,8 @@ echo Base Python: !PYCMD!
 !PYCMD! --version
 echo.
 
-REM 2) torch + CUDA. En mode ISOLE, torch vient de requirements-lock.txt: on ne
-REM    verifie rien ici. En mode partage/systeme, il doit deja etre present.
+REM 2) torch + CUDA. In ISOLATED mode torch comes from requirements-lock.txt: we
+REM    check nothing here. In shared/system mode, it must already be present.
 if "!ISOLATED!"=="1" (
     echo Isolated mode: torch is installed in the venv from the lock. Nothing to check.
 ) else (
@@ -83,8 +83,8 @@ if "!ISOLATED!"=="1" (
 :torch_ok
 echo.
 
-REM 3) xformers casse ? le neutraliser cote SYSTEME. Utile seulement si le venv
-REM    herite du global (mode --shared) ou en --no-venv.
+REM 3) A broken xformers ? neutralise it SYSTEM-side. Only useful when the venv
+REM    inherits the global one (--shared mode) or under --no-venv.
 if not "!ISOLATED!"=="1" (
     !PYCMD! -c "import xformers.ops" >nul 2>&1
     if not errorlevel 1 (
@@ -126,19 +126,19 @@ if "!USE_VENV!"=="1" (
 echo Install interpreter: !RUNPY!
 echo.
 
-REM 5) Installer les deps. En mode isole on prefere le lock (versions exactes
-REM    validees, torch cu128 inclus). Sinon requirements.txt (bornes larges).
+REM 5) Install the deps. In isolated mode we prefer the lock (exact, validated
+REM    versions, torch cu128 included). Otherwise requirements.txt (wide bounds).
 set REQFILE=requirements.txt
 if "!ISOLATED!"=="1" if exist "requirements-lock.txt" set REQFILE=requirements-lock.txt
 echo Installing the dependencies from !REQFILE! ...
 if "!REQFILE!"=="requirements-lock.txt" echo   ^(includes torch cu128, ~3.5 GB to download the first time^)
-REM Pillow est filtre du fichier: gradio 5.50 declare pillow^<12 et refuserait
-REM de resoudre avec le pin 12.x. Il est pose juste apres, en --no-deps.
-REM Le pin reste dans le lock pour que Dependabot voie la version corrigee.
-REM onnxruntime (build CPU) est filtre lui aussi: rembg le tire en dependance, et
-REM une fois installe il MASQUE onnxruntime-gpu a l'import (meme nom de module,
-REM le CPU gagne) -^> faceswap, GFPGAN/CodeFormer et rembg tombent silencieusement
-REM sur le CPU malgre onnxruntime-gpu present. On ne garde que le build GPU.
+REM Pillow is filtered out of the file: gradio 5.50 declares pillow^<12 and would
+REM refuse to resolve with the 12.x pin. It is installed just after, with --no-deps.
+REM The pin stays in the lock so that Dependabot sees the fixed version.
+REM onnxruntime (the CPU build) is filtered out too: rembg pulls it as a dependency,
+REM and once installed it HIDES onnxruntime-gpu at import time (the same module name,
+REM the CPU one wins) -^> faceswap, GFPGAN/CodeFormer and rembg fall back silently
+REM to the CPU although onnxruntime-gpu is there. We keep the GPU build only.
 set "REQTMP=%TEMP%\cz_req_nopillow.txt"
 findstr /V /B /C:"pillow==" /C:"onnxruntime==" "!REQFILE!" > "!REQTMP!"
 !RUNPY! -m pip install -r "!REQTMP!"
@@ -148,19 +148,19 @@ if errorlevel 1 (
 )
 echo.
 
-REM 5bis) Pillow, installe A PART et en --no-deps.
-REM   gradio 5.50 declare "pillow<12.0", mais les CVE Pillow (dont celles
-REM   atteignables via les images que l'utilisateur ouvre) ne sont corrigees
-REM   qu'en 12.x. Cette borne de gradio est conservatrice: verifie sur cette
-REM   base de code, Pillow 12 fonctionne. On installe donc apres coup, sans
-REM   redeclencher la resolution qui refuserait la combinaison.
+REM 5bis) Pillow, installed APART and with --no-deps.
+REM   gradio 5.50 declares "pillow<12.0", but the Pillow CVEs (including the ones
+REM   reachable through the images the user opens) are only fixed in 12.x. That
+REM   bound of gradio's is conservative: checked against this code base, Pillow 12
+REM   works. So we install it afterwards, without triggering again the resolution
+REM   that would refuse the combination.
 set "PILLOW_PIN=pillow==12.3.0"
 echo Installing !PILLOW_PIN! ^(apart: works around gradio's pillow^<12 bound^)...
 !RUNPY! -m pip install --no-deps --upgrade "!PILLOW_PIN!"
 if errorlevel 1 echo [WARN] Pillow install failed -^> inherited version kept.
 echo.
 
-REM 6) Verifier que diffusers expose le pipeline de cette famille de modele
+REM 6) Check that diffusers exposes the pipeline of this model family
 !RUNPY! -c "from diffusers import !CHECK_PIPE!; print('!CHECK_PIPE! OK')"
 if errorlevel 1 (
     echo [ERROR] diffusers does not contain !CHECK_PIPE!.
@@ -168,8 +168,8 @@ if errorlevel 1 (
 )
 echo.
 
-REM 7) Deps optionnelles. Le lock les contient deja; en mode non-isole il faut
-REM    encore passer par les fichiers dedies.
+REM 7) Optional deps. The lock already contains them; in non-isolated mode the
+REM    dedicated files are still the way in.
 if "!FACESWAP!"=="1" if not "!REQFILE!"=="requirements-lock.txt" (
     echo Installing the FaceSwap deps ^(insightface + onnxruntime-gpu^)...
     !RUNPY! -m pip install -r requirements-faceswap.txt
@@ -180,12 +180,12 @@ if "!FACESWAP!"=="1" if not "!REQFILE!"=="requirements-lock.txt" (
     echo.
 )
 
-REM 8) Dossiers de modeles
+REM 8) Model folders
 for %%D in (upscale_models checkpoints loras faceswap) do if not exist "%%D" mkdir "%%D"
 echo Folders ready: upscale_models (ESRGAN), checkpoints, loras, faceswap.
 echo.
 
-REM 9) Config locale: copie config-sample.txt -> config.txt si absent
+REM 9) Local config: copies config-sample.txt -> config.txt when absent
 if not exist "config.txt" (
     if exist "config-sample.txt" (
         copy /Y "config-sample.txt" "config.txt" >nul
@@ -194,7 +194,7 @@ if not exist "config.txt" (
 )
 echo.
 
-REM 10) Modele inswapper (FaceSwap) - opt-in ^(528 Mo, licence^): --faceswap-model
+REM 10) The inswapper model (FaceSwap) - opt-in ^(528 MB, licence^): --faceswap-model
 if "!FACESWAP_MODEL!"=="1" (
     if not exist "faceswap\inswapper_128.onnx" (
         echo Downloading the inswapper_128.onnx model ^(~528 MB^)...

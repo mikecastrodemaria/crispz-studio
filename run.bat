@@ -1,6 +1,6 @@
 @echo off
-REM Lance crispz (UI Gradio) avec detection hardware.
-REM Utilise .venv s'il existe; --no-venv (ou --system) force le Python courant.
+REM Launches crispz (the Gradio UI) with hardware detection.
+REM Uses .venv when it exists; --no-venv (or --system) forces the current Python.
 
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
@@ -15,7 +15,7 @@ shift
 goto argloop
 :argdone
 
-REM Python de base
+REM The base Python
 where py >nul 2>&1
 if errorlevel 1 (
     set PYCMD=python
@@ -27,7 +27,7 @@ if errorlevel 1 (
 set RUNPY=!PYCMD!
 if "!USE_VENV!"=="1" if exist ".venv\Scripts\python.exe" set RUNPY=.venv\Scripts\python.exe
 
-REM ESRGAN_DIR: priorite a la variable existante, sinon dossier sdlibs s'il existe, sinon local
+REM ESRGAN_DIR: an existing variable wins, otherwise the sdlibs folder when it exists, otherwise the local one
 if "%ESRGAN_DIR%"=="" (
     if exist "D:\Github\sdlibs\models\ESRGAN" (
         set ESRGAN_DIR=D:\Github\sdlibs\models\ESRGAN

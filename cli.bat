@@ -1,6 +1,6 @@
 @echo off
-REM CLI interactive pour crispz.
-REM Utilise .venv s'il existe; --no-venv (ou --system) force le Python courant.
+REM The interactive CLI for crispz.
+REM Uses .venv when it exists; --no-venv (or --system) forces the current Python.
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 

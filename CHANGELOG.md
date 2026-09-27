@@ -27,8 +27,8 @@ prompt is now `choice /C YN` — **Y** updates, and **N** is still the default a
 
 The code comments are a separate pass, now mostly done: `cz_protocol.py` and its tests
 (the family's public contract, so it went first), then `cz_pipeline.py` and `cz_ui.py` --
-the two biggest files of the app. What is left is the launchers' `REM` / `#` lines and the
-long tail of the smaller modules and their tests.
+the two biggest files of the app -- and the `REM` / `#` comments of every launcher. What
+is left is the long tail of the smaller modules and their tests.
 
 ## Unreleased — `czp`: an op the tool does not implement answers JSON, not an argparse usage
 

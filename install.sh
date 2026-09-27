@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# Install pour crispz (Linux / macOS / WSL).
+# Install for crispz (Linux / macOS / WSL).
 #
-# Defaut: venv .venv ISOLE (n'herite PAS du site-packages global) installe
-# depuis requirements-lock.txt -> environnement reproductible, versions
-# maitrisees, aucun risque de casser un autre projet. Telecharge son propre
-# torch (~3,5 Go).
+# Default: an ISOLATED .venv (it does NOT inherit the global site-packages)
+# installed from requirements-lock.txt -> a reproducible environment, versions
+# under control, no risk of breaking another project. It downloads its own
+# torch (~3.5 GB).
 #
-#   --shared    ancien comportement: venv --system-site-packages qui HERITE du
-#               torch global. Plus leger sur le disque, mais fait aussi heriter
-#               diffusers/accelerate/numpy/pillow -> versions non choisies et
-#               partagees avec les autres forks crispz.
-#   --no-venv   installe directement sur le Python courant.
+#   --shared    the old behaviour: a --system-site-packages venv that INHERITS
+#               the global torch. Lighter on the disk, but it also inherits
+#               diffusers/accelerate/numpy/pillow -> versions nobody chose, and
+#               shared with the other crispz forks.
+#   --no-venv   installs straight onto the current Python.
 
 set -e
 cd "$(dirname "$0")"
 
-# Pipeline attendu pour cette famille de modele. SEULE ligne qui differe entre
-# crispz-studio (ZImage), crispz-krea (Flux) et crispz-qwen-edit (Qwen).
+# The pipeline expected for this model family. The ONLY line that differs between
+# crispz-studio (ZImage), crispz-krea (Flux) and crispz-qwen-edit (Qwen).
 CHECK_PIPE=ZImageImg2ImgPipeline
 
 USE_VENV=1
@@ -41,7 +41,7 @@ else
 fi
 echo
 
-# 1) Python de base
+# 1) The base Python
 if command -v python3.10 >/dev/null 2>&1; then
     PYCMD="python3.10"
 elif command -v python3 >/dev/null 2>&1; then
@@ -54,8 +54,8 @@ echo "Base Python: $PYCMD"
 $PYCMD --version
 echo
 
-# 2) torch + CUDA. En mode ISOLE, torch vient de requirements-lock.txt: rien a
-#    verifier ici. En mode partage/systeme, il doit deja etre present.
+# 2) torch + CUDA. In ISOLATED mode torch comes from requirements-lock.txt:
+#    nothing to check here. In shared/system mode, it must already be present.
 if [ "$ISOLATED" -eq 1 ]; then
     echo "Isolated mode: torch is installed in the venv from the lock. Nothing to check."
 else
@@ -76,8 +76,8 @@ else
 fi
 echo
 
-# 3) xformers casse ? le neutraliser cote SYSTEME. Utile seulement si le venv
-#    herite du global (mode --shared) ou en --no-venv.
+# 3) A broken xformers ? neutralise it SYSTEM-side. Only useful when the venv
+#    inherits the global one (--shared mode) or under --no-venv.
 if [ "$ISOLATED" -ne 1 ]; then
     if $PYCMD -c "import xformers" >/dev/null 2>&1; then
         if ! $PYCMD -c "import xformers.ops" >/dev/null 2>&1; then
@@ -117,8 +117,8 @@ fi
 echo "Install interpreter: $RUNPY"
 echo
 
-# 5) Installer les deps. En mode isole on prefere le lock (versions exactes
-#    validees, torch cu128 inclus). Sinon requirements.txt (bornes larges).
+# 5) Install the deps. In isolated mode we prefer the lock (exact, validated
+#    versions, torch cu128 included). Otherwise requirements.txt (wide bounds).
 REQFILE=requirements.txt
 if [ "$ISOLATED" -eq 1 ] && [ -f requirements-lock.txt ]; then
     REQFILE=requirements-lock.txt
@@ -127,36 +127,36 @@ echo "Installing the dependencies from $REQFILE ..."
 if [ "$REQFILE" = "requirements-lock.txt" ]; then
     echo "  (includes torch cu128, ~3.5 GB to download the first time)"
 fi
-# Pillow est filtre du fichier: gradio 5.50 declare pillow<12 et refuserait de
-# resoudre avec le pin 12.x. Il est pose juste apres, en --no-deps. Le pin reste
-# dans le lock pour que Dependabot voie la version corrigee.
-# onnxruntime (build CPU) est filtre lui aussi: rembg le tire en dependance, et une
-# fois installe il MASQUE onnxruntime-gpu a l'import (meme nom de module, le CPU
-# gagne) -> faceswap, GFPGAN/CodeFormer et rembg tombent silencieusement sur le CPU
-# malgre onnxruntime-gpu present. On ne garde que le build GPU.
+# Pillow is filtered out of the file: gradio 5.50 declares pillow<12 and would refuse
+# to resolve with the 12.x pin. It is installed just after, with --no-deps. The pin
+# stays in the lock so that Dependabot sees the fixed version.
+# onnxruntime (the CPU build) is filtered out too: rembg pulls it as a dependency, and
+# once installed it HIDES onnxruntime-gpu at import time (the same module name, the CPU
+# one wins) -> faceswap, GFPGAN/CodeFormer and rembg fall back silently to the CPU
+# although onnxruntime-gpu is there. We keep the GPU build only.
 REQTMP="${TMPDIR:-/tmp}/cz_req_nopillow.txt"
 grep -vE '^(pillow|onnxruntime)==' "$REQFILE" > "$REQTMP"
 $RUNPY -m pip install -r "$REQTMP"
 echo
 
-# 5bis) Pillow, installe A PART et en --no-deps.
-#   gradio 5.50 declare "pillow<12.0", mais les CVE Pillow (dont celles
-#   atteignables via les images que l'utilisateur ouvre) ne sont corrigees qu'en
-#   12.x. Cette borne de gradio est conservatrice: verifie sur cette base de
-#   code, Pillow 12 fonctionne. On installe donc apres coup, sans redeclencher
-#   la resolution qui refuserait la combinaison.
+# 5bis) Pillow, installed APART and with --no-deps.
+#   gradio 5.50 declares "pillow<12.0", but the Pillow CVEs (including the ones
+#   reachable through the images the user opens) are only fixed in 12.x. That bound
+#   of gradio's is conservative: checked against this code base, Pillow 12 works.
+#   So we install it afterwards, without triggering again the resolution that would
+#   refuse the combination.
 PILLOW_PIN="pillow==12.3.0"
 echo "Installing $PILLOW_PIN (apart: works around gradio's pillow<12 bound)..."
 $RUNPY -m pip install --no-deps --upgrade "$PILLOW_PIN" \
     || echo "[WARN] Pillow install failed -> inherited version kept."
 echo
 
-# 6) Verifier que diffusers expose le pipeline de cette famille de modele
+# 6) Check that diffusers exposes the pipeline of this model family
 $RUNPY -c "from diffusers import $CHECK_PIPE; print('$CHECK_PIPE OK')"
 echo
 
-# 7) Deps optionnelles. Le lock les contient deja; en mode non-isole il faut
-#    encore passer par les fichiers dedies.
+# 7) Optional deps. The lock already contains them; in non-isolated mode the
+#    dedicated files are still the way in.
 if [ "$FACESWAP" -eq 1 ] && [ "$REQFILE" != "requirements-lock.txt" ]; then
     echo "Installing the FaceSwap deps (insightface + onnxruntime-gpu)..."
     $RUNPY -m pip install -r requirements-faceswap.txt || \
@@ -167,19 +167,19 @@ if [ "$FACESWAP" -eq 1 ] && [ "$REQFILE" != "requirements-lock.txt" ]; then
     echo
 fi
 
-# 8) Dossiers de modeles
+# 8) Model folders
 mkdir -p upscale_models checkpoints loras faceswap
 echo "Folders ready: upscale_models (ESRGAN), checkpoints, loras, faceswap."
 echo
 
-# 9) Config locale: copie config-sample.txt -> config.txt si absent
+# 9) Local config: copies config-sample.txt -> config.txt when absent
 if [ ! -f config.txt ] && [ -f config-sample.txt ]; then
     cp config-sample.txt config.txt
     echo "config.txt created from config-sample.txt (edit it for your settings)."
 fi
 echo
 
-# 10) Modele inswapper (FaceSwap) - opt-in (~528 Mo, licence): --faceswap-model
+# 10) The inswapper model (FaceSwap) - opt-in (~528 MB, licence): --faceswap-model
 if [ "$FACESWAP_MODEL" -eq 1 ]; then
     if [ ! -f faceswap/inswapper_128.onnx ]; then
         echo "Downloading the inswapper_128.onnx model (~528 MB)..."

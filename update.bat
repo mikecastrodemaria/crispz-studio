@@ -1,20 +1,20 @@
 @echo off
-REM Update crispz-studio (Windows): recupere les commits GitHub puis remet les
-REM dependances en phase avec le lock, SANS casser l'installation existante.
+REM Update crispz-studio (Windows): fetches the GitHub commits then brings the
+REM dependencies back in line with the lock, WITHOUT breaking the existing install.
 REM
-REM Fait, dans l'ordre:
-REM   1. sauvegarde des versions installees (rollback possible)
-REM   2. git pull (en refusant d'ecraser des modifications locales non commitees)
-REM   3. reinstall des deps UNIQUEMENT si le fichier de deps a change
-REM   4. verification que torch/CUDA et le pipeline fonctionnent encore
+REM What it does, in order:
+REM   1. saves the installed versions (a rollback stays possible)
+REM   2. git pull (refusing to overwrite uncommitted local changes)
+REM   3. reinstalls the deps ONLY when the deps file has changed
+REM   4. checks that torch/CUDA and the pipeline still work
 REM
-REM Protection torch: une resolution transitive peut remplacer un build +cuXXX
-REM par une roue CPU et casser le GPU. On releve la version avant/apres et on
-REM alerte si elle a change.
+REM torch protection: a transitive resolution can replace a +cuXXX build with a
+REM CPU wheel and break the GPU. We note the version before/after and warn when
+REM it has changed.
 REM
-REM   --force-deps   reinstaller les deps meme si rien n'a change
-REM   --no-pull      sauter le git pull (resynchroniser les deps seulement)
-REM   --shared       utiliser requirements.txt au lieu du lock (venv partage)
+REM   --force-deps   reinstall the deps even when nothing has changed
+REM   --no-pull      skip the git pull (resynchronise the deps only)
+REM   --shared       use requirements.txt instead of the lock (a shared venv)
 
 setlocal enabledelayedexpansion
 title crispz-studio - Update
@@ -35,7 +35,7 @@ goto argloop
 echo === crispz-studio - update ===
 echo.
 
-REM --- Interpreteur ---
+REM --- The interpreter ---
 set "RUNPY="
 if exist ".venv\Scripts\python.exe" set "RUNPY=.venv\Scripts\python.exe"
 if not defined RUNPY (
@@ -43,7 +43,7 @@ if not defined RUNPY (
 )
 echo Interpreter: !RUNPY!
 
-REM --- 0. Etat avant: version torch + empreinte du fichier de deps ---
+REM --- 0. The state before: the torch version + the fingerprint of the deps file ---
 set REQFILE=requirements.txt
 if "!ISOLATED!"=="1" if exist "requirements-lock.txt" set REQFILE=requirements-lock.txt
 set "TORCH_BEFORE="
@@ -65,10 +65,10 @@ if "!DOPULL!"=="1" (
     if errorlevel 1 (
         echo [WARN] git not found -^> pull skipped. Update the files by hand.
     ) else (
-        REM Ne jamais ecraser du travail local: _update_check.py --guard bloque si les
-        REM commits a recuperer touchent un fichier modifie ici, ou ajoutent un fichier
-        REM deja present ici hors de git. Ailleurs, git pull --ff-only CONSERVE les
-        REM modifications locales: config, tests, wildcards non suivis ne bloquent plus.
+        REM Never overwrite local work: _update_check.py --guard blocks when the commits
+        REM to fetch touch a file modified here, or add a file already present here outside
+        REM git. Otherwise, git pull --ff-only KEEPS the local changes: an untracked config,
+        REM tests or wildcards no longer block anything.
         !RUNPY! _update_check.py --guard
         if errorlevel 1 (
             echo.
@@ -86,7 +86,7 @@ if "!DOPULL!"=="1" (
     echo.
 )
 
-REM --- 2. Le fichier de deps a-t-il change ? ---
+REM --- 2. Has the deps file changed ? ---
 set "HASH_AFTER="
 if exist "!REQFILE!" for /f "delims=" %%h in ('certutil -hashfile "!REQFILE!" MD5 ^| findstr /R "^[0-9a-f][0-9a-f]*$"') do set "HASH_AFTER=%%h"
 set "NEEDDEPS=0"
@@ -103,8 +103,8 @@ if "!NEEDDEPS!"=="0" (
     findstr /V /B /C:"pillow==" "!REQFILE!" > "!REQTMP!"
     !RUNPY! -m pip install -r "!REQTMP!"
     if not errorlevel 1 (
-        REM Pillow est hors du lock (borne pillow^<12 de gradio) -> pose a part,
-        REM sinon un update ferait REGRESSER la version corrigee. Cf. install.bat.
+        REM Pillow is outside the lock (gradio's pillow^<12 bound) -> installed apart,
+        REM otherwise an update would REGRESS the fixed version. See install.bat.
         !RUNPY! -m pip install --no-deps --upgrade "pillow==12.3.0" >nul 2>&1
     )
     if errorlevel 1 (
@@ -115,7 +115,7 @@ if "!NEEDDEPS!"=="0" (
 )
 echo.
 
-REM --- 3. torch a-t-il ete remplace ? (piege classique: build +cuXXX -^> CPU) ---
+REM --- 3. Has torch been replaced ? (the classic trap: a +cuXXX build -^> CPU) ---
 set "TORCH_AFTER="
 for /f "delims=" %%v in ('!RUNPY! -c "import torch;print(torch.__version__)" 2^>nul') do set "TORCH_AFTER=%%v"
 if defined TORCH_BEFORE if not "!TORCH_BEFORE!"=="!TORCH_AFTER!" (
@@ -125,7 +125,7 @@ if defined TORCH_BEFORE if not "!TORCH_BEFORE!"=="!TORCH_AFTER!" (
     echo.
 )
 
-REM --- 4. Verifications finales ---
+REM --- 4. Final checks ---
 echo Checking the install...
 !RUNPY! _hw_check.py
 set "HW=!errorlevel!"
@@ -147,7 +147,7 @@ if errorlevel 1 (
 )
 echo.
 
-REM --- 5. Nouveautes de config: signaler les cles ajoutees dans le sample ---
+REM --- 5. Config news: report the keys added in the sample ---
 if exist "config.txt" if exist "config-sample.txt" (
     !RUNPY! -c "import json;a=json.load(open('config.txt',encoding='utf-8'));b=json.load(open('config-sample.txt',encoding='utf-8'));n=[k for k in b if k not in a and not k.startswith('_')];print('New config keys available: '+', '.join(n) if n else 'config.txt is up to date.')" 2>nul
     echo   ^(config.txt is never overwritten: add the keys you want by hand^)
@@ -157,6 +157,6 @@ echo.
 echo === Update OK ===
 if exist "CHANGELOG.md" echo What's new: see CHANGELOG.md
 echo Run: run.bat  ^(or boot_check.bat for a full diagnostic^)
-REM Code de sortie explicite: boot_check.bat distingue ainsi une mise a jour terminee
-REM d'une mise a jour en echec (un avertissement de l'etape 5 laissait errorlevel a 1).
+REM An explicit exit code: that is how boot_check.bat tells a finished update from a
+REM failed one (a warning from step 5 used to leave errorlevel at 1).
 endlocal & exit /b 0

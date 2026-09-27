@@ -1,22 +1,23 @@
 @echo off
-REM Boot check generique crispz-studio (remplace les anciens scripts rtx5090).
+REM Generic boot check for crispz-studio (replaces the old rtx5090 scripts).
 REM
-REM Diagnostique la machine AVANT de lancer l'app, quelle que soit la carte
-REM (RTX 50xx / 40xx / 30xx / 20xx...), et s'arrete net si la configuration ne
-REM peut pas fonctionner -- plutot que de laisser l'app planter en cours de route.
+REM Diagnoses the machine BEFORE launching the app, whatever the card
+REM (RTX 50xx / 40xx / 30xx / 20xx...), and stops dead when the configuration
+REM cannot work -- rather than letting the app crash halfway through.
 REM
-REM Le check decisif est fait par _hw_check.py: il compare le sm_XX du GPU a la
-REM liste d'architectures compilees dans le build torch installe. C'est ce qui
-REM detecte le cas "RTX 50xx + torch non-cu128" (WinError 127 torch_cuda.dll).
+REM The decisive check is done by _hw_check.py: it compares the GPU's sm_XX with
+REM the list of architectures compiled into the installed torch build. That is
+REM what catches the "RTX 50xx + non-cu128 torch" case -- the WinError 127
+REM on torch_cuda.dll.
 REM
-REM   --no-run   diagnostiquer seulement, ne pas lancer l'app
-REM   --no-update  ne pas chercher de mise a jour GitHub (ou CRISPZ_NO_UPDATE_CHECK=1)
-REM   --lan      ecouter sur le LAN (0.0.0.0) au lieu de 127.0.0.1
-REM   --web      LAN + tunnel Cloudflare (URL publique)
-REM   tout autre argument est transmis a run.bat
+REM   --no-run   diagnose only, do not launch the app
+REM   --no-update  do not look for a GitHub update (or CRISPZ_NO_UPDATE_CHECK=1)
+REM   --lan      listen on the LAN (0.0.0.0) instead of 127.0.0.1
+REM   --web      LAN + a Cloudflare tunnel (a public URL)
+REM   any other argument is passed on to run.bat
 REM
-REM ATTENTION --lan / --web: l'app n'a AUCUNE authentification et sert le dossier
-REM de sortie + les dossiers de modeles. Voir "Scope" dans SECURITY.md.
+REM WARNING about --lan / --web: the app has NO authentication at all and serves
+REM the output folder + the model folders. See "Scope" in SECURITY.md.
 
 setlocal enabledelayedexpansion
 title crispz-studio - Boot Check
@@ -48,7 +49,7 @@ echo    crispz-studio - Boot Check
 echo ====================================================
 echo.
 
-REM --- Interpreteur (venv prioritaire) ---
+REM --- The interpreter (the venv wins) ---
 set "RUNPY="
 if exist ".venv\Scripts\python.exe" set "RUNPY=.venv\Scripts\python.exe"
 if not defined RUNPY (
@@ -63,11 +64,11 @@ if errorlevel 1 (
 )
 echo.
 
-REM --- Mise a jour GitHub: PROPOSEE, jamais imposee (voir _update_check.py) ---
-REM Proposee seulement si elle est sure: aucun des commits a recuperer ne touche un
-REM fichier modifie ici ni n'ajoute un fichier deja present hors de git. Sans reponse
-REM en 20 s: N, l'app demarre telle quelle. --no-update ou CRISPZ_NO_UPDATE_CHECK=1:
-REM etape sautee. Hors ligne, sans git ou sans branche suivie: elle le dit et passe.
+REM --- GitHub update: OFFERED, never imposed (see _update_check.py) ---
+REM Offered only when it is safe: none of the commits to fetch touches a file modified
+REM here, nor adds a file already present outside git. With no answer within 20 s: N,
+REM and the app starts as it is. --no-update or CRISPZ_NO_UPDATE_CHECK=1: the step is
+REM skipped. Offline, without git or without a tracked branch: it says so and moves on.
 if "!NOUPDATE!"=="0" (
     echo [UPDATE] GitHub updates...
     !RUNPY! _update_check.py
@@ -89,7 +90,7 @@ if "!NOUPDATE!"=="0" (
     echo.
 )
 
-REM --- 2. Etat du driver / de la carte (informations brutes) ---
+REM --- 2. Driver / card state (raw information) ---
 echo [2/5] Driver NVIDIA...
 nvidia-smi --query-gpu=name,driver_version,memory.total,memory.used,temperature.gpu --format=csv,noheader,nounits > "%TEMP%\cz_gpu.txt" 2>nul
 if errorlevel 1 (
@@ -104,7 +105,7 @@ if errorlevel 1 (
 )
 echo.
 
-REM --- 3. LE check: torch supporte-t-il CETTE carte ? + recommandations ---
+REM --- 3. THE check: does torch support THIS card ? + recommendations ---
 echo [3/5] PyTorch / GPU / suggested settings...
 echo.
 !RUNPY! _hw_check.py
@@ -121,29 +122,29 @@ if "!HW!"=="3" (
 )
 if "!HW!"=="2" echo    [WARN] CPU mode: generating will be very slow.
 
-REM --- 4. Pipeline diffusers de cette famille de modele ---
+REM --- 4. The diffusers pipeline of this model family ---
 echo [4/5] diffusers...
 !RUNPY! -c "from diffusers import ZImagePipeline, ZImageImg2ImgPipeline; print('    ZImage pipelines OK')" 2>nul
 if errorlevel 1 echo    [WARNING] ZImage pipelines unavailable -^> run install.bat / update.bat.
 echo.
 
-REM --- 5. Modeles: on lit les VRAIS dossiers de la config, pas un chemin en dur ---
+REM --- 5. Models: we read the REAL folders of the config, not a hardcoded path ---
 echo [5/5] Models...
-REM %% : en batch un %% litteral s'ecrit double, sinon cmd mange le format Python.
+REM %% : in batch a literal %% is written double, otherwise cmd eats the Python format.
 !RUNPY! -c "import os,cz_pipeline as p;[print('    %%-11s %%3d file(s)  %%s' %% (n, (len([f for f in os.listdir(d) if f.lower().endswith(('.safetensors','.gguf','.ckpt','.pt','.sft'))]) if os.path.isdir(d) else 0), d if os.path.isdir(d) else '(folder missing)')) for n,d in (('checkpoints',p.CHECKPOINTS_DIR),('extra',p.CHECKPOINTS_EXTRA_DIR),('loras',p.LORAS_DIR)) if d]" 2>nul
 if errorlevel 1 echo    [INFO] could not read the config ^(config.txt missing? run install.bat^).
 echo.
 
-REM --- Optimisations CUDA (sans effet si pas de GPU NVIDIA) ---
+REM --- CUDA optimisations (no effect without an NVIDIA GPU) ---
 set NVIDIA_TF32_OVERRIDE=1
 set CUDA_CACHE_MAXSIZE=4294967296
 set CUDA_AUTO_BOOST=1
 set CUDA_DEVICE_ORDER=PCI_BUS_ID
-REM Port fixe (heritage des anciens run_quality_*.bat): evite que Gradio parte
-REM sur 7861+ quand une instance precedente n'a pas encore libere le port.
+REM A fixed port (inherited from the old run_quality_*.bat): keeps Gradio from
+REM going to 7861+ when a previous instance has not released the port yet.
 if not defined GRADIO_SERVER_PORT set GRADIO_SERVER_PORT=7860
 
-REM --- Exposition reseau (--lan / --web): Gradio lit ces variables nativement ---
+REM --- Network exposure (--lan / --web): Gradio reads these variables natively ---
 set "CF_PORT=7860"
 if defined EXPOSE (
     echo ----------------------------------------------------
@@ -159,8 +160,8 @@ if defined EXPOSE (
     echo.
 )
 if /I "!EXPOSE!"=="web" (
-    REM Config perso NON versionnee (cf. cloudflare.local.bat.example):
-    REM   CF_TUNNEL = tunnel cloudflared nomme, sinon quick tunnel ephemere.
+    REM Personal config, NOT versioned (see cloudflare.local.bat.example):
+    REM   CF_TUNNEL = a named cloudflared tunnel, otherwise an ephemeral quick tunnel.
     set "CF_TUNNEL="
     if exist "%~dp0cloudflare.local.bat" call "%~dp0cloudflare.local.bat"
     if defined CF_PORT set GRADIO_SERVER_PORT=!CF_PORT!

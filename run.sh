@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Lance crispz (UI Gradio) avec detection hardware.
-# Utilise .venv s'il existe; --no-venv (ou --system) force le Python courant.
+# Launches crispz (the Gradio UI) with hardware detection.
+# Uses .venv when it exists; --no-venv (or --system) forces the current Python.
 
 set -e
 cd "$(dirname "$0")"
@@ -13,7 +13,7 @@ for a in "$@"; do
     esac
 done
 
-# Python de base
+# The base Python
 if command -v python3.10 >/dev/null 2>&1; then
     PYCMD="python3.10"
 elif command -v python3 >/dev/null 2>&1; then
@@ -28,7 +28,7 @@ if [ "$USE_VENV" -eq 1 ] && [ -x ".venv/bin/python" ]; then
     RUNPY=".venv/bin/python"
 fi
 
-# ESRGAN_DIR par defaut si non defini
+# The default ESRGAN_DIR when it is not set
 if [ -z "$ESRGAN_DIR" ]; then
     export ESRGAN_DIR="$(pwd)/upscale_models"
 fi
