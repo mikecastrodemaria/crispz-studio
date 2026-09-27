@@ -1,8 +1,9 @@
-"""Le monologue interne d'un modele de raisonnement ne doit JAMAIS finir dans le prompt.
+"""The inner monologue of a reasoning model must NEVER end up in the prompt.
 
-Regression: avec un modele thinking (Qwen3, DeepSeek-R1, Kimi...), Describe /
-Improve / Vision Mix renvoyaient "Okay, the user wants a prompt for..." colle
-devant le vrai prompt, qui partait tel quel dans le text encoder.
+A regression: with a thinking model (Qwen3, DeepSeek-R1, Kimi...), Describe /
+Improve / Vision Mix returned "Okay, the user wants a prompt for..." stuck
+in front of the real prompt, which went as it was into the text encoder.
+
 """
 import os
 import sys
@@ -12,20 +13,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cz_ollama as O
 
 CASES = [
-    # (entree, sortie attendue)
+    # (input, expected output)
     ("<think>Okay, the user wants a cat.</think>a fluffy cat, studio light",
      "a fluffy cat, studio light"),
     ("<thinking>\nlong\nmulti-line\n</thinking>\n\na fluffy cat",
      "a fluffy cat"),
     ("<Think>CASE INSENSITIVE</Think>a cat", "a cat"),
     ("<reasoning>x</reasoning> a cat", "a cat"),
-    # fermeture orpheline: le modele pensait avant le 1er token capture
+    # an orphan closing: the model was thinking before the 1st token was captured
     ("Okay, let me think about this.</think>a fluffy cat", "a fluffy cat"),
-    # ouverture jamais fermee: il n'y a QUE du raisonnement -> rien a garder
+    # an opening never closed: there is NOTHING BUT reasoning -> nothing to keep
     ("<think>truncated reasoning that never closes", ""),
-    # deux blocs
+    # two blocks
     ("<think>a</think>one <think>b</think>two", "one two"),
-    # texte normal: inchange
+    # normal text: unchanged
     ("a fluffy cat, studio light", "a fluffy cat, studio light"),
     ("", ""),
     (None, ""),
@@ -47,7 +48,7 @@ def test_gen_opts_disables_thinking():
 
 
 def test_http_retries_without_think():
-    """Un modele qui ne connait pas 'think' repond 400 -> on rejoue sans le champ."""
+    """A model that does not know 'think' answers 400 -> we replay without the field."""
     import urllib.error
     seen = []
 
@@ -65,7 +66,7 @@ def test_http_retries_without_think():
                                          None, None)
         return _Resp()
 
-    # Le transport est prompt_improve.http (ouvreur sans proxy): on remplace son open().
+    # The transport is prompt_improve.http (an opener with no proxy): we replace its open().
     import prompt_improve
     old = prompt_improve._OPENER.open
     prompt_improve._OPENER.open = fake_urlopen

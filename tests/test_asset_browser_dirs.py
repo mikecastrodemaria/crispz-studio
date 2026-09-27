@@ -1,11 +1,12 @@
-"""L'onglet Models de l'Asset Browser sortait VIDE sur une install normale.
+"""The Asset Browser's Models tab came out EMPTY on a normal install.
 
-Il ne scannait que le dossier de checkpoints PRINCIPAL et ne reconnaissait que
-.safetensors. Sur une machine qui range ses modeles ailleurs (dossier "extra",
-autre disque) le principal est vide: l'onglet affichait 0 modele alors que la
-bibliotheque en comptait 22, GGUF jamais listes au passage.
+It only scanned the MAIN checkpoints folder and only recognised
+.safetensors. On a machine that keeps its models elsewhere (the "extra" folder,
+another disk) the main one is empty: the tab showed 0 models although the
+library held 22, with the GGUFs never listed on the way.
 
 Run:  .venv/Scripts/python tests/test_asset_browser_dirs.py
+
 """
 import os
 import shutil
@@ -32,7 +33,7 @@ def test_extra_dir_is_scanned():
     out = os.path.join(TMP, "out1")
     names = {e["name"] for e in AB._scan_catalog([main, extra], out, "models")}
     assert names == {"alpha", "beta", "gamma"}, names
-    # un seul dossier reste accepte (l'ancienne signature)
+    # a single folder is still accepted (the old signature)
     assert {e["name"] for e in AB._scan_catalog(main, out, "models")} == {"alpha"}
     print("OK test_extra_dir_is_scanned")
 
@@ -41,13 +42,13 @@ def test_gguf_counts_as_a_model_but_not_as_a_lora():
     d = _mk(os.path.join(TMP, "mixed"), "m.safetensors", "q.gguf", "l.pt")
     out = os.path.join(TMP, "out2")
     assert {e["name"] for e in AB._scan_catalog(d, out, "models")} == {"m", "q", "l"}
-    # cote LoRA, un .gguf n'a rien a faire
+    # on the LoRA side, a .gguf has no business being there
     assert {e["name"] for e in AB._scan_catalog(d, out, "loras")} == {"m", "l"}
     print("OK test_gguf_counts_as_a_model_but_not_as_a_lora")
 
 
 def test_same_name_the_main_folder_wins():
-    """Meme regle que list_checkpoints: pas deux entrees pour un meme nom."""
+    """The same rule as list_checkpoints: not two entries for one name."""
     main = _mk(os.path.join(TMP, "m2"), "dup.safetensors")
     extra = _mk(os.path.join(TMP, "e2"), "dup.safetensors")
     out = os.path.join(TMP, "out3")

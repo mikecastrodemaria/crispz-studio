@@ -1,8 +1,9 @@
-"""Reference (Omni) : lot « Image number », detaileur et « Upscale after generate », comme en
-txt2img. Omni ne faisait qu'une image et ignorait ces trois reglages sans un mot (porte de
-crispz-klein 1.36.3). Generation Omni, upscale et detaileur sont remplaces : ni GPU ni modele.
+"""Reference (Omni): the "Image number" batch, the detailer and "Upscale after generate", as in
+txt2img. Omni made only one image and ignored those three settings without a word (ported from
+crispz-klein 1.36.3). The Omni generation, the upscale and the detailer are stubbed: neither a GPU nor a model.
 
 Run:  .venv/Scripts/python tests/test_omni_batch.py
+
 """
 import inspect
 import os
@@ -18,7 +19,7 @@ import cz_ui
 
 
 def _call(**over):
-    """_ui_generate en mode Reference (Omni), passe par NOMS de parametres."""
+    """_ui_generate in Reference (Omni) mode, passed by parameter NAMES."""
     base = dict(prompt="a car", negative="", styles=[], style_random=False, use_input=True,
                 input_image=None, input_mode="Reference (Omni)",
                 ref1=Image.new("RGB", (32, 32)), ref2=None, ref3=None, ref4=None,
@@ -35,7 +36,7 @@ def _call(**over):
 
 
 class _Stubs:
-    """generate_omni, process_one et le detaileur remplaces ; un modele Omni suppose configure."""
+    """generate_omni, process_one and the detailer stubbed; an Omni model assumed configured."""
 
     def __init__(self, detailer=False):
         self.omni, self.up, self.faces, self.hands = [], [], [], []
@@ -84,7 +85,7 @@ def test_omni_batch_makes_n_images_with_seed_plus_i():
         gal, rep, _h, _h2 = _call(image_number=3)
     assert [s for _p, s in st.omni] == _seeds(3), st.omni
     assert len(gal) == 3 and "omni x3" in rep, rep
-    assert st.up == [], st.up                          # case decochee : pas d'upscale
+    assert st.up == [], st.up                          # the box unticked: no upscale
     print("OK test_omni_batch_makes_n_images_with_seed_plus_i")
 
 

@@ -1,12 +1,13 @@
-"""Le detailer de mains etait declare absent alors qu'il etait pret a tourner.
+"""The hands detailer was declared absent although it was ready to run.
 
-A l'execution il ne demande qu'onnxruntime + un .onnx exporte une fois dans cache/.
-'ultralytics' ne sert qu'a cet export, et la docstring de cz_detailer._ensure_hand_onnx
-interdit formellement de le laisser vivre dans le process de diffusion (il corrompt
-les poids partages pendant les transferts d'offload). Gater la feature sur l'import
-d'ultralytics punissait donc exactement ceux qui avaient suivi ce conseil.
+At run time it only requires onnxruntime + a .onnx exported once into cache/.
+'ultralytics' only serves that export, and the docstring of cz_detailer._ensure_hand_onnx
+formally forbids letting it live in the diffusion process (it corrupts
+the shared weights during the offload transfers). So gating the feature on the import
+of ultralytics punished exactly those who had followed that advice.
 
 Run:  .venv/Scripts/python tests/test_hands_available.py
+
 """
 import importlib.util
 import os
@@ -25,7 +26,7 @@ def _onnx_path():
 
 
 def _with_find_spec(missing, fn, present=()):
-    """Execute fn en faisant disparaitre les modules nommes dans `missing`."""
+    """Runs fn with the modules named in `missing` made to disappear."""
     # present: modules forced to LOOK installed. onnxruntime is optional (it comes
     # with the FaceSwap deps), so a bare install and the CI runner do not have it;
     # these tests are about the ultralytics gate and the cached .onnx, not about it.
@@ -43,7 +44,7 @@ def _with_find_spec(missing, fn, present=()):
 
 
 def test_exported_onnx_is_enough():
-    """Sans ultralytics mais avec le .onnx: la feature EST disponible."""
+    """Without ultralytics but with the .onnx: the feature IS available."""
     if not os.path.isfile(_onnx_path()):
         print("SKIP test_exported_onnx_is_enough (no exported detector in cache/)")
         return
@@ -53,7 +54,7 @@ def test_exported_onnx_is_enough():
 
 
 def test_ultralytics_alone_is_enough():
-    """Avec ultralytics, l'export peut se faire a la demande -> disponible."""
+    """With ultralytics, the export can happen on demand -> available."""
     # onnxruntime is faked present as well: this test is about the ultralytics
     # gate, and onnxruntime is an optional package that a bare install (or a CI
     # runner) does not have - its own gate is test_no_onnxruntime_means_no.
@@ -70,7 +71,7 @@ def test_ultralytics_alone_is_enough():
 
 
 def test_no_onnxruntime_means_no():
-    """onnxruntime est la seule dependance vraiment indispensable a l'execution."""
+    """onnxruntime is the only dependency that is really indispensable at run time."""
     assert _with_find_spec({"onnxruntime"}, C._hands_available) is False
     print("OK test_no_onnxruntime_means_no")
 

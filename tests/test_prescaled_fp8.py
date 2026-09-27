@@ -1,7 +1,8 @@
-"""Poids FP8/INT8 stockes DEJA a l'echelle: le weight_scale fourni ne s'applique pas.
-Porte de crispz-klein 1.34.1 (kleinFinalcutFP16FP8_comfyQuant rendait du bruit).
+"""FP8/INT8 weights stored ALREADY scaled: the weight_scale supplied does not apply.
+Ported from crispz-klein 1.34.1 (kleinFinalcutFP16FP8_comfyQuant rendered noise).
 
 Run:  .venv/Scripts/python tests/test_prescaled_fp8.py
+
 """
 import os
 import sys
@@ -16,7 +17,7 @@ import cz_pipeline as P
 
 torch.manual_seed(0)
 E4 = torch.float8_e4m3fn
-# Cles qui passent la garde d'architecture Z-Image du chargeur (cap_embedder, noise_refiner).
+# Keys that pass the loader's Z-Image architecture guard (cap_embedder, noise_refiner).
 K1, K2 = "cap_embedder.probe.weight", "noise_refiner.probe.weight"
 
 
@@ -28,7 +29,7 @@ def _pair(n=64):
 def test_the_detector_separates_the_layouts():
     w, s = _pair()
     assert not P._stored_at_scale((w / s).to(E4).float(), s, E4)       # FP8 normal
-    assert P._stored_at_scale(w.to(E4).float(), s, E4)                  # deja a l'echelle
+    assert P._stored_at_scale(w.to(E4).float(), s, E4)                  # already scaled
     assert not P._stored_at_scale((w * 50).to(E4).float(), torch.tensor(0.5), E4)
     s8 = (w.abs().max() / 127.0).reshape(())
     q8 = torch.round(w / s8).clamp(-127, 127).to(torch.int8)

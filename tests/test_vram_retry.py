@@ -1,19 +1,20 @@
-"""Manque de VRAM : vidage + nouvel essai (porte de crispz-klein 1.36.4).
+"""Out of VRAM: an emptying + a retry (ported from crispz-klein 1.36.4).
 
-Sur crispz-klein, un lot Reference (Omni) avec Upscale after generate et le detaileur
-manquait de VRAM a la 4e image, puis chaque rendu echouait jusqu'au redemarrage.
-Couvre :
-  - is_oom reconnait les deux formes (allocateur de torch, appel CUDA direct) ;
-  - retry_on_oom vide la VRAM et retente UNE fois, la revide si le nouvel essai echoue,
-    et laisse passer les autres erreurs ;
-  - release_vram remet sur le CPU chaque pipeline charge avec ses hooks (offload model),
-    une seule fois par objet ;
-  - le detaileur retente une passe, puis saute les zones restantes s'il manque encore ;
-  - la boucle Omni de l'UI retente, et dit quoi baisser si le nouvel essai echoue.
+On crispz-klein, a Reference (Omni) batch with Upscale after generate and the detailer
+ran out of VRAM at the 4th image, then every render failed until the restart.
+It covers:
+  - is_oom recognises both forms (torch's allocator, a direct CUDA call);
+  - retry_on_oom frees the VRAM and retries ONCE, frees it again when the retry fails,
+    and lets the other errors through;
+  - release_vram puts back on the CPU every pipeline loaded with its hooks (offload model),
+    once per object only;
+  - the detailer retries a pass, then skips the remaining areas when it is still short;
+  - the UI's Omni loop retries, and says what to lower when the retry fails.
 
-Ni GPU ni modele : les appels au pipeline sont remplaces.
+Neither a GPU nor a model: the pipeline calls are stubbed.
 
 Run:  .venv/Scripts/python tests/test_vram_retry.py
+
 """
 import importlib.util
 import os
@@ -37,7 +38,7 @@ _HAS_CV2 = importlib.util.find_spec("cv2") is not None
 
 
 class _Releases:
-    """Remplace cz_pipeline.release_vram le temps d'un test et compte les appels."""
+    """Replaces cz_pipeline.release_vram for the length of a test and counts the calls."""
 
     def __init__(self):
         self.calls = []
@@ -72,7 +73,7 @@ def test_retry_on_oom_frees_the_vram_and_retries_once():
     with _Releases() as rel:
         assert cz_pipeline.retry_on_oom("test", flaky, 2, b=3) == 5
     assert tries == [(2, 3), (2, 3)], tries
-    assert rel.calls == [True], rel.calls          # les poids reviennent aussi sur le CPU
+    assert rel.calls == [True], rel.calls          # the weights come back onto the CPU too
 
 
 def test_retry_on_oom_frees_again_when_the_retry_fails():
@@ -89,8 +90,8 @@ def test_retry_on_oom_frees_again_when_the_retry_fails():
             assert cz_pipeline.is_oom(e), e
         else:
             raise AssertionError("le second echec doit remonter")
-    assert len(tries) == 2, tries                  # un seul nouvel essai, pas une boucle
-    assert rel.calls == [True, True], rel.calls    # revidee avant de remonter l'erreur
+    assert len(tries) == 2, tries                  # a single retry, not a loop
+    assert rel.calls == [True, True], rel.calls    # emptied again before the error is raised
 
 
 def test_retry_on_oom_leaves_other_errors_alone():
@@ -124,18 +125,18 @@ def test_release_vram_offloads_every_hooked_pipe_once():
         cz_pipeline._BASE_PIPE = base
         cz_pipeline._DERIVED = {"txt2img": base, "img2img": derived, "omni": omni}
         cz_pipeline.release_vram()
-        assert (base.freed, omni.freed) == (0, 0)  # un simple vidage garde les poids
+        assert (base.freed, omni.freed) == (0, 0)  # a plain emptying keeps the weights
         cz_pipeline.release_vram(offload=True)
         assert (base.freed, derived.freed, omni.freed) == (1, 0, 1), \
             (base.freed, derived.freed, omni.freed)
         cz_pipeline._BASE_PIPE, cz_pipeline._DERIVED = None, {}
-        cz_pipeline.release_vram(offload=True)     # rien de charge : pas d'erreur
+        cz_pipeline.release_vram(offload=True)     # nothing loaded: no error
     finally:
         cz_pipeline._BASE_PIPE, cz_pipeline._DERIVED = saved
 
 
 def _detail(refine):
-    """cz_detailer._detail_regions sur deux zones, avec une passe de refine simulee."""
+    """cz_detailer._detail_regions on two areas, with a simulated refine pass."""
     real = (cz_pipeline.get_pipe, cz_pipeline._refine_whole)
     cz_pipeline.get_pipe = lambda kind="img2img": object()
     cz_pipeline._refine_whole = refine
@@ -162,7 +163,7 @@ def test_detailer_retries_a_pass_that_ran_out_of_vram():
         return work
 
     img, done, releases = _detail(refine)
-    assert done == 2 and len(tries) == 3, (done, tries)   # zone 1 deux fois, zone 2 une
+    assert done == 2 and len(tries) == 3, (done, tries)   # area 1 twice, area 2 once
     assert releases == [True], releases
     assert img.size == (512, 512)
 
@@ -178,7 +179,7 @@ def test_detailer_skips_the_other_regions_when_still_out_of_vram():
         raise RuntimeError(OOM)
 
     img, done, releases = _detail(refine)
-    # Zone 1 : essai + nouvel essai. La zone 2 n'est pas tentee : elle echouerait pareil.
+    # Area 1: a try + a retry. Area 2 is not attempted: it would fail the same way.
     assert done == 0 and len(tries) == 2, (done, tries)
     assert releases == [True, True], releases
     assert img.size == (512, 512)
@@ -194,11 +195,11 @@ def test_ui_omni_retries_after_running_out_of_vram():
         return Image.new("RGB", (32, 32))
 
     with _Stubs(), _Releases() as rel:
-        cz_ui.generate_omni = flaky                # _Stubs remet l'original en sortie
+        cz_ui.generate_omni = flaky                # _Stubs puts the original back on the way out
         gal, rep = _call(image_number=1)[:2]
     assert tries == [10, 10] and len(gal) == 1, (tries, gal)
     assert "VRAM" not in rep, rep
-    # Le vidage du nouvel essai (poids sur le CPU), puis celui entre deux images.
+    # The retry's emptying (the weights on the CPU), then the one between two images.
     assert rel.calls == [True, False], rel.calls
 
 

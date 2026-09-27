@@ -1,18 +1,19 @@
-"""LoRA posee sous offload (port de crispz-klein 1.36.6).
+"""A LoRA applied under offload (ported from crispz-klein 1.36.6).
 
-Deux LoRA DoRA choisies comme LoRA d'edition mettaient fin a la session sur klein : le
-chargement echouait sur "Cannot copy out of meta tensor", puis TOUS les rendus suivants
-sur "Cannot generate a cpu tensor from a generator of type cuda". Meme code de pose ici.
-Couvre :
-  - les LoRA sont chargees avec low_cpu_mem_usage=False (pas de couche sur 'meta',
-    une cle filtree garde sa valeur d'init) ;
-  - un chargement qui echoue apres que diffusers a retire les hooks d'offload les
-    fait remettre, au lieu de laisser le pipe sur le CPU ;
-  - restore_offload repare un pipe laisse sur le CPU et ne touche a rien sinon.
+Two DoRA LoRAs chosen as edit LoRAs put an end to the session on klein: the
+loading failed on "Cannot copy out of meta tensor", then ALL the renders that followed
+on "Cannot generate a cpu tensor from a generator of type cuda". The same applying code here.
+It covers:
+  - the LoRAs are loaded with low_cpu_mem_usage=False (no layer on 'meta',
+    a filtered key keeps its init value);
+  - a load that fails after diffusers has removed the offload hooks gets them
+    put back, instead of leaving the pipe on the CPU;
+  - restore_offload repairs a pipe left on the CPU and touches nothing otherwise.
 
-Ni GPU ni modele : le pipe est simule, les LoRA sont des fichiers minuscules.
+Neither a GPU nor a model: the pipe is simulated, the LoRAs are tiny files.
 
 Run:  .venv/Scripts/python tests/test_lora_offload.py
+
 """
 import os
 import shutil
@@ -31,8 +32,8 @@ META = ("Cannot copy out of meta tensor; no data! Please use "
 
 
 class FakePipe:
-    """Pipe minimal au comportement de diffusers : charger une LoRA retire d'abord
-    les hooks d'offload, et ne les remet qu'en cas de succes."""
+    """A minimal pipe with diffusers' behaviour: loading a LoRA first removes
+    the offload hooks, and only puts them back on a success."""
 
     def __init__(self, hooks=True, fail=False):
         self._all_hooks = ["hook"] if hooks else []
@@ -41,12 +42,12 @@ class FakePipe:
         self.loaded, self.enabled, self.adapters, self.cleared = [], 0, None, 0
 
     def load_lora_weights(self, *a, **kw):
-        self._all_hooks = []                       # diffusers retire l'offload
+        self._all_hooks = []                       # diffusers removes the offload
         self._execution_device = torch.device("cpu")
         self.loaded.append((a, kw))
         if self.fail:
             raise RuntimeError(META)
-        self.enable_model_cpu_offload()             # ... et le remet si tout va bien
+        self.enable_model_cpu_offload()             # ... and puts it back when all goes well
 
     def enable_model_cpu_offload(self, *a, **kw):
         self._all_hooks = ["hook"]
@@ -74,7 +75,7 @@ class FakePipe:
 
 
 def _lora(path, hidden=1024, rank=4):
-    """LoRA minuscule au dialecte PEFT."""
+    """A tiny LoRA in the PEFT dialect."""
     save_file({
         "transformer.transformer_blocks.0.attn.to_q.lora_A.weight": torch.zeros(rank, hidden),
         "transformer.transformer_blocks.0.attn.to_q.lora_B.weight": torch.zeros(hidden, rank),
@@ -83,7 +84,7 @@ def _lora(path, hidden=1024, rank=4):
 
 
 class _OnCuda:
-    """Machine avec carte, offload 'model' : l'etat dans lequel le bug se produit."""
+    """A machine with a card, offload 'model': the state in which the bug happens."""
 
     def __enter__(self):
         self.dev, self.off = P.DEVICE, P._effective_offload
@@ -97,7 +98,7 @@ class _OnCuda:
 
 
 def _want(paths):
-    """Jeu de LoRA demande, aucun encore pose (les globales varient selon le fork)."""
+    """A LoRA set asked for, none applied yet (the globals vary from fork to fork)."""
     P._APPLIED_LORAS = []
     P.LORAS = list(paths)
     if hasattr(P, "PROMPT_LORAS"):
@@ -128,8 +129,8 @@ def test_a_failed_load_puts_the_offload_back():
         pipe = FakePipe(fail=True)
         _want([(p, 0.8)])
         with _OnCuda():
-            assert P._apply_loras(pipe) is False     # -> le caller recharge tout
-        # Sans la remise en etat, le pipe resterait sur le CPU et tout echouerait apres.
+            assert P._apply_loras(pipe) is False     # -> the caller reloads everything
+        # Without the restoration, the pipe would stay on the CPU and everything after would fail.
         assert pipe._all_hooks and str(pipe._execution_device) == "cuda", pipe._all_hooks
         assert pipe.enabled == 1, pipe.enabled
         assert P._APPLIED_LORAS == []
@@ -142,14 +143,14 @@ def test_restore_offload_only_acts_on_a_pipe_left_on_the_cpu():
         broken = FakePipe(hooks=False)               # laisse sur le CPU
         assert P.restore_offload(broken, "a test") is True
         assert broken.enabled == 1 and str(broken._execution_device) == "cuda"
-        healthy = FakePipe()                          # deja sur la carte
+        healthy = FakePipe()                          # already on the card
         assert P.restore_offload(healthy) is False
         assert healthy.enabled == 0
         P._effective_offload = lambda *a, **k: "none"
         plain = FakePipe(hooks=False)
         assert P.restore_offload(plain) is True       # offload 'none' -> simple .to(cuda)
         assert plain.enabled == 0 and str(plain._execution_device) == "cuda"
-        P.DEVICE = "cpu"                              # machine sans carte: on ne touche a rien
+        P.DEVICE = "cpu"                              # a machine with no card: we touch nothing
         assert P.restore_offload(FakePipe(hooks=False)) is False
 
 

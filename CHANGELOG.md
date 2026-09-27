@@ -25,12 +25,13 @@ one-liners they carry (the model count, the new-config-keys notice). The boot up
 prompt is now `choice /C YN` — **Y** updates, and **N** is still the default after
 20 s, so an unattended boot behaves exactly as before.
 
-The code comments are a separate pass, now mostly done: `cz_protocol.py` and its tests
-(the family's public contract, so it went first), then `cz_pipeline.py` and `cz_ui.py` --
-the two biggest files of the app -- the `REM` / `#` comments of every launcher, and the six
-modules that come next by size: `cz_face.py`, `cz_cli.py`, `cz_assetbrowser.py`,
-`cz_core.py`, `cz_ollama.py` and `cz_detailer.py`. What is left is the smaller modules and
-the tests.
+The code comments went the same way, and that pass is done too: `cz_protocol.py` first
+(the family's public contract), then `cz_pipeline.py` and `cz_ui.py`, the `REM` / `#`
+comments of every launcher, the six modules that come next by size (`cz_face.py`,
+`cz_cli.py`, `cz_assetbrowser.py`, `cz_core.py`, `cz_ollama.py`, `cz_detailer.py`), the
+smaller modules with the `tools/` scripts, and the tests. Two test files are left in
+French on purpose -- `tests/test_queue.py` and `tests/test_quant_formats.py` are being
+worked on locally and are not ours to rewrite mid-flight.
 
 ## Unreleased — `czp`: an op the tool does not implement answers JSON, not an argparse usage
 

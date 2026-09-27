@@ -1,15 +1,16 @@
-"""La mise a jour GitHub proposee au demarrage: quand elle est sure, quand elle bloque.
+"""The GitHub update offered at startup: when it is safe, when it blocks.
 
-Travaille sur de VRAIS depots git temporaires (un depot nu joue GitHub), sans reseau:
-  - a jour -> rien a proposer;
-  - en retard, arbre propre -> sure (boot_check.bat propose O/N);
-  - une modification locale sur un fichier que la mise a jour touche -> bloquee;
-  - une modification locale AILLEURS -> sure, et le fichier est annonce conserve;
-  - un fichier present ici hors de git, que la mise a jour AJOUTE -> bloquee (git ecrase
-    sans rien dire un fichier ignore; tests/ est ignore dans ces depots);
-  - branche divergente -> bloquee; pas de branche suivie / pas un depot -> rien.
+It works on REAL temporary git repos (a bare repo plays GitHub), with no network:
+  - up to date -> nothing to offer;
+  - behind, a clean tree -> safe (boot_check.bat offers Y/N);
+  - a local change on a file the update touches -> blocked;
+  - a local change ELSEWHERE -> safe, and the file is announced as kept;
+  - a file present here outside git, which the update ADDS -> blocked (git overwrites
+    an ignored file without a word; tests/ is ignored in these repos);
+  - a diverged branch -> blocked; no tracked branch / not a repo -> nothing.
 
 Run:  .venv/Scripts/python tests/test_update_check.py
+
 """
 import os
 import shutil
@@ -36,7 +37,7 @@ def write(path, text):
 
 
 class World:
-    """origin (depot nu) + work (le clone de l'utilisateur) + dev (celui qui pousse)."""
+    """origin (a bare repo) + work (the user's clone) + dev (the one that pushes)."""
 
     def __init__(self):
         self.root = tempfile.mkdtemp(prefix="upd_")
@@ -106,7 +107,7 @@ def test_a_local_change_on_a_touched_file_blocks():
 
 
 def test_a_local_change_elsewhere_is_kept():
-    """Le cas des forks: test_queue.py modifie ici, la mise a jour touche autre chose."""
+    """The forks' case: test_queue.py modified here, the update touches something else."""
     w = World()
     try:
         w.push("a.txt", "a2\n", "change a")
@@ -119,8 +120,8 @@ def test_a_local_change_elsewhere_is_kept():
 
 
 def test_an_ignored_file_the_update_adds_blocks():
-    """tests/ est ignore et les tests y sont ajoutes de force: git ECRASERAIT sans rien
-    dire le fichier local du meme nom."""
+    """tests/ is ignored and the tests are force-added there: git WOULD OVERWRITE the
+    local file of the same name without a word."""
     w = World()
     try:
         w.push("tests/test_new.py", "amont\n", "add test", force=True)
@@ -133,7 +134,7 @@ def test_an_ignored_file_the_update_adds_blocks():
 
 
 def test_an_untracked_folder_elsewhere_does_not_block():
-    """wildcards/_backup-*/ existe dans les forks: il ne doit pas bloquer la mise a jour."""
+    """wildcards/_backup-*/ exists in the forks: it must not block the update."""
     w = World()
     try:
         w.push("a.txt", "a2\n", "change a")

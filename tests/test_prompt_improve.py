@@ -46,7 +46,7 @@ class FakeOllama(BaseHTTPRequestHandler):
         if self.path == '/api/generate':
             if body.get('model') == 'missing:1b':
                 return self._send({'error': 'model not found'}, 404)
-            if 'think' in body:   # un modele sans raisonnement refuse `think` (400) -> rejeu
+            if 'think' in body:   # a model with no reasoning refuses `think` (400) -> a replay
                 return self._send({'error': 'model does not support thinking'}, 400)
             FakeOllama.last_generate = body
             return self._send({'response': FakeOllama.reply})

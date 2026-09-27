@@ -1,32 +1,33 @@
-"""Encodeur texte de remplacement (Models > Checkpoints > Text encoder), Z-Image.
+"""A replacement text encoder (Models > Checkpoints > Text encoder), Z-Image.
 
-Z-Image lit l'avant-dernier etat cache (hidden_states[-2]) de son encodeur Qwen3-4B, et
-le transformer l'attend large de 2560 (cap_feat_dim): un autre encodeur ne se branche
-que s'il a la meme famille, la meme largeur et le meme nombre de couches. Le refus doit
-le dire AVANT de lire 8 Go.
+Z-Image reads the second-to-last hidden state (hidden_states[-2]) of its Qwen3-4B encoder, and
+the transformer expects it 2560 wide (cap_feat_dim): another encoder only plugs in
+when it has the same family, the same width and the same number of layers. The refusal must
+say so BEFORE reading 8 GB.
 
-Ces tests verrouillent aussi ce qui rendrait l'option dangereuse en silence:
-  - la classe vient du model_index.json du repo (Qwen3Model), pas de
-    text_encoder/config.json (Qwen3ForCausalLM), et un checkpoint Qwen3ForCausalLM s'y
-    charge;
-  - un changement d'encodeur libere le pipeline, et free_vram oublie l'encodeur actif;
-  - _ensure_base passe l'encodeur a from_pretrained, et retombe sur celui du repo, sans
-    planter, s'il ne convient pas ou s'il echoue au chargement;
-  - img2img / inpaint (from_pipe) reprennent l'objet encodeur du base;
-  - les metadonnees nomment l'encodeur qui a REELLEMENT tourne, par son nom de dossier
-    et jamais par son chemin (qui finirait dans les PNG partages); Omni n'en dit rien;
-  - la file garde l'encodeur du job; l'UI ne memorise qu'un encodeur valide.
+These tests also lock down what would make the option silently dangerous:
+  - the class comes from the repo's model_index.json (Qwen3Model), not from
+    text_encoder/config.json (Qwen3ForCausalLM), and a Qwen3ForCausalLM checkpoint loads
+    into it;
+  - a change of encoder frees the pipeline, and free_vram forgets the active encoder;
+  - _ensure_base passes the encoder to from_pretrained, and falls back on the repo's, without
+    crashing, when it does not suit or fails to load;
+  - img2img / inpaint (from_pipe) take the base's encoder object;
+  - the metadata names the encoder that REALLY ran, by its folder name
+    and never by its path (which would end up in the shared PNGs); Omni says nothing of it;
+  - the queue keeps the job's encoder; the UI only remembers a valid encoder.
 
-CPU seulement, sans reseau, sans vrai modele: la config de l'encodeur du repo de base
-est remplacee, les modeles sont minuscules et construits a la volee.
+CPU only, with no network, with no real model: the base repo's encoder config
+is replaced, the models are tiny and built on the fly.
 Run:  .venv/Scripts/python tests/test_text_encoder.py
+
 """
 import json
 import os
 import sys
 import tempfile
 
-os.environ["CUDA_VISIBLE_DEVICES"] = ""          # jamais de GPU ici
+os.environ["CUDA_VISIBLE_DEVICES"] = ""          # never any GPU here
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 
@@ -35,7 +36,7 @@ import torch
 import cz_imageio
 import cz_pipeline as P
 
-# Encodeur de Z-Image-Turbo / Z-Image (text_encoder/config.json du repo).
+# The encoder of Z-Image-Turbo / Z-Image (the repo's text_encoder/config.json).
 ZIMAGE_TE = {"model_type": "qwen3", "hidden_size": 2560, "num_hidden_layers": 36,
              "architectures": ["Qwen3ForCausalLM"]}
 QWEN8B = {"model_type": "qwen3", "hidden_size": 4096, "num_hidden_layers": 36,
@@ -53,8 +54,8 @@ def _folder(cfg, sub=None, name="enc"):
 
 
 def _zimage_like_base():
-    """Dossier au format du repo Z-Image: model_index.json dit Qwen3Model,
-    text_encoder/config.json dit Qwen3ForCausalLM."""
+    """A folder in the Z-Image repo's format: model_index.json says Qwen3Model,
+    text_encoder/config.json says Qwen3ForCausalLM."""
     base = tempfile.mkdtemp(prefix="base_")
     with open(os.path.join(base, "model_index.json"), "w", encoding="utf-8") as f:
         json.dump({"_class_name": "ZImagePipeline",
@@ -73,7 +74,7 @@ def _tiny_qwen3_cfg():
 
 
 class _Base:
-    """Remplace la config de l'encodeur du repo de base (pas de reseau, pas de HF)."""
+    """Replaces the encoder config of the base repo (no network, no HF)."""
 
     def __init__(self, cfg):
         self.cfg = cfg
@@ -87,7 +88,7 @@ class _Base:
 
 
 class _Saved:
-    """Sauve puis restaure des globaux de cz_pipeline."""
+    """Saves then restores some cz_pipeline globals."""
 
     def __init__(self, *names):
         self.names = names
@@ -103,9 +104,9 @@ class _Saved:
 def test_same_architecture_is_accepted():
     with _Base(ZIMAGE_TE):
         assert P._text_encoder_problem(_folder(ZIMAGE_TE)) is None
-        # poids dans un sous-dossier text_encoder/ (copie d'un repo diffusers)
+        # weights in a text_encoder/ subfolder (a copy of a diffusers repo)
         assert P._text_encoder_problem(_folder(ZIMAGE_TE, "text_encoder")) is None
-        # sauve en Qwen3Model plutot qu'en Qwen3ForCausalLM: meme encodeur
+        # saved as a Qwen3Model rather than a Qwen3ForCausalLM: the same encoder
         assert P._text_encoder_problem(
             _folder({**ZIMAGE_TE, "architectures": ["Qwen3Model"]})) is None
     print("OK test_same_architecture_is_accepted")
@@ -133,11 +134,11 @@ def test_gguf_single_file_and_empty_folder_are_refused_with_the_reason():
         assert "GGUF" in P._text_encoder_problem(r"F:\x\qwen3-4b-q8_0.gguf")
         assert "FOLDER" in P._text_encoder_problem(r"F:\x\qwen3_4b.safetensors")
         assert "config.json" in P._text_encoder_problem(tempfile.mkdtemp())
-        # un fichier present, quelle que soit son extension
+        # a file that is present, whatever its extension
         f = os.path.join(tempfile.mkdtemp(), "weights.dat")
         open(f, "wb").close()
         assert "FOLDER" in P._text_encoder_problem(f)
-        # chemin absent de cette machine: refuse sans passer par le reseau
+        # a path absent from this machine: refused without going through the network
         why = P._text_encoder_problem(r"Z:\nowhere\qwen3-abl")
         assert why and "neither a folder" in why, why
     print("OK test_gguf_single_file_and_empty_folder_are_refused_with_the_reason")
@@ -151,12 +152,12 @@ def test_hf_ids_may_carry_a_subfolder():
 
 
 def test_the_class_comes_from_the_base_repo_model_index():
-    """model_index.json dit Qwen3Model, text_encoder/config.json dit Qwen3ForCausalLM:
-    diffusers charge la premiere, c'est elle que le pipeline attend."""
+    """model_index.json says Qwen3Model, text_encoder/config.json says Qwen3ForCausalLM:
+    diffusers loads the first one, and it is the one the pipeline expects."""
     base = _zimage_like_base()
     cls = P._encoder_class(base)
     assert cls.__name__ == "Qwen3Model", cls
-    # la config de reference se lit dans le dossier local du repo de base
+    # the reference config is read in the base repo's local folder
     assert P._base_text_encoder_config(base) == ZIMAGE_TE
     assert P._text_encoder_problem(_folder(ZIMAGE_TE), base) is None
     why = P._text_encoder_problem(_folder(QWEN8B), base)
@@ -165,8 +166,8 @@ def test_the_class_comes_from_the_base_repo_model_index():
 
 
 def test_a_causal_lm_checkpoint_loads_into_the_pipeline_class():
-    """Un Qwen3 'abliterated' est publie en Qwen3ForCausalLM: il doit se charger en
-    Qwen3Model (classe du pipeline), poids du tronc intacts, en DTYPE."""
+    """An 'abliterated' Qwen3 is published as a Qwen3ForCausalLM: it must load as a
+    Qwen3Model (the pipeline's class), with the trunk's weights intact, in DTYPE."""
     from transformers import Qwen3ForCausalLM, Qwen3Model
     torch.manual_seed(0)
     src = Qwen3ForCausalLM(_tiny_qwen3_cfg())
@@ -194,7 +195,7 @@ def test_changing_the_encoder_frees_the_pipe():
         assert P._BASE_PIPE is None and P._DERIVED == {} and P._LOADED_KEY is None, \
             "le pipeline (et ses derives) doit etre libere"
         assert P._TEXT_ENCODER_ACTIVE == "", "free_vram doit oublier l'encodeur charge"
-        # meme valeur: rien ne bouge, pas de rechargement inutile
+        # the same value: nothing moves, no pointless reload
         sentinel = P._BASE_PIPE = object()
         P.set_text_encoder(r"  D:\enc\qwen3-abl ")
         assert P._BASE_PIPE is sentinel
@@ -202,7 +203,7 @@ def test_changing_the_encoder_frees_the_pipe():
 
 
 class _FakeZPipe:
-    """ZImagePipeline factice: note les kwargs de from_pretrained, ne charge rien."""
+    """A dummy ZImagePipeline: it notes from_pretrained's kwargs, loads nothing."""
     calls = []
 
     def __init__(self, kw):
@@ -235,7 +236,7 @@ def test_ensure_base_passes_the_encoder_or_falls_back():
         _FakeZPipe.calls.clear()
         P._text_encoder_problem = check
         P._load_text_encoder = load
-        P._ensure_base()                      # ne doit jamais lever
+        P._ensure_base()                      # must never raise
         (repo, kw), = _FakeZPipe.calls
         assert repo == P.BASE_REPO and kw.get("torch_dtype") == P.DTYPE, (repo, kw)
         return kw
@@ -249,26 +250,26 @@ def test_ensure_base_passes_the_encoder_or_falls_back():
             P.ZIMAGE_TRANSFORMER = None
             P.LORAS, P.PROMPT_LORAS = [], []
             P.LOAD_PROGRESS_ENABLED = False
-            # 1. aucun encodeur choisi: from_pretrained exactement comme avant
+            # 1. no encoder chosen: from_pretrained exactly as before
             P.TEXT_ENCODER = ""
             kw = run(check=_raise(AssertionError("pas de verification sans encodeur")))
             assert "text_encoder" not in kw and P._TEXT_ENCODER_ACTIVE == "", kw
-            # 2. encodeur valide: passe a from_pretrained, marque actif
+            # 2. a valid encoder: passed to from_pretrained, marked active
             P.TEXT_ENCODER = r"C:\Users\someone\text_encoders\qwen3-abl"
             kw = run()
             assert kw.get("text_encoder") is enc, kw
             assert P._TEXT_ENCODER_ACTIVE == P.TEXT_ENCODER
             assert P._BASE_PIPE.text_encoder is enc
-            # 3. ne convient pas (repo change depuis le choix): ecarte, l'encodeur du
-            #    repo tourne, les metadonnees le disent
+            # 3. does not suit (the repo changed since the choice): discarded, the repo's
+            #    encoder runs, and the metadata says so
             kw = run(check=lambda src, base=None: "hidden size 4096, and x's encoder is 2560 wide")
             assert "text_encoder" not in kw and P._TEXT_ENCODER_ACTIVE == "", kw
             m = P._gen_meta("txt2img", "p")
             assert m.get("text_encoder_not_applied") == "qwen3-abl" and "text_encoder" not in m, m
-            # 4. echec au chargement (disque debranche...): idem, pas d'exception
+            # 4. a failure at load time (a disk unplugged...): the same, no exception
             kw = run(load=_raise(OSError("disk gone")))
             assert "text_encoder" not in kw and P._TEXT_ENCODER_ACTIVE == "", kw
-            # 5. la verification elle-meme leve (config corrompue): idem
+            # 5. the check itself raises (a corrupted config): the same
             kw = run(check=_raise(ValueError("bad config")))
             assert "text_encoder" not in kw and P._TEXT_ENCODER_ACTIVE == "", kw
         finally:
@@ -278,9 +279,9 @@ def test_ensure_base_passes_the_encoder_or_falls_back():
 
 
 def test_derived_pipes_share_the_base_encoder():
-    """img2img / inpaint derivent du base via from_pipe (le vrai de diffusers): ils
-    doivent reprendre l'objet encodeur du base -- celui de remplacement quand il est
-    charge -- et non en charger un autre."""
+    """img2img / inpaint derive from the base through from_pipe (diffusers' real one): they
+    must take the base's encoder object -- the replacement one when it is
+    loaded -- and not load another."""
     from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler, ZImagePipeline
     from transformers import Qwen3Model
     torch.manual_seed(0)
@@ -314,10 +315,10 @@ def test_metadata_names_the_encoder_that_ran_and_never_its_path():
         m = P._gen_meta("txt2img", "p")
         assert m["text_encoder"] == "qwen3-4b-abliterated", m
         assert "someone" not in json.dumps(m), "chemin local dans les metadonnees"
-        # Omni a son propre encodeur: rien a declarer
+        # Omni has its own encoder: nothing to declare
         m = P._gen_meta("omni", "p")
         assert "text_encoder" not in m and "text_encoder_not_applied" not in m, m
-        # demande mais ecarte au chargement: nomme a part
+        # asked for but discarded at load time: named apart
         P._TEXT_ENCODER_ACTIVE = ""
         m = P._gen_meta("img2img", "p")
         assert "text_encoder" not in m and m["text_encoder_not_applied"] == "qwen3-4b-abliterated", m
@@ -336,7 +337,7 @@ def test_the_list_finds_encoder_folders():
     d = _folder(ZIMAGE_TE, name="qwen3-4b-abliterated")
     root = os.path.dirname(d)
     os.makedirs(os.path.join(root, "empty"))
-    # a cote du dossier de checkpoints EXTRA (bibliotheque partagee, autre disque)
+    # next to the EXTRA checkpoints folder (a shared library, another disk)
     lib = tempfile.mkdtemp(prefix="lib_")
     os.makedirs(os.path.join(lib, "checkpoints"))
     e = os.path.join(lib, "text_encoders", "qwen3-4b-ft")
@@ -365,7 +366,7 @@ def test_the_queue_keeps_the_encoder():
         P.set_text_encoder = lambda s: calls.append(s)
         U._q_restore_model_state(ms)
         assert calls == [r"D:\enc\qwen3-abl"], calls
-        # snapshot d'avant l'option: on ne touche pas a l'encodeur courant
+        # a snapshot from before the option: we do not touch the current encoder
         calls.clear()
         U._q_restore_model_state({k: v for k, v in ms.items() if k != "text_encoder"})
         assert calls == [], calls
@@ -392,7 +393,7 @@ def test_the_ui_saves_only_a_valid_encoder():
             assert calls == [good] and saved == [{"text_encoder": good}], (saved, calls)
             U._ui_set_text_encoder("")
             assert calls[-1] == "" and saved[-1] == {"text_encoder": ""}, (saved, calls)
-        # dropdown: le defaut, les dossiers trouves, et la valeur collee d'ailleurs
+        # the dropdown: the default, the folders found, and the value pasted from elsewhere
         P.list_text_encoders = lambda: [good]
         P.TEXT_ENCODER = "owner/repo"
         ch = U._te_choices()
@@ -413,8 +414,8 @@ def test_config_sample_documents_the_keys():
 
 
 def test_default_picked_in_the_ui_survives_a_restart():
-    """Choisir "Default" ecrit "" dans les preferences: au redemarrage, une valeur de
-    config.txt ne doit pas revenir par-dessus. L'environnement gagne toujours."""
+    """Choosing "Default" writes "" into the preferences: on a restart, a value from
+    config.txt must not come back over it. The environment always wins."""
     cfg = {"text_encoder": r"D:\enc\from-config"}
     assert P._resolve_text_encoder({}, {}, cfg) == r"D:\enc\from-config"
     assert P._resolve_text_encoder({}, {"text_encoder": ""}, cfg) == ""
@@ -425,8 +426,8 @@ def test_default_picked_in_the_ui_survives_a_restart():
 
 
 def test_compatible_encoders_in_the_hf_cache_are_listed():
-    """Un encodeur telecharge depuis HF vit dans le cache HF: la liste doit le montrer.
-    Pas un pipeline diffusers, pas une config sans poids; une autre taille est nommee a cote."""
+    """An encoder downloaded from HF lives in the HF cache: the list must show it.
+    Not a diffusers pipeline, not a config with no weights; another size is named next to it."""
     import json as _json
     import os as _os
     import tempfile as _tempfile
