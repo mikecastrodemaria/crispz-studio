@@ -1,14 +1,15 @@
-"""crispz-studio - auto face detailer (facon ADetailer / Fooocus "Enhance").
+"""crispz-studio - the auto face detailer (in the style of ADetailer / Fooocus "Enhance").
 
-Apres un rendu, detecte les visages (insightface buffalo_l, deja charge pour le Face
-Swap) et repasse CHAQUE visage en img2img a haute resolution :
-  crop elargi (+60%) -> agrandi au sweet spot du modele (~832 px) -> refine Z-Image
-  (denoise modere, meme seed/prompt) -> reduit -> recolle avec un masque elliptique
-  feather (comme le collage GFPGAN du Face Swap: pas de bord carre).
+After a render, it detects the faces (insightface buffalo_l, already loaded for the Face
+Swap) and puts EVERY face through img2img at high resolution:
+  a widened crop (+60%) -> enlarged to the model's sweet spot (~832 px) -> a Z-Image refine
+  (a moderate denoise, the same seed/prompt) -> shrunk back -> pasted back with a feathered
+  elliptical mask (like the Face Swap's GFPGAN pasting: no square edge).
 
-Active par la case "🔧 Detail faces" sous le bouton Generate (flag module, pas de
-nouvel input dans _gen_inputs -> la queue et la grille X/Y/Z ne bougent pas), ou par
-config 'face_detailer'. Reglages: 'face_detailer_denoise' (0.35), 'face_detailer_max_faces'.
+Enabled by the "🔧 Detail faces" box under the Generate button (a module flag, no new input
+in _gen_inputs -> the queue and the X/Y/Z grid do not move), or by the 'face_detailer'
+config. Settings: 'face_detailer_denoise' (0.35), 'face_detailer_max_faces'.
+
 """
 
 import numpy as np
@@ -19,44 +20,44 @@ from cz_core import CONFIG, _log, _dbg
 DETAILER_ENABLED = bool(CONFIG.get("face_detailer", False))
 DETAILER_DENOISE = float(CONFIG.get("face_detailer_denoise", 0.35))
 _MAX_FACES = max(1, int(CONFIG.get("face_detailer_max_faces", 4)))
-# Prompt passe au refine de CHAQUE crop de visage. VIDE par defaut, comme pour les
-# mains et les tuiles (refine_tile_prompt): le prompt de SCENE fait peindre la scene
-# dans le crop -- constate: un prompt 'pancarte CRISPZ STUDIO' a ecrit le texte SUR
-# les joues du visage refine. Vide, l'img2img n'affine que le visage source.
+# The prompt passed to the refine of EVERY face crop. EMPTY by default, as for the
+# hands and the tiles (refine_tile_prompt): the SCENE prompt makes it paint the scene
+# inside the crop -- seen in the act: a 'CRISPZ STUDIO sign' prompt wrote the text ON
+# the cheeks of the refined face. Empty, the img2img only sharpens the source face.
 _FACE_PROMPT = str(CONFIG.get("face_detailer_prompt", ""))
-_TARGET = 832      # cote de travail du crop (sweet spot Z-Image, /32)
-_MARGIN = 0.6      # expansion de la bbox visage (contexte: cheveux, cou)
-_MIN_FACE = 28     # px: en-dessous, trop petit pour gagner quoi que ce soit
+_TARGET = 832      # the crop's working side (the Z-Image sweet spot, /32)
+_MARGIN = 0.6      # the expansion of the face bbox (context: hair, neck)
+_MIN_FACE = 28     # px: below that, too small to gain anything
 
-# --- Detailer MAINS (meme mecanique, autre detecteur) -------------------------
-# Les mains sont le point faible de tous les modeles de diffusion. Meme circuit que
-# les visages: crop elargi -> refine haute-res -> recollage feather. Le detecteur est
-# un YOLOv8 mains (ultralytics), dependance OPTIONNELLE: absente -> la feature se
-# desactive avec un message clair, le reste de l'app est intact.
+# --- The HANDS detailer (the same mechanics, another detector) ------------------
+# The hands are the weak point of every diffusion model. The same circuit as the faces:
+# a widened crop -> a high-res refine -> a feathered pasting. The detector is a hands
+# YOLOv8 (ultralytics), an OPTIONAL dependency: absent -> the feature disables itself
+# with a clear message, the rest of the app is intact.
 HAND_ENABLED = bool(CONFIG.get("hand_detailer", False))
 HAND_DENOISE = float(CONFIG.get("hand_detailer_denoise", 0.4))
 _MAX_HANDS = max(1, int(CONFIG.get("hand_detailer_max_hands", 4)))
 _MIN_HAND = 24
 _HAND_MARGIN = float(CONFIG.get("hand_detailer_margin", 0.35))
-# depot HF du modele (Bingsu/adetailer): 'hand_yolov8n.pt' (6 Mo, rapide) ou
-# 'hand_yolov8s.pt' (plus precis). Un chemin local absolu marche aussi.
+# the model's HF repo (Bingsu/adetailer): 'hand_yolov8n.pt' (6 MB, fast) or
+# 'hand_yolov8s.pt' (more precise). An absolute local path works too.
 _HAND_MODEL = str(CONFIG.get("hand_detailer_model", "hand_yolov8n.pt")).strip()
 _HAND_CONF = float(CONFIG.get("hand_detailer_conf", 0.3))
-# Peripherique du DETECTEUR de mains. CPU PAR DEFAUT, et ce n'est pas une option de
-# confort: le predict() ultralytics sur le GPU empoisonne l'etat CUDA/torch du process,
-# et TOUTES les diffusions suivantes sortent en mosaique jusqu'au redemarrage. Prouve
-# le 2026-08-17 (sidecars a l'appui, drapeaux detail_*_run): rendu base propre ->
-# passe mains H:1 rendue propre -> rendu SUIVANT detruit, reproduit a chaque fois,
-# meme apres revert complet du reste. Le YOLOv8n fait 6 Mo: la detection CPU coute
-# ~0.1 s par image. 'cuda' reste accepte pour re-tester le jour ou ultralytics/torch
-# regle le conflit -- en connaissance de cause.
+# The device of the hands DETECTOR. CPU BY DEFAULT, and this is not a comfort option:
+# the ultralytics predict() on the GPU poisons the process' CUDA/torch state, and ALL the
+# diffusions that follow come out as a mosaic until the restart. Proven on 2026-08-17
+# (sidecars to back it up, the detail_*_run flags): a clean base render -> a hands pass
+# H:1 rendered clean -> the NEXT render destroyed, reproduced every time, even after a
+# complete revert of everything else. The YOLOv8n weighs 6 MB: the CPU detection costs
+# ~0.1 s per image. 'cuda' is still accepted, to re-test it the day ultralytics/torch
+# settle the conflict -- with one's eyes open.
 _HAND_DEVICE = str(CONFIG.get("hand_detailer_device", "cpu")).strip().lower() or "cpu"
-# Prompt passe au refine de CHAQUE crop de main. VIDE par defaut, et c'est important:
-# avec le prompt de SCENE, le modele repeint le sujet DANS le crop (constate: un
-# mini-visage incruste entre le pouce et l'index a denoise 0.4). Meme principe que
-# refine_tile_prompt pour le refine tuile: un prompt global sur un crop local fait
-# recomposer la scene; vide, l'img2img n'affine que ce que l'image source contient.
-# Configurable pour qui veut guider ("detailed hand, natural fingers...").
+# The prompt passed to the refine of EVERY hand crop. EMPTY by default, and that
+# matters: with the SCENE prompt, the model repaints the subject INSIDE the crop (seen in
+# the act: a mini-face embedded between the thumb and the index finger at denoise 0.4).
+# The same principle as refine_tile_prompt for the tile refine: a global prompt on a local
+# crop makes it recompose the scene; empty, the img2img only sharpens what the source
+# image holds. Settable for whoever wants to guide it ("detailed hand, natural fingers...").
 _HAND_PROMPT = str(CONFIG.get("hand_detailer_prompt", ""))
 _hand_model = None
 
@@ -90,7 +91,7 @@ def set_hand_denoise(v):
 
 
 def _resolve_hand_pt():
-    """Chemin local du .pt YOLO (telecharge une fois depuis Bingsu/adetailer)."""
+    """The local path of the YOLO .pt (downloaded once from Bingsu/adetailer)."""
     import os
     path = _HAND_MODEL
     if not os.path.isabs(path) and not os.path.isfile(path):
@@ -100,17 +101,17 @@ def _resolve_hand_pt():
 
 
 def _ensure_hand_onnx():
-    """Chemin du detecteur de mains au format ONNX, exporte UNE fois dans cache/.
+    """The path of the hands detector in the ONNX format, exported ONCE into cache/.
 
-    POURQUOI ONNX + SOUS-PROCESS, et pas ultralytics dans l'app: charger le modele
-    YOLO (torch) dans le process de diffusion CORROMPT LES POIDS des composants
-    partages pendant les transferts d'offload -- prouve au checksum le 2026-08-17 sur
-    le chemin GGUF/offload 'model': somme|poids| de l'encodeur de texte 7.2239e7
-    stable en process propre, 7.3413e7 puis derive continue (7.3456, 7.3686) des que
-    YOLO(path) residait en memoire, MEME SANS predict, MEME en device cpu. Les rendus
-    suivants sortent en mosaique puis en NaN. L'export tourne donc dans un
-    sous-process (ultralytics y vit et y meurt), et l'app n'utilise a l'execution
-    QUE onnxruntime -- la stack d'insightface, qui coexiste sans incident."""
+    WHY ONNX + A SUBPROCESS, and not ultralytics inside the app: loading the YOLO
+    model (torch) into the diffusion process CORRUPTS THE WEIGHTS of the shared
+    components during the offload transfers -- proven by checksum on 2026-08-17 on the
+    GGUF/offload 'model' path: sum|weights| of the text encoder 7.2239e7 stable in a
+    clean process, 7.3413e7 then a continuous drift (7.3456, 7.3686) as soon as
+    YOLO(path) lived in memory, EVEN WITHOUT predict, EVEN on device cpu. The renders
+    that follow come out as a mosaic then as NaN. So the export runs in a subprocess
+    (ultralytics lives and dies there), and at run time the app uses ONLY onnxruntime
+    -- insightface's stack, which coexists without incident."""
     import os
     import shutil
     import subprocess
@@ -123,8 +124,8 @@ def _ensure_hand_onnx():
     if os.path.isfile(onnx_path):
         return onnx_path
     os.makedirs(cache_dir, exist_ok=True)
-    # ultralytics ecrit le .onnx a cote du .pt -> on exporte sur une COPIE dans
-    # cache/ (le cache HF n'est pas un endroit ou ecrire).
+    # ultralytics writes the .onnx next to the .pt -> so we export on a COPY in
+    # cache/ (the HF cache is not a place to write to).
     pt_copy = os.path.join(cache_dir, stem + ".pt")
     shutil.copyfile(pt, pt_copy)
     _log(f"exporting hand detector to ONNX (once, in a subprocess): {stem}.pt ...")
@@ -150,7 +151,7 @@ def _ensure_hand_onnx():
 
 
 def _ensure_hand_session():
-    """Session onnxruntime (une fois). Provider selon hand_detailer_device."""
+    """The onnxruntime session (once). The provider according to hand_detailer_device."""
     global _hand_model
     if _hand_model is not None:
         return _hand_model
@@ -168,8 +169,8 @@ def _ensure_hand_session():
 
 
 def _letterbox(arr, size=640, pad=114):
-    """Redimensionne en gardant le ratio + padding centre (protocole YOLO).
-    Renvoie (image size x size, scale, pad_x, pad_y)."""
+    """Resizes keeping the ratio + centred padding (the YOLO protocol).
+    Returns (a size x size image, scale, pad_x, pad_y)."""
     h, w = arr.shape[:2]
     s = min(size / w, size / h)
     nw, nh = max(1, round(w * s)), max(1, round(h * s))
@@ -182,7 +183,7 @@ def _letterbox(arr, size=640, pad=114):
 
 
 def _nms(boxes, scores, iou_thr=0.45):
-    """NMS glouton numpy. boxes: (N,4) xyxy."""
+    """A greedy numpy NMS. boxes: (N,4) xyxy."""
     order = scores.argsort()[::-1]
     keep = []
     while order.size:
@@ -204,10 +205,10 @@ def _nms(boxes, scores, iou_thr=0.45):
 
 
 def detect_hands(image):
-    """Bboxes [x1,y1,x2,y2] des mains detectees (liste vide si aucune).
+    """The bboxes [x1,y1,x2,y2] of the hands detected (an empty list when there is none).
 
-    Inference onnxruntime pure (pas d'ultralytics dans ce process, cf.
-    _ensure_hand_onnx): letterbox 640 -> session ONNX -> decode YOLOv8 + NMS."""
+    Pure onnxruntime inference (no ultralytics in this process, see
+    _ensure_hand_onnx): a 640 letterbox -> the ONNX session -> a YOLOv8 decode + NMS."""
     sess = _ensure_hand_session()
     rgb = np.asarray(image.convert("RGB"))
     inp, s, px, py = _letterbox(rgb)
@@ -236,7 +237,7 @@ def detect_hands(image):
 
 
 def _expand_box(b, W, H, margin=_MARGIN):
-    """Bbox visage -> crop carre elargi, borne a l'image."""
+    """A face bbox -> a widened square crop, bounded by the image."""
     x1, y1, x2, y2 = b
     side = max(x2 - x1, y2 - y1) * (1.0 + margin)
     cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
@@ -246,7 +247,7 @@ def _expand_box(b, W, H, margin=_MARGIN):
 
 
 def _feather_mask(w, h):
-    """Masque elliptique 0..1 adouci (jamais de bord carre au recollage)."""
+    """A softened 0..1 elliptical mask (never a square edge at pasting time)."""
     import cv2
     yy, xx = np.ogrid[:h, :w]
     rx, ry = max(1.0, w * 0.46), max(1.0, h * 0.46)
@@ -256,9 +257,9 @@ def _feather_mask(w, h):
 
 def _detail_regions(image, boxes, prompt, seed, steps, denoise, kind,
                     margin=_MARGIN, min_size=_MIN_FACE, max_n=4, progress=None):
-    """Coeur commun visages/mains: pour chaque bbox, crop elargi -> agrandi au sweet
-    spot -> refine img2img -> recolle avec un masque elliptique feather.
-    Renvoie (image, nb_zones_traitees). Ne leve jamais."""
+    """The core shared by faces and hands: for every bbox, a widened crop -> enlarged to
+    the sweet spot -> an img2img refine -> pasted back with a feathered elliptical mask.
+    Returns (image, the number of areas processed). It never raises."""
     import cz_pipeline
     if not boxes:
         _dbg(f"detailer: no {kind} found")
@@ -275,7 +276,7 @@ def _detail_regions(image, boxes, prompt, seed, steps, denoise, kind,
         if cw <= 0 or ch <= 0:
             continue
         if cw >= out.width * 0.9 and ch >= out.height * 0.9:
-            continue   # gros plan: la zone EST l'image, rien a gagner
+            continue   # a close-up: the area IS the image, nothing to gain
         if progress:
             try:
                 progress(f"{kind} {i + 1}/{len(boxes)}")
@@ -286,14 +287,14 @@ def _detail_regions(image, boxes, prompt, seed, steps, denoise, kind,
         work = (crop.resize((max(32, int(cw * scale)), max(32, int(ch * scale))), Image.LANCZOS)
                 if scale > 1.0 else crop)
         try:
-            # Apres l'upscale, le cache de torch pouvait occuper toute la carte: la passe
-            # echouait sur "CUDA error: out of memory". On le vide et on retente une fois.
+            # After the upscale, torch's cache could hold the whole card: the pass
+            # failed on "CUDA error: out of memory". We empty it and retry once.
             ref = cz_pipeline.retry_on_oom(f"detailer {kind} {i + 1}", cz_pipeline._refine_whole,
                                            pipe, work, denoise, int(steps), prompt or "", seed)
         except Exception as e:
             _log(f"detailer: refine failed on {kind} {i + 1} ({e})")
             if cz_pipeline.is_oom(e):
-                # Toujours saturee apres le vidage: les zones suivantes echoueraient pareil.
+                # Still full after the emptying: the areas that follow would fail the same way.
                 _log(f"detailer: still out of VRAM, remaining {kind}(s) skipped")
                 break
             continue
@@ -309,30 +310,31 @@ def _detail_regions(image, boxes, prompt, seed, steps, denoise, kind,
 
 
 def detail_faces(image, prompt, seed, steps=12, denoise=None, progress=None):
-    """Retouche chaque visage de l'image (jusqu'a face_detailer_max_faces, du plus grand
-    au plus petit). Renvoie (image, nb_visages_traites). Ne leve jamais: en cas de pepin
-    (detection indisponible...), renvoie l'image telle quelle."""
+    """Retouches every face of the image (up to face_detailer_max_faces, from the
+    biggest to the smallest). Returns (image, the number of faces processed). It never
+    raises: on a hitch (the detection unavailable...), it returns the image as it is."""
     import cz_face
     try:
         boxes = cz_face.detect_faces(image)
     except Exception as e:
         _log(f"detailer: face detection unavailable ({e})")
         return image, 0
-    # Prompt de scene IGNORE pour le refine des crops (cf. _FACE_PROMPT: le texte/decor
-    # du prompt finit peint sur le visage sinon).
+    # The scene prompt is IGNORED for the refine of the crops (see _FACE_PROMPT: the
+    # prompt's text/scenery ends up painted on the face otherwise).
     return _detail_regions(image, boxes, _FACE_PROMPT, seed, steps,
                            DETAILER_DENOISE if denoise is None else float(denoise),
                            "face", _MARGIN, _MIN_FACE, _MAX_FACES, progress)
 
 
 def detail_hands(image, prompt, seed, steps=12, denoise=None, progress=None):
-    """Retouche chaque main detectee (YOLOv8). Marge plus SERREE que pour un visage:
-    elargir trop ferait re-generer l'avant-bras et le decor autour. Renvoie
-    (image, nb_mains_traitees); ne leve jamais (ultralytics absent -> message + no-op).
+    """Retouches every hand detected (YOLOv8). A TIGHTER margin than for a face:
+    widening too much would re-generate the forearm and the scenery around it. Returns
+    (image, the number of hands processed); it never raises (ultralytics absent -> a message
+    + a no-op).
 
-    Le prompt de scene recu est IGNORE pour le refine des crops: il fait peindre le
-    sujet dans la main (mini-visage entre pouce et index, constate). On refine avec
-    _HAND_PROMPT (vide par defaut = detail local seulement, cf. commentaire)."""
+    The scene prompt received is IGNORED for the refine of the crops: it makes it paint the
+    subject into the hand (a mini-face between thumb and index finger, seen in the act). We
+    refine with _HAND_PROMPT (empty by default = local detail only, see the comment)."""
     try:
         boxes = detect_hands(image)
     except Exception as e:

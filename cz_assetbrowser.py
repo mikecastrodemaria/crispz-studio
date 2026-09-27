@@ -1,10 +1,11 @@
 """crispz-studio - Asset Browser (standalone SPA in the output folder).
 
-Extrait de app.py. Ecrit index.html (SPA) + _index/manifest.json + miniatures dans
-le dossier de sortie, scanne recursivement (sous-dossiers date), et supprime une
-image (delete_asset, appele via l'API Gradio par la SPA). Depend de cz_core,
-cz_imageio (_read_image_meta) et cz_assets (ASSET_BROWSER_HTML). Les boutons UI
-(_ui_ab_reindex/_ui_gallery_open) restent dans app.py.
+Pulled out of app.py. It writes index.html (the SPA) + _index/manifest.json + the
+thumbnails into the output folder, scans recursively (the date subfolders), and deletes an
+image (delete_asset, called through the Gradio API by the SPA). It depends on cz_core,
+cz_imageio (_read_image_meta) and cz_assets (ASSET_BROWSER_HTML). The UI buttons
+(_ui_ab_reindex/_ui_gallery_open) stay in app.py.
+
 """
 
 import os
@@ -26,8 +27,8 @@ _AB_DEFAULTS = {"enabled": False, "generate_thumbnails": True,
 
 
 def _ab_get(key):
-    """Reglage Asset Browser. Priorite: preferences.json ('ab_<cle>', pose par l'UI) >
-    config.txt (asset_browser.<cle>) > defaut."""
+    """An Asset Browser setting. The priority: preferences.json ('ab_<key>', set by the
+    UI) > config.txt (asset_browser.<key>) > the default."""
     v = _prefs.get("ab_" + key)
     if v not in (None, ""):
         return v
@@ -41,8 +42,8 @@ def _batch_enabled():
 
 
 def _render_spa():
-    """SPA avec le drapeau du bouton batch injecte (zero cout si desactive: le bouton
-    'Fetch all missing' n'est meme pas rendu)."""
+    """The SPA with the batch button's flag injected (zero cost when disabled: the
+    'Fetch all missing' button is not even rendered)."""
     return ASSET_BROWSER_HTML.replace("__CZ_BATCH__", "1" if _batch_enabled() else "")
 
 
@@ -52,15 +53,15 @@ def _ab_resolve_dir(output_dir):
 
 
 def _thumbs_root(d):
-    """(dossier disque des miniatures, prefixe d'URL) pour un dossier de sortie.
+    """(the thumbnails' folder on disk, the URL prefix) for an output folder.
 
-    Defaut: '<app>/cache/crispz-thumbs/<slug>' — le dossier de l'app (gitignore) est en
-    general sur un disque rapide, alors que le dossier de sortie peut etre un HDD/NAS
-    lent. Servi en URL ABSOLUE (/gradio_api/file=...). Le slug depend du dossier de
-    sortie: deux dossiers de sortie ne partagent pas leur cache.
-    cache_dir personnalisable (UI Save > Asset Browser / config asset_browser.cache_dir);
-    la valeur speciale 'output' remet l'ancien comportement: '<sortie>/_index/thumbs',
-    servi en RELATIF, a cote des images."""
+    The default: '<app>/cache/crispz-thumbs/<slug>' — the app's folder (gitignored) is
+    generally on a fast disk, whereas the output folder can be a slow HDD/NAS. Served by
+    ABSOLUTE URL (/gradio_api/file=...). The slug depends on the output folder: two output
+    folders do not share their cache.
+    cache_dir is customisable (UI Save > Asset Browser / the asset_browser.cache_dir
+    config); the special value 'output' restores the old behaviour: '<output>/_index/thumbs',
+    served RELATIVE, next to the images."""
     cache = str(_ab_get("cache_dir") or "").strip()
     if cache.lower() == "output":
         return os.path.join(d, "_index", "thumbs"), "_index/thumbs/"
@@ -72,18 +73,18 @@ def _thumbs_root(d):
 
 
 def _thumb_paths(d, key):
-    """(chemin disque, URL) de la miniature 'key' (ex. '2026-08-03/img.jpg', 'loras/x.jpg')."""
+    """(the path on disk, the URL) of the thumbnail 'key' (e.g. '2026-08-03/img.jpg', 'loras/x.jpg')."""
     root, pfx = _thumbs_root(d)
     return os.path.join(root, key.replace("/", os.sep)), pfx + key
 
 
 def _replace_retry(tmp, dst, attempts=10):
-    """os.replace avec retentatives. Sur Windows il echoue si la destination est
-    ouverte par le thread qui la sert (Python n'ouvre pas en FILE_SHARE_DELETE) ;
-    une requete HTTP dure quelques ms, on retente avec un backoff plafonne
-    (~1 s au total). Si ca echoue quand meme, on laisse remonter : l'appelant
-    compte un echec et la miniature sera regeneree a la prochaine passe, ce qui
-    vaut mieux que de reecrire dst en direct et de reintroduire la course."""
+    """os.replace with retries. On Windows it fails when the destination is open in the
+    thread that serves it (Python does not open in FILE_SHARE_DELETE); an HTTP request
+    lasts a few ms, so we retry with a capped backoff (~1 s in total). Should it fail
+    anyway, we let it through: the caller counts a failure and the thumbnail will be
+    regenerated on the next pass, which is better than rewriting dst in place and
+    reintroducing the race."""
     for attempt in range(attempts):
         try:
             os.replace(tmp, dst)
@@ -95,9 +96,9 @@ def _replace_retry(tmp, dst, attempts=10):
 
 
 def _write_atomic_text(path, text):
-    """Ecrit un fichier texte servi par la SPA sans jamais l'exposer a moitie ecrit
-    (meme raison que _ab_make_thumb : manifest.json et index.html sont relus par le
-    navigateur pendant que l'indexation en tache de fond les reecrit)."""
+    """Writes a text file served by the SPA without ever exposing it half written
+    (the same reason as _ab_make_thumb: manifest.json and index.html are re-read by the
+    browser while the background indexing rewrites them)."""
     tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as f:
@@ -112,10 +113,10 @@ def _write_atomic_text(path, text):
 
 
 def _write_text_if_changed(path, text):
-    """Comme _write_atomic_text, mais NE reecrit pas si le contenu est deja identique.
-    Evite le write lent (HDD + scan antivirus a chaque write) de index.html a CHAQUE
-    ouverture de l'Asset Browser : la SPA est un constante, on ne l'ecrit qu'apres une
-    mise a jour du code. Lecture+comparaison = rapide (~10 Ko)."""
+    """Like _write_atomic_text, but it does NOT rewrite when the content is already
+    identical. Avoids the slow write (an HDD + an antivirus scan on every write) of
+    index.html on EVERY opening of the Asset Browser: the SPA is a constant, we only write
+    it after a code update. Reading + comparing = fast (~10 KB)."""
     try:
         if os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as f:
@@ -128,16 +129,16 @@ def _write_text_if_changed(path, text):
 
 
 def _ab_make_thumb(src, dst, size, quality):
-    """Ecriture ATOMIQUE : fichier temporaire puis os.replace().
+    """An ATOMIC write: a temporary file then os.replace().
 
-    La SPA sert ces miniatures pendant que les workers les generent. Un
-    im.save(dst) direct tronque dst a 0 puis le fait grossir : une requete HTTP
-    qui tombe dans cette fenetre lit une taille (Content-Length via os.stat) puis
-    envoie plus d'octets -> h11 "Too much data for declared Content-Length", et
-    le navigateur recoit une vignette cassee. Avec os.replace, un lecteur voit
-    soit l'ancienne version complete, soit la nouvelle, jamais un fichier en
-    cours d'ecriture. Corollaire : plus de miniature tronquee avec un mtime frais
-    que les passes suivantes prendraient pour "a jour"."""
+    The SPA serves these thumbnails while the workers generate them. A direct
+    im.save(dst) truncates dst to 0 then grows it: an HTTP request that falls into
+    that window reads a size (Content-Length through os.stat) then sends more bytes
+    -> h11 "Too much data for declared Content-Length", and the browser receives a
+    broken thumbnail. With os.replace, a reader sees either the complete old
+    version or the new one, never a file being written. A corollary: no more
+    truncated thumbnail carrying a fresh mtime that the following passes would take
+    for "up to date"."""
     tmp = f"{dst}.{os.getpid()}.{threading.get_ident()}.tmp"
     try:
         with Image.open(src) as im:
@@ -157,8 +158,8 @@ def _ab_make_thumb(src, dst, size, quality):
 
 
 def _ab_scan(d):
-    """(relpath, fullpath) de toutes les images sous d (recursif), _index ignore.
-    Plus recentes en tete."""
+    """The (relpath, fullpath) of every image under d (recursive), _index ignored.
+    The most recent first."""
     out = []
     for root, dirs, files in os.walk(d):
         dirs[:] = [x for x in dirs if x != "_index"]
@@ -171,9 +172,9 @@ def _ab_scan(d):
 
 
 def _thumb_workers():
-    """Nb de threads pour la generation de miniatures. PIL relache le GIL pendant le
-    decodage/redimensionnement -> les threads accelerent vraiment. Config
-    asset_browser.thumb_workers; defaut min(8, cpu)."""
+    """The number of threads for generating the thumbnails. PIL releases the GIL while
+    decoding/resizing -> the threads really do speed it up. The
+    asset_browser.thumb_workers config; the default is min(8, cpu)."""
     cfg = CONFIG.get("asset_browser") or {}
     try:
         n = int(cfg.get("thumb_workers") or 0)
@@ -185,13 +186,13 @@ def _thumb_workers():
 
 
 def _ab_gen_thumbs(jobs, size, quality, force=False, progress=None, workers=None):
-    """Genere une liste de miniatures EN PARALLELE (utilise en tache de fond et par le
-    bouton 'Rebuild thumbnails').
+    """Generates a list of thumbnails IN PARALLEL (used in the background and by the
+    'Rebuild thumbnails' button).
 
-    force=False -> saute une miniature deja a jour (plus recente que la source).
-    force=True  -> regenere tout (miniatures corrompues / changement de taille).
-    progress(done, total, name) est appele apres chaque fichier.
-    Renvoie {total, made, skipped, failed}."""
+    force=False -> skips a thumbnail that is already up to date (newer than the source).
+    force=True  -> regenerates everything (corrupted thumbnails / a size change).
+    progress(done, total, name) is called after every file.
+    Returns {total, made, skipped, failed}."""
     total = len(jobs)
     res = {"total": total, "made": 0, "skipped": 0, "failed": 0}
     if not total:
@@ -241,8 +242,8 @@ DAY_MANIFEST_FILE = "manifest.json"
 
 
 def _day_of(rel):
-    """Jour d'une image d'apres son sous-dossier ('2026-07-27/x.png' -> '2026-07-27').
-    Racine -> '(root)'."""
+    """The day of an image from its subfolder ('2026-07-27/x.png' -> '2026-07-27').
+    The root -> '(root)'."""
     sub = os.path.dirname(rel)
     return sub or "(root)"
 
@@ -252,10 +253,10 @@ def _day_dir(out_dir, day):
 
 
 def _write_day_manifests(out_dir, entries, blur, thumb_size):
-    """Ecrit un manifest PAR JOUR (dans le dossier du jour, facon Fooocus) + l'index
-    _index/days.json. L'UI ouvre alors instantanement: elle lit days.json (quelques Ko)
-    et ne charge que le manifest du jour affiche, au lieu d'un manifest global de ~9 Mo
-    contenant 9000+ images."""
+    """Writes one manifest PER DAY (in that day's folder, Fooocus-style) + the
+    _index/days.json index. The UI then opens instantly: it reads days.json (a few KB) and
+    only loads the manifest of the day being displayed, instead of a global ~9 MB manifest
+    holding 9000+ images."""
     by_day = {}
     for e in entries:
         by_day.setdefault(e.get("day") or "(root)", []).append(e)
@@ -283,15 +284,15 @@ def _write_day_manifests(out_dir, entries, blur, thumb_size):
     return days
 
 
-# Serialise les mises a jour incrementales: deux images sauvees en parallele feraient
-# un read-modify-write concurrent sur le meme manifest de jour (perte d'entree).
+# Serialises the incremental updates: two images saved in parallel would make a
+# concurrent read-modify-write on the same day manifest (a lost entry).
 _INCR_LOCK = threading.Lock()
 
 
 def _entry_for(rel, thumb_rel, path, meta):
-    """Entree de manifest pour une image. UNE seule definition, partagee par la
-    reindexation complete et le hook incremental -> les deux chemins ne peuvent pas
-    diverger sur le format."""
+    """A manifest entry for an image. ONE single definition, shared by the full
+    reindexing and by the incremental hook -> the two paths cannot diverge on the
+    format."""
     meta = meta or {}
     sub = os.path.dirname(rel)
     try:
@@ -311,10 +312,10 @@ def _entry_for(rel, thumb_rel, path, meta):
 
 
 def _load_meta_cache(idx_dir):
-    """Cache des metadonnees d'images: rel -> {mtime, size, meta}. Relire les tags PNG
-    coute ~25 ms/image (mesure: 229 s pour 9278 images) et c'est refait a CHAQUE
-    ouverture alors que 99% des fichiers n'ont pas bouge. Defensif: un cache illisible
-    est ignore (on repart de zero), jamais d'erreur bloquante."""
+    """The image metadata cache: rel -> {mtime, size, meta}. Re-reading the PNG tags
+    costs ~25 ms/image (measured: 229 s for 9278 images) and it is redone on EVERY opening
+    although 99% of the files have not moved. Defensive: an unreadable cache is ignored (we
+    start over), never a blocking error."""
     p = os.path.join(idx_dir, _META_CACHE_FILE)
     try:
         if os.path.isfile(p):
@@ -336,8 +337,8 @@ def _save_meta_cache(idx_dir, files):
 
 
 def _meta_cached(cache, rel, path):
-    """Metadonnees de `path`, depuis le cache si le fichier n'a pas change (mtime+taille),
-    sinon relues et mises en cache. Renvoie (meta, from_cache)."""
+    """The metadata of `path`, from the cache when the file has not changed
+    (mtime+size), otherwise re-read and cached. Returns (meta, from_cache)."""
     try:
         st = os.stat(path)
         sig = [int(st.st_mtime), int(st.st_size)]
@@ -354,9 +355,9 @@ def _meta_cached(cache, rel, path):
 
 def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=True,
                background_thumbs=False):
-    """Ecrit index.html + _index/manifest.json (+ thumbnails). Recursif (sous-dossiers
-    date). background_thumbs=True -> ouverture immediate, miniatures en tache de fond
-    (l'image complete sert de fallback en attendant)."""
+    """Writes index.html + _index/manifest.json (+ the thumbnails). Recursive (the date
+    subfolders). background_thumbs=True -> an immediate opening, the thumbnails in the
+    background (the full image serves as the fallback in the meantime)."""
     d = _ab_resolve_dir(output_dir)
     os.makedirs(d, exist_ok=True)
     idx_dir = os.path.join(d, "_index")
@@ -368,15 +369,15 @@ def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=Tr
     entries, jobs = [], []
     t_idx = time.time()
     for rel, p in _ab_scan(d):
-        thumb_rel = rel  # fallback = image complete
+        thumb_rel = rel  # the fallback = the full image
         tp, trel = _thumb_paths(d, os.path.splitext(rel)[0] + ".jpg")
         if os.path.isfile(tp) and os.path.getmtime(tp) >= os.path.getmtime(p):
             thumb_rel = trel
         elif gen_thumbs:
             if background_thumbs:
                 jobs.append((p, tp))
-                thumb_rel = trel   # vignette a venir -> la SPA montre un placeholder puis
-                                   # charge la vraie vignette (pas l'image complete, lourde)
+                thumb_rel = trel   # the thumbnail is on its way -> the SPA shows a placeholder then
+                                   # loads the real thumbnail (not the full image, which is heavy)
             else:
                 try:
                     os.makedirs(os.path.dirname(tp), exist_ok=True)
@@ -385,8 +386,8 @@ def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=Tr
                 except Exception as e:
                     _dbg(f"ab thumb failed {rel}: {e}")
         meta, cached = _meta_cached(meta_cache, rel, p)
-        # On ne garde que les fichiers encore presents -> le cache ne gonfle pas
-        # indefiniment quand des images sont supprimees.
+        # We only keep the files still present -> the cache does not swell forever
+        # when images are deleted.
         if rel in meta_cache:
             fresh_cache[rel] = meta_cache[rel]
         hits += 1 if cached else 0
@@ -397,8 +398,8 @@ def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=Tr
                 "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "images": entries}
     _write_atomic_text(os.path.join(idx_dir, "manifest.json"),
                        json.dumps(manifest, ensure_ascii=False))
-    # Index par jour (ouverture instantanee) EN PLUS du manifest global, qui reste ecrit
-    # pour la recherche globale et la compatibilite descendante.
+    # A per-day index (an instant opening) ON TOP OF the global manifest, which is still
+    # written for the global search and for backward compatibility.
     _write_day_manifests(d, entries, blur, thumb_size)
     _save_meta_cache(idx_dir, fresh_cache)
     _log(f"asset-browser: indexed {len(entries)} image(s) in {time.time() - t_idx:.1f}s "
@@ -410,16 +411,16 @@ def ab_reindex(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=Tr
 
 
 def ab_open_fast(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=True):
-    """Ouverture INSTANTANEE: ecrit seulement index.html (immediat) et lance la
-    (re)construction complete du manifest + miniatures en tache de fond. Renvoie le
-    chemin de index.html sans attendre l'indexation. La SPA charge le manifest existant
-    tout de suite (s'il y en a un) et re-essaie/rafraichit pendant que l'index se
-    reconstruit -> pas de latence au clic (comme Fooocus)."""
+    """An INSTANT opening: it writes index.html only (immediately) and launches the full
+    (re)building of the manifest + the thumbnails in the background. Returns the path of
+    index.html without waiting for the indexing. The SPA loads the existing manifest right
+    away (when there is one) and retries/refreshes while the index is rebuilt -> no
+    latency on the click (as in Fooocus)."""
     d = _ab_resolve_dir(output_dir)
     os.makedirs(d, exist_ok=True)
     _write_text_if_changed(os.path.join(d, "index.html"), _render_spa())
-    # Manifest STUB immediat si aucun n'existe -> la SPA charge tout de suite (plus jamais
-    # "No manifest") ; le vrai manifest (indexation en tache de fond) arrive via le polling.
+    # An immediate STUB manifest when none exists -> the SPA loads right away (never
+    # "No manifest" again); the real manifest (the background indexing) arrives through the polling.
     idx_dir = os.path.join(d, "_index")
     os.makedirs(idx_dir, exist_ok=True)
     mpath = os.path.join(idx_dir, "manifest.json")
@@ -438,11 +439,11 @@ def ab_open_fast(output_dir, thumb_size=256, quality=85, blur=False, gen_thumbs=
 
 
 def on_image_saved(image_path, output_dir=None, meta=None):
-    """Hook incremental (facon Fooocus on_image_logged): indexe UNE image au moment ou
-    elle est sauvegardee -> miniature + ajout au manifest de son jour + refresh de
-    days.json. L'Asset Browser reste ainsi a jour sans jamais rescanner le dossier.
+    """An incremental hook (Fooocus' on_image_logged style): indexes ONE image at the
+    moment it is saved -> a thumbnail + an addition to its day's manifest + a refresh of
+    days.json. The Asset Browser thus stays up to date without ever rescanning the folder.
 
-    Toujours silencieux: une erreur ici ne doit JAMAIS casser une generation."""
+    Always silent: an error here must NEVER break a generation."""
     if not _ab_get("enabled"):
         return False
     try:
@@ -452,12 +453,12 @@ def on_image_saved(image_path, output_dir=None, meta=None):
             return False
         rel = os.path.relpath(ap, d).replace("\\", "/")
         if rel.startswith(".."):
-            return False                       # image hors du dossier de sortie
+            return False                       # an image outside the output folder
         day = _day_of(rel)
         size = int(_ab_get("thumbnail_size") or 256)
         quality = int(_ab_get("thumbnail_quality") or 85)
         with _INCR_LOCK:
-            # 1) miniature
+            # 1) the thumbnail
             tp, trel = _thumb_paths(d, os.path.splitext(rel)[0] + ".jpg")
             thumb_rel = rel
             if _ab_get("generate_thumbnails"):
@@ -469,10 +470,10 @@ def on_image_saved(image_path, output_dir=None, meta=None):
                     _dbg(f"incr thumb failed {rel}: {e}")
             elif os.path.isfile(tp):
                 thumb_rel = trel
-            # 2) entree (meta fournie par l'appelant -> zero relecture disque)
+            # 2) the entry (the meta supplied by the caller -> zero disk re-read)
             m = meta if isinstance(meta, dict) else (_read_image_meta(ap) or {})
             entry = _entry_for(rel, thumb_rel, ap, m)
-            # 3) manifest du jour: remplace l'entree existante, plus recent en tete
+            # 3) the day's manifest: replaces the existing entry, the most recent first
             dd = _day_dir(d, day)
             mp = os.path.join(dd, DAY_MANIFEST_FILE)
             man = {"date": day, "images": []}
@@ -490,7 +491,7 @@ def on_image_saved(image_path, output_dir=None, meta=None):
                         "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")})
             os.makedirs(dd, exist_ok=True)
             _write_atomic_text(mp, json.dumps(man, ensure_ascii=False))
-            # 4) days.json (compte du jour) — pas de rescan, on lit l'index existant
+            # 4) days.json (the day's count) — no rescan, we read the existing index
             _bump_days_index(d, day, len(imgs))
         return True
     except Exception as e:
@@ -499,7 +500,7 @@ def on_image_saved(image_path, output_dir=None, meta=None):
 
 
 def _bump_days_index(out_dir, day, count):
-    """Met a jour le compte d'un jour dans _index/days.json sans rescanner le dossier."""
+    """Updates a day's count in _index/days.json without rescanning the folder."""
     idx_dir = os.path.join(out_dir, "_index")
     p = os.path.join(idx_dir, DAYS_INDEX_FILE)
     idx = {"days": []}
@@ -522,7 +523,7 @@ def _bump_days_index(out_dir, day, count):
 
 
 def _find_preview(safepath):
-    """Cherche une image de preview a cote d'un .safetensors (conventions Civitai)."""
+    """Looks for a preview image next to a .safetensors (the Civitai conventions)."""
     base = os.path.splitext(safepath)[0]
     for ext in (".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp",
                 ".png", ".jpg", ".jpeg", ".webp"):
@@ -531,18 +532,18 @@ def _find_preview(safepath):
     return None
 
 
-# Onglets LoRAs / Models: MEMES dossiers et MEMES extensions que le reste de l'app.
-# Historiquement l'Asset Browser ne scannait que le dossier PRINCIPAL et ne
-# reconnaissait que .safetensors -- donc une bibliotheque rangee dans le dossier
-# "extra" (le cas des installs qui gardent les modeles sur un autre disque)
-# affichait un onglet Models VIDE, et les GGUF n'apparaissaient jamais.
+# The LoRAs / Models tabs: the SAME folders and the SAME extensions as the rest of the
+# app. Historically the Asset Browser only scanned the MAIN folder and only recognised
+# .safetensors -- so a library kept in the "extra" folder (the case of the installs that
+# keep the models on another disk) showed an EMPTY Models tab, and the GGUFs never
+# appeared at all.
 _CATALOG_EXTS = {"models": (".safetensors", ".gguf", ".ckpt", ".pt", ".sft"),
                  "loras": (".safetensors", ".ckpt", ".pt")}
 
 
 def _catalog_dirs(dirs):
-    """Normalise en liste de dossiers existants, sans doublon, ordre conserve
-    (le principal d'abord: a nom egal, c'est lui qui gagne)."""
+    """Normalises into a list of existing folders, without duplicates, order preserved
+    (the main one first: at equal names, it is the one that wins)."""
     if not dirs:
         return []
     if isinstance(dirs, str):
@@ -556,9 +557,9 @@ def _catalog_dirs(dirs):
 
 
 def _scan_catalog(model_dirs, out_dir, kind):
-    """Scanne le(s) dossier(s) de modeles: nom, taille, preview eventuelle, trigger
-    words (LoRA). Genere les miniatures des previews en tache de fond. Renvoie la
-    liste d'entrees pour <kind>.json. `model_dirs` accepte un dossier ou une liste."""
+    """Scans the model folder(s): the name, the size, a possible preview, the trigger
+    words (LoRA). Generates the previews' thumbnails in the background. Returns the list of
+    entries for <kind>.json. `model_dirs` accepts a folder or a list."""
     model_dirs = _catalog_dirs(model_dirs)
     if not model_dirs:
         return []
@@ -577,7 +578,7 @@ def _scan_catalog(model_dirs, out_dir, kind):
                 continue
             fp = os.path.join(root, f)
             rel = os.path.relpath(fp, model_dir).replace("\\", "/")
-            if rel.lower() in seen:      # meme nom: le dossier principal gagne
+            if rel.lower() in seen:      # the same name: the main folder wins
                 continue
             seen.add(rel.lower())
             sub = os.path.dirname(rel)
@@ -592,7 +593,7 @@ def _scan_catalog(model_dirs, out_dir, kind):
                 jobs.append((prev, tp))
                 thumb = trel
                 img = "/gradio_api/file=" + os.path.abspath(prev).replace("\\", "/")
-            # CivitAI sidecar (<stem>.civitai.json): trigger words + exemples + lien.
+            # The CivitAI sidecar (<stem>.civitai.json): trigger words + examples + a link.
             try:
                 import cz_civitai
                 civ = cz_civitai.load_civitai_sidecar(fp)
@@ -624,7 +625,7 @@ def _scan_catalog(model_dirs, out_dir, kind):
 
 
 def _thumb_jobs_for(kind, output_dir, loras_dir=None, checkpoints_dir=None, size=256):
-    """Liste des (source, destination) de miniatures d'un onglet de l'Asset Browser.
+    """The list of (source, destination) thumbnails of an Asset Browser tab.
     kind: 'outputs' | 'loras' | 'models'."""
     d = _ab_resolve_dir(output_dir)
     jobs = []
@@ -642,7 +643,7 @@ def _thumb_jobs_for(kind, output_dir, loras_dir=None, checkpoints_dir=None, size
             if not f.lower().endswith(exts):
                 continue
             fp = os.path.join(root, f)
-            prev = _find_preview(fp)      # pas de preview -> rien a miniaturiser
+            prev = _find_preview(fp)      # no preview -> nothing to make a thumbnail of
             if not prev:
                 continue
             rel = os.path.relpath(fp, mdir).replace("\\", "/")
@@ -655,9 +656,9 @@ def _thumb_jobs_for(kind, output_dir, loras_dir=None, checkpoints_dir=None, size
 
 def rebuild_thumbs(kind, output_dir, loras_dir=None, checkpoints_dir=None, force=True,
                    progress=None):
-    """(Re)genere TOUTES les miniatures d'un onglet, en parallele. force=True regenere
-    meme celles deja a jour (miniatures corrompues, taille changee). Renvoie le resume
-    de _ab_gen_thumbs (+ 'kind')."""
+    """(Re)generates ALL the thumbnails of a tab, in parallel. force=True regenerates
+    even the ones already up to date (corrupted thumbnails, a changed size). Returns
+    _ab_gen_thumbs' summary (+ 'kind')."""
     size = int(_ab_get("thumbnail_size") or 256)
     quality = int(_ab_get("thumbnail_quality") or 85)
     jobs = _thumb_jobs_for(kind, output_dir, loras_dir, checkpoints_dir, size)
@@ -668,8 +669,8 @@ def rebuild_thumbs(kind, output_dir, loras_dir=None, checkpoints_dir=None, force
 
 
 def ab_build_catalog(output_dir, loras_dir, checkpoints_dir):
-    """Ecrit _index/loras.json et _index/models.json dans le dossier de sortie (pour les
-    onglets LoRAs / Models de l'Asset Browser)."""
+    """Writes _index/loras.json and _index/models.json into the output folder (for the
+    Asset Browser's LoRAs / Models tabs)."""
     d = _ab_resolve_dir(output_dir)
     idx = os.path.join(d, "_index")
     os.makedirs(idx, exist_ok=True)
@@ -689,8 +690,9 @@ def ab_build_catalog(output_dir, loras_dir, checkpoints_dir):
 
 
 def delete_asset(rel, output_dir=None):
-    """Supprime une image du dossier de sortie (+ sidecar + thumbnail). 'rel' est le
-    chemin relatif fourni par l'Asset Browser. Verifie que ca reste DANS le dossier."""
+    """Deletes an image from the output folder (+ the sidecar + the thumbnail). 'rel' is
+    the relative path supplied by the Asset Browser. Checks that it stays INSIDE the
+    folder."""
     d = os.path.abspath(_ab_resolve_dir(output_dir or DEFAULT_OUTPUT_DIR))
     target = os.path.abspath(os.path.join(d, rel or ""))
     if not target.startswith(d + os.sep) or not os.path.isfile(target):

@@ -1,13 +1,14 @@
-"""crispz-studio - FaceSwap (InsightFace/inswapper) + restauration GFPGAN, caption
-local BLIP (fallback Ollama) et detourage rembg.
+"""crispz-studio - FaceSwap (InsightFace/inswapper) + GFPGAN restoration, local BLIP
+captioning (with an Ollama fallback) and rembg background removal.
 
-Extrait de app.py. Calcul "feuille" optionnel (features gated): ne depend que de
+Pulled out of app.py. An optional "leaf" module (gated features): it depends only on
 cz_core (config/paths/log/device) + numpy/PIL; insightface/onnxruntime/cv2/rembg/
-transformers sont importes paresseusement et echouent proprement si absents.
+transformers are imported lazily and fail cleanly when absent.
 
-L'etat mutable (caches de modeles + reglages restore) vit ici. Le dossier des
-checkpoints (encore dans app.py jusqu'au step 7) est passe en parametre a
-_faceswap/_resolve_faceswap_model plutot qu'importe (pas de dependance vers app).
+The mutable state (the model caches + the restore settings) lives here. The checkpoints
+folder (still in app.py until step 7) is passed as a parameter to
+_faceswap/_resolve_faceswap_model rather than imported (no dependency towards app).
+
 """
 
 import os
@@ -18,47 +19,48 @@ from PIL import Image
 
 from cz_core import CONFIG, HERE, DEVICE, _log, _prefs, download_with_progress
 
-# insightface appelle np.linalg.lstsq sans rcond (alignement affine des
-# visages): numpy emet un FutureWarning A CHAQUE visage traite - pur bruit de
-# librairie, aucun effet sur le resultat. Filtre CIBLE sur ce module (jamais
-# un silence global des FutureWarning).
+# insightface calls np.linalg.lstsq without rcond (the affine alignment of the
+# faces): numpy emits a FutureWarning FOR EVERY face processed - pure library
+# noise, with no effect on the result. A TARGETED filter on that module (never a
+# global silencing of the FutureWarnings).
 warnings.filterwarnings("ignore", category=FutureWarning,
                         module=r"insightface\.utils\.transform")
 
-# FaceSwap: reglages de qualite du post-traitement. Tous reglables via l'UI.
-# - restore   : re-synthese du visage a 512 (inswapper ne sort qu'en 128 -> flou).
-# - occlusion : masque XSeg, empeche de repeindre par-dessus ce qui passe DEVANT le
-#               visage (main, aliment, micro). C'est le defaut d'insightface, qui
-#               recolle via un simple rectangle (cf. _swap_one).
-# - regions   : segmentation faciale, limite le swap a la peau/yeux/nez/bouche.
-# - color     : harmonisation colorimetrique visage genere <-> visage d'origine.
+# FaceSwap: the quality settings of the post-processing. All of them settable from
+# the UI.
+# - restore   : re-synthesises the face at 512 (inswapper only outputs 128 -> blurry).
+# - occlusion : an XSeg mask, keeps us from repainting over whatever passes IN FRONT of
+#               the face (a hand, food, a microphone). That is insightface's default,
+#               which pastes back through a plain rectangle (see _swap_one).
+# - regions   : facial segmentation, limits the swap to the skin/eyes/nose/mouth.
+# - color     : colour harmonisation between the generated face and the original one.
 FACESWAP_RESTORE = bool(CONFIG.get("faceswap_restore", True))
 FACESWAP_RESTORE_BLEND = float(CONFIG.get("faceswap_restore_blend", 0.8))
 FACESWAP_RESTORE_MODEL = str(CONFIG.get("faceswap_restore_model", "codeformer")).lower().strip()
-# CodeFormer: 0 = qualite max (plus generatif), 1 = fidelite max a l'entree. Sur un
-# swap 128px (degradation forte) l'article recommande ~0.5-0.7.
+# CodeFormer: 0 = max quality (more generative), 1 = max fidelity to the input. On a
+# 128px swap (a heavy degradation) the paper recommends ~0.5-0.7.
 FACESWAP_RESTORE_FIDELITY = float(CONFIG.get("faceswap_restore_fidelity", 0.7))
 FACESWAP_OCCLUSION = bool(CONFIG.get("faceswap_occlusion", True))
 FACESWAP_REGIONS = bool(CONFIG.get("faceswap_regions", True))
 FACESWAP_COLOR_MATCH = bool(CONFIG.get("faceswap_color_match", True))
 
 
-_CAPTIONER = None  # (kind, processor, model), charge paresseusement
+_CAPTIONER = None  # (kind, processor, model), loaded lazily
 
-# Captioner local (auto-describe, SANS Ollama). Configurable via config.txt:
-#   "caption_model": "blip-large" (defaut) | "blip-base"
-# - blip-large : meme API que blip-base, captions plus riches (~1.9 GB).
-# (Florence-2 a ete retire: son code distant est incompatible avec transformers >= ~4.5x
-#  exige par Z-Image -> chargeait mais plantait a la generation.)
+# The local captioner (auto-describe, WITHOUT Ollama). Settable through config.txt:
+#   "caption_model": "blip-large" (the default) | "blip-base"
+# - blip-large : the same API as blip-base, richer captions (~1.9 GB).
+# (Florence-2 was dropped: its remote code is incompatible with the transformers >= ~4.5x
+#  Z-Image requires -> it loaded, then crashed at generation time.)
 _CAPTION_REPOS = {
     "blip-base":  "Salesforce/blip-image-captioning-base",
     "blip-large": "Salesforce/blip-image-captioning-large",
 }
 
 
-_CAPTION_MODEL = None  # override UI (None = lire config.txt)
-# Un Caption model peut aussi etre un modele vision Ollama : "ollama:<nom>" (nom tel
-# qu'Ollama le liste, casse comprise). BLIP reste le repli si Ollama echoue.
+_CAPTION_MODEL = None  # the UI override (None = read config.txt)
+# A Caption model can also be an Ollama vision model: "ollama:<name>" (the name as
+# Ollama lists it, case included). BLIP stays the fallback should Ollama fail.
 OLLAMA_CAPTION_PREFIX = "ollama:"
 
 
@@ -73,9 +75,9 @@ def _norm_caption_kind(kind):
 
 
 def _current_caption_kind():
-    """Type de captioner courant: override UI (session) sinon preferences.json (persiste)
-    sinon config.txt, sinon blip-large. Toute valeur inconnue (ex. 'florence2' retire)
-    retombe sur blip-large."""
+    """The current captioner kind: the UI override (the session), otherwise preferences.json
+    (persisted), otherwise config.txt, otherwise blip-large. Any unknown value ('florence2',
+    which was dropped, say) falls back on blip-large."""
     if _CAPTION_MODEL and _valid_caption_kind(_CAPTION_MODEL):
         return _CAPTION_MODEL
     kind = _norm_caption_kind(_prefs.get("caption_model") or CONFIG.get("caption_model", "blip-large"))
@@ -83,7 +85,7 @@ def _current_caption_kind():
 
 
 def set_caption_model(kind):
-    """Change le captioner (UI). Invalide le cache BLIP -> recharge au prochain usage."""
+    """Changes the captioner (UI). Invalidates the BLIP cache -> reloaded on the next use."""
     global _CAPTION_MODEL, _CAPTIONER
     k = _norm_caption_kind(kind)
     if _valid_caption_kind(k) and k != _current_caption_kind():
@@ -96,7 +98,7 @@ def set_caption_model(kind):
 
 
 def _load_captioner():
-    """Charge (une fois) le captioner courant (UI/config). Renvoie (kind, proc, mdl)."""
+    """Loads (once) the current captioner (UI/config). Returns (kind, proc, mdl)."""
     global _CAPTIONER
     if _CAPTIONER is not None:
         return _CAPTIONER
@@ -111,10 +113,10 @@ def _load_captioner():
 
 
 def _local_caption(image):
-    """Legende d'une phrase pour l'Auto-describe et le repli de Describe. Le Caption model
-    "ollama:<nom>" passe par Ollama ; s'il echoue (eteint, modele absent, reponse vide),
-    BLIP prend le relais pour ne pas bloquer le rendu. Sinon BLIP local (blip-large par
-    defaut / blip-base), charge paresseusement."""
+    """A one-sentence caption for Auto-describe and for Describe's fallback. The Caption
+    model "ollama:<name>" goes through Ollama; should it fail (off, the model missing, an
+    empty answer), BLIP takes over so as not to block the render. Otherwise local BLIP
+    (blip-large by default / blip-base), loaded lazily."""
     kind = _current_caption_kind()
     if kind.startswith(OLLAMA_CAPTION_PREFIX):
         model = kind[len(OLLAMA_CAPTION_PREFIX):]
@@ -134,17 +136,17 @@ def _local_caption(image):
 
 
 # ----------------------------------------------------------------------------
-# FaceSwap (post-process, optionnel). InsightFace + modele inswapper. Active
-# seulement si insightface/onnxruntime sont installes ET faceswap_model_path
-# pointe sur un inswapper (.onnx). Sinon -> message clair (feature gated).
+# FaceSwap (a post-process, optional). InsightFace + the inswapper model. Active
+# only when insightface/onnxruntime are installed AND faceswap_model_path points
+# at an inswapper (.onnx). Otherwise -> a clear message (a gated feature).
 # ----------------------------------------------------------------------------
 _FACE_APP = None
 _FACE_SWAPPER = None
 
 
 def _ensure_face_detector():
-    """Charge (une fois) le detecteur de visages insightface buffalo_l. Detection
-    SEULE: n'exige pas l'inswapper (utilise par le detaileur auto, pas que le swap)."""
+    """Loads (once) the insightface buffalo_l face detector. Detection ONLY: it does
+    not require the inswapper (used by the auto detailer, not just by the swap)."""
     global _FACE_APP
     if _FACE_APP is not None:
         return _FACE_APP
@@ -161,18 +163,18 @@ def _ensure_face_detector():
 
 
 def detect_faces(image):
-    """Bboxes des visages [(x1, y1, x2, y2), ...] d'une image PIL (floats, ordre natif
-    insightface). Liste vide si aucun visage."""
+    """The bboxes of the faces [(x1, y1, x2, y2), ...] of a PIL image (floats, in
+    insightface's native order). An empty list when there is no face."""
     app = _ensure_face_detector()
     arr = np.asarray(image.convert("RGB"))[:, :, ::-1].copy()   # RGB -> BGR
     return [tuple(float(v) for v in f.bbox) for f in app.get(arr)]
 
 
 def detect_faces_full(image):
-    """Visages avec la position de la BOUCHE: [{'box': (x1,y1,x2,y2),
-    'mouth': (x,y) | None}]. mouth = milieu des deux coins de bouche des 5
-    keypoints insightface (kps[3]/kps[4]). Utilise par le lettrage BD: la queue
-    d'une bulle vise la bouche du locuteur, jamais un point arbitraire."""
+    """The faces with the position of the MOUTH: [{'box': (x1,y1,x2,y2),
+    'mouth': (x,y) | None}]. mouth = the middle of the two mouth corners of the 5
+    insightface keypoints (kps[3]/kps[4]). Used by the comic lettering: a bubble's tail
+    aims at the speaker's mouth, never at an arbitrary point."""
     app = _ensure_face_detector()
     arr = np.asarray(image.convert("RGB"))[:, :, ::-1].copy()   # RGB -> BGR
     out = []
@@ -192,10 +194,10 @@ _REF_EMB_CACHE = {}
 
 
 def ref_embedding(path):
-    """Embedding du PLUS GRAND visage d'une image de reference (liste de floats,
-    L2-normalisee par insightface), None si aucun visage. Cache par (path, mtime).
-    Sert au lettrage BD: apparier 'qui parle' a 'quel visage' en comparant les
-    visages d'une case aux portraits de reference du casting."""
+    """The embedding of the BIGGEST face of a reference image (a list of floats,
+    L2-normalised by insightface), None when there is no face. Cached by (path, mtime).
+    Serves the comic lettering: pairing 'who speaks' with 'which face' by comparing the
+    faces of a panel with the cast's reference portraits."""
     try:
         key = (os.path.abspath(path), os.path.getmtime(path))
     except OSError:
@@ -219,8 +221,8 @@ def ref_embedding(path):
 
 
 def _resolve_faceswap_model(checkpoints_dir=None):
-    """Trouve le modele inswapper: faceswap_model_path, sinon recherche dans des
-    emplacements usuels, sinon telechargement si faceswap_model_url est defini."""
+    """Finds the inswapper model: faceswap_model_path, otherwise a search through the
+    usual locations, otherwise a download when faceswap_model_url is set."""
     cfg = (os.environ.get("FACESWAP_MODEL") or CONFIG.get("faceswap_model_path") or "").strip()
     cands = [cfg] if cfg else []
     search_dirs = [os.path.join(HERE, "faceswap"), os.path.join(HERE, "models")]
@@ -233,30 +235,30 @@ def _resolve_faceswap_model(checkpoints_dir=None):
     for p in cands:
         if p and os.path.isfile(p):
             return p
-    # Telechargement optionnel (URL fournie par l'utilisateur dans config.txt).
+    # An optional download (a URL supplied by the user in config.txt).
     url = (CONFIG.get("faceswap_model_url") or "").strip()
     if url:
         dst_dir = os.path.join(HERE, "faceswap")
         os.makedirs(dst_dir, exist_ok=True)
         dst = os.path.join(dst_dir, "inswapper_128.onnx")
         _log(f"downloading inswapper model from {url} ...")
-        download_with_progress(url, dst, timeout=120)   # atomique + progression
+        download_with_progress(url, dst, timeout=120)   # atomic + progress
         return dst
     return None
 
 
 def _faceswap(target_img, source_img, checkpoints_dir=None):
-    """Remplace le(s) visage(s) de target_img par celui de source_img.
+    """Replaces the face(s) of target_img with the one from source_img.
 
-    Pipeline par visage: swap inswapper (128px) -> harmonisation couleur ->
-    restauration a 512 (CodeFormer/GFPGAN) -> recollage via un masque d'OCCLUSION
-    calcule sur l'image d'origine.
+    The pipeline per face: an inswapper swap (128px) -> colour harmonisation ->
+    restoration at 512 (CodeFormer/GFPGAN) -> pasting back through an OCCLUSION mask
+    computed on the original image.
 
-    Ce masque est la difference essentielle avec le recollage natif d'insightface
-    (`paste_back=True`), qui utilise un rectangle plein: tout objet situe devant le
-    visage (main, aliment, micro, mecheveux) y est repeint par les pixels generes.
-    C'est la cause des visages "casses" sur les scenes ou quelque chose touche la
-    bouche. Ici on passe donc par `paste_back=False` et on compose nous-memes.
+    That mask is the essential difference from insightface's native pasting
+    (`paste_back=True`), which uses a solid rectangle: any object in front of the face
+    (a hand, food, a microphone, a lock of hair) gets repainted there by the generated
+    pixels. That is the cause of the "broken" faces on the scenes where something
+    touches the mouth. So we go through `paste_back=False` and compose it ourselves.
     """
     global _FACE_APP, _FACE_SWAPPER
     try:
@@ -287,14 +289,14 @@ def _faceswap(target_img, source_img, checkpoints_dir=None):
         raise RuntimeError("No face found in the generated image.")
     res = tgt.copy()
     for f in tgt_faces:
-        # `tgt` (original) est passe a part: c'est la seule image ou l'occlusion est
-        # encore observable une fois les visages precedents deja remplaces.
+        # `tgt` (the original) is passed separately: it is the only image where the
+        # occlusion is still observable once the previous faces have been replaced.
         res = _swap_one(res, tgt, f, src_face)
     return Image.fromarray(res[:, :, ::-1])  # BGR -> RGB
 
 
 def _swap_one(res, orig, face, src_face):
-    """Swappe UN visage dans `res` (BGR uint8) et renvoie l'image composee."""
+    """Swaps ONE face in `res` (BGR uint8) and returns the composed image."""
     import cv2
     h, w = res.shape[:2]
     fake, M = _FACE_SWAPPER.get(res, face, src_face, paste_back=False)  # crop 128 + affine
@@ -316,9 +318,9 @@ def _swap_one(res, orig, face, src_face):
 
 
 def _box_mask(crop_size, IM, shape):
-    """Masque "boite" d'insightface: le carre aligne, erode puis floute, ramene dans
-    l'espace image. On le conserve comme garde-fou sur les bords du crop, mais c'est
-    le SEUL masque qu'utilise insightface -- d'ou les artefacts qu'on corrige via
+    """Insightface's "box" mask: the aligned square, eroded then blurred, brought back
+    into image space. We keep it as a guard rail on the crop's edges, but it is the ONLY
+    mask insightface uses -- hence the artefacts we correct through
     _visible_face_mask."""
     import cv2
     h, w = shape
@@ -335,15 +337,15 @@ def _box_mask(crop_size, IM, shape):
     return box / 255.0
 
 
-# FFHQ 5-point template (alignement attendu par GFPGAN/CodeFormer), normalise -> x512.
+# The FFHQ 5-point template (the alignment GFPGAN/CodeFormer expect), normalised -> x512.
 _FFHQ_512 = np.array([
     [0.37691676, 0.46864664], [0.62285697, 0.46912813], [0.50123859, 0.61331904],
     [0.39308822, 0.72541100], [0.61150205, 0.72490465]], dtype=np.float32) * 512.0
 
 
 def _ffhq_matrix(face):
-    """Transformation affine vers le crop FFHQ 512 (repere commun a la restauration
-    et aux masques). None si les 5 points ne permettent pas de l'estimer."""
+    """The affine transform to the FFHQ 512 crop (the frame shared by the restoration
+    and the masks). None when the 5 points do not allow estimating it."""
     import cv2
     M, _ = cv2.estimateAffinePartial2D(face.kps.astype(np.float32), _FFHQ_512,
                                        method=cv2.LMEDS)
@@ -351,13 +353,13 @@ def _ffhq_matrix(face):
 
 
 # ----------------------------------------------------------------------------
-# Modeles auxiliaires ONNX (restauration + masques), meme source que gfpgan_1.4
-# (facefusion/models-3.0.0). Resolution commune: chemin config -> dossiers usuels
-# -> telechargement via URL config. Absent = fonction desactivee proprement.
+# The auxiliary ONNX models (restoration + masks), from the same source as gfpgan_1.4
+# (facefusion/models-3.0.0). A shared resolution: the config path -> the usual folders
+# -> a download through the config URL. Absent = the function cleanly disabled.
 # ----------------------------------------------------------------------------
 _FACEFUSION_HF = "https://huggingface.co/facefusion/models-3.0.0/resolve/main/"
 
-_AUX_MODELS = {   # cle -> (fichier, cle config chemin, cle config URL)
+_AUX_MODELS = {   # key -> (file, the path config key, the URL config key)
     "gfpgan":     ("gfpgan_1.4.onnx",        "faceswap_restore_path",    "faceswap_restore_url"),
     "codeformer": ("codeformer.onnx",        "faceswap_codeformer_path", "faceswap_codeformer_url"),
     "occluder":   ("dfl_xseg.onnx",          "faceswap_occluder_path",   "faceswap_occluder_url"),
@@ -365,7 +367,7 @@ _AUX_MODELS = {   # cle -> (fichier, cle config chemin, cle config URL)
 }
 
 _AUX_SESSIONS = {}
-_AUX_MISSING = set()   # modeles introuvables: on n'insiste pas (ni retry ni re-log)
+_AUX_MISSING = set()   # models not found: we do not insist (no retry, no re-log)
 
 
 def _resolve_aux_model(key):
@@ -384,13 +386,13 @@ def _resolve_aux_model(key):
     os.makedirs(dst_dir, exist_ok=True)
     dst = os.path.join(dst_dir, fname)
     _log(f"downloading {key} model ({fname}) from {url} ...")
-    download_with_progress(url, dst, timeout=120)   # atomique + progression
+    download_with_progress(url, dst, timeout=120)   # atomic + progress
     return dst
 
 
 def _aux_session(key):
-    """Session ONNX (mise en cache) d'un modele auxiliaire. Renvoie None si le modele
-    est indisponible: chaque appelant doit alors degrader proprement, jamais crasher."""
+    """The (cached) ONNX session of an auxiliary model. Returns None when the model is
+    unavailable: every caller must then degrade cleanly, never crash."""
     if key in _AUX_SESSIONS:
         return _AUX_SESSIONS[key]
     if key in _AUX_MISSING:
@@ -400,7 +402,7 @@ def _aux_session(key):
         if not path:
             raise RuntimeError("model not found and no URL configured")
         import onnxruntime as ort
-        provs = _onnx_providers()   # CUDA puis CPU, sans TensorRT
+        provs = _onnx_providers()   # CUDA then CPU, without TensorRT
         _log(f"loading {key}: {path} (providers={provs})")
         sess = (ort.InferenceSession(path, providers=provs) if provs
                 else ort.InferenceSession(path))
@@ -413,43 +415,44 @@ def _aux_session(key):
 
 
 def _soften(mask):
-    """Adoucit un masque: flou puis re-etalement de [0.5,1] sur [0,1]. Donne un bord
-    progressif mais franc (evite a la fois le lisere dur et le halo diffus)."""
+    """Softens a mask: a blur then a re-spreading of [0.5,1] over [0,1]. Gives a
+    gradual but clean edge (avoids both the hard seam and the diffuse halo)."""
     import cv2
     return (cv2.GaussianBlur(mask.clip(0, 1), (0, 0), 5).clip(0.5, 1) - 0.5) * 2.0
 
 
 def _occlusion_mask(crop_bgr):
-    """Masque XSeg (DeepFaceLab): 1 = peau du visage visible, 0 = quelque chose passe
-    DEVANT (main, aliment, micro, cheveux, lunettes). C'est ce masque qui empeche le
-    swap de repeindre un objet tenu devant la bouche. None si le modele est absent."""
+    """The XSeg mask (DeepFaceLab): 1 = visible facial skin, 0 = something passes IN
+    FRONT (a hand, food, a microphone, hair, glasses). That mask is what keeps the swap
+    from repainting an object held in front of the mouth. None when the model is
+    absent."""
     sess = _aux_session("occluder")
     if sess is None:
         return None
     import cv2
     inp = sess.get_inputs()[0]
     shape = list(inp.shape)
-    nchw = len(shape) == 4 and shape[1] == 3            # NCHW vs NHWC selon l'export
+    nchw = len(shape) == 4 and shape[1] == 3            # NCHW vs NHWC depending on the export
     dim = shape[2] if nchw else shape[1]
     size = int(dim) if isinstance(dim, int) else 256
     blob = cv2.resize(crop_bgr, (size, size)).astype(np.float32) / 255.0
     blob = blob.transpose(2, 0, 1)[None] if nchw else blob[None]
     out = np.squeeze(sess.run(None, {inp.name: blob})[0]).astype(np.float32)
-    if out.ndim == 3:                                   # (C,H,W) ou (H,W,C) -> 1er plan
+    if out.ndim == 3:                                   # (C,H,W) or (H,W,C) -> the 1st plane
         out = out[0] if out.shape[0] < out.shape[-1] else out[..., 0]
     return _soften(cv2.resize(out, crop_bgr.shape[:2][::-1]))
 
 
-# BiSeNet / CelebAMask-HQ: on garde peau, sourcils, yeux, lunettes, nez, bouche,
-# levres. Exclut cheveux (17), chapeau (18), cou (14/15), vetements (16), fond (0).
+# BiSeNet / CelebAMask-HQ: we keep skin, eyebrows, eyes, glasses, nose, mouth,
+# lips. Excludes hair (17), hat (18), neck (14/15), clothes (16), background (0).
 _PARSER_REGIONS = (1, 2, 3, 4, 5, 6, 10, 11, 12, 13)
 _IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], np.float32)
 _IMAGENET_STD = np.array([0.229, 0.224, 0.225], np.float32)
 
 
 def _region_mask(crop_bgr):
-    """Segmentation faciale (BiSeNet): limite le swap aux regions du visage, pour
-    qu'il ne deborde ni sur la chevelure ni sur le cou ni sur l'arriere-plan."""
+    """Facial segmentation (BiSeNet): limits the swap to the regions of the face, so
+    that it spills neither onto the hair nor the neck nor the background."""
     sess = _aux_session("parser")
     if sess is None:
         return None
@@ -463,8 +466,8 @@ def _region_mask(crop_bgr):
 
 
 def _visible_face_mask(orig_bgr, face):
-    """Masque image-espace des pixels du visage REELLEMENT visibles, calcule sur le
-    crop FFHQ 512 de l'image d'origine. Renvoie (masque HxW float32 | None, M512)."""
+    """The image-space mask of the face pixels REALLY visible, computed on the FFHQ 512
+    crop of the original image. Returns (an HxW float32 mask | None, M512)."""
     import cv2
     M = _ffhq_matrix(face)
     if M is None:
@@ -490,9 +493,9 @@ def _visible_face_mask(orig_bgr, face):
 
 
 def _color_match(src_bgr, ref_bgr):
-    """Aligne la colorimetrie du visage genere sur celle du visage d'origine
-    (moyenne/ecart-type par canal en LAB): corrige les ecarts de teint et
-    d'exposition entre la photo source et l'image cible."""
+    """Aligns the colours of the generated face with those of the original face (the
+    per-channel mean/standard deviation in LAB): corrects the differences in skin tone
+    and exposure between the source photo and the target image."""
     import cv2
     s = cv2.cvtColor(src_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
     r = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
@@ -509,13 +512,13 @@ def _restore_kind():
 
 
 def _restore_crop(crop512_bgr):
-    """Passe un crop FFHQ 512 dans l'enhancer (CodeFormer ou GFPGAN). Meme
-    pre/post-traitement pour les deux; CodeFormer prend en plus une entree 'weight'
-    (fidelite). Renvoie None si aucun modele n'est disponible."""
+    """Runs an FFHQ 512 crop through the enhancer (CodeFormer or GFPGAN). The same
+    pre/post-processing for both; CodeFormer also takes a 'weight' input (fidelity).
+    Returns None when no model is available."""
     key = _restore_kind()
     sess = _aux_session(key)
     if sess is None and key == "codeformer":
-        key, sess = "gfpgan", _aux_session("gfpgan")   # repli si CodeFormer indispo
+        key, sess = "gfpgan", _aux_session("gfpgan")   # a fallback when CodeFormer is unavailable
     if sess is None:
         return None
     import cv2
@@ -531,8 +534,8 @@ def _restore_crop(crop512_bgr):
 
 
 def _restore_one(img_bgr, M512, mask, blend):
-    """Restaure le visage aligne par M512 et le recolle en respectant `mask`: la
-    restauration non plus ne doit pas repasser par-dessus une occlusion."""
+    """Restores the face aligned by M512 and pastes it back respecting `mask`: the
+    restoration must not go over an occlusion either."""
     import cv2
     try:
         h, w = img_bgr.shape[:2]
@@ -542,8 +545,8 @@ def _restore_one(img_bgr, M512, mask, blend):
             return img_bgr
         IM = cv2.invertAffineTransform(M512)
         back = cv2.warpAffine(rest, IM, (w, h))
-        # Masque elliptique adouci dans l'espace du crop (s'estompe AVANT les bords)
-        # -> pas de bord carre visible, puis intersection avec le masque d'occlusion.
+        # A softened elliptical mask in the crop's space (it fades out BEFORE the
+        # edges) -> no visible square edge, then an intersection with the occlusion mask.
         ell = np.zeros((512, 512), np.uint8)
         cv2.ellipse(ell, (256, 256), (256 - 28, 256 - 28), 0, 0, 360, 255, -1)
         ell = cv2.GaussianBlur(ell, (0, 0), 24)
@@ -556,7 +559,7 @@ def _restore_one(img_bgr, M512, mask, blend):
 
 
 def set_faceswap_restore(enabled, blend):
-    """Active/desactive la restauration du visage apres le swap + son intensite."""
+    """Enables/disables the restoration of the face after the swap + its strength."""
     global FACESWAP_RESTORE, FACESWAP_RESTORE_BLEND
     FACESWAP_RESTORE = bool(enabled)
     FACESWAP_RESTORE_BLEND = float(blend)
@@ -564,8 +567,8 @@ def set_faceswap_restore(enabled, blend):
 
 
 def set_faceswap_quality(occlusion, regions, color_match, model, fidelity):
-    """Reglages de qualite du recollage (UI). `occlusion` est le plus important:
-    sans lui, tout objet devant le visage est repeint par le swap."""
+    """The quality settings of the pasting back (UI). `occlusion` is the most
+    important one: without it, any object in front of the face is repainted by the swap."""
     global FACESWAP_OCCLUSION, FACESWAP_REGIONS, FACESWAP_COLOR_MATCH
     global FACESWAP_RESTORE_MODEL, FACESWAP_RESTORE_FIDELITY
     FACESWAP_OCCLUSION = bool(occlusion)
@@ -586,9 +589,9 @@ _REMBG_SESSION = None
 
 
 def _onnx_providers():
-    """Providers ONNX disponibles SANS TensorRT (souvent absent -> erreur 'nvinfer_*.dll
-    missing' puis chute sur CPU lent). Garde CUDA (GPU) puis CPU. None si onnxruntime
-    indisponible (les appelants retombent alors sur le defaut)."""
+    """The ONNX providers available WITHOUT TensorRT (often absent -> an 'nvinfer_*.dll
+    missing' error then a fall back to the slow CPU). Keeps CUDA (GPU) then CPU. None when
+    onnxruntime is unavailable (the callers then fall back to the default)."""
     try:
         import onnxruntime as ort
         return [p for p in ort.get_available_providers() if p != "TensorrtExecutionProvider"]
@@ -597,9 +600,10 @@ def _onnx_providers():
 
 
 def _remove_bg(image):
-    """Detoure le sujet (fond transparent). Local via rembg (telecharge u2net au
-    1er usage). Renvoie une image RGBA. La session ONNX est forcee sur CUDA+CPU
-    (TensorRT exclu): evite l'erreur 'nvinfer_10.dll missing' + le fallback CPU lent."""
+    """Cuts the subject out (a transparent background). Local, through rembg (it
+    downloads u2net on the 1st use). Returns an RGBA image. The ONNX session is forced
+    onto CUDA+CPU (TensorRT excluded): avoids the 'nvinfer_10.dll missing' error + the
+    slow CPU fallback."""
     global _REMBG_SESSION
     try:
         from rembg import remove, new_session
