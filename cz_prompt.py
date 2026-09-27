@@ -1,10 +1,11 @@
 """crispz-studio - prompt helpers: styles (Fooocus) + wildcards (__name__).
 
-Extrait de app.py. Ne depend que de cz_core (HERE/CONFIG/_prefs) + stdlib. Les
-handlers d'UI (gestionnaire de wildcards, recherche de styles) restent dans app.py.
+Pulled out of app.py. It depends only on cz_core (HERE/CONFIG/_prefs) + the stdlib. The
+UI handlers (the wildcard manager, the style search) stay in app.py.
 
-Note: WILDCARDS_DIR est reassignable a l'execution (set_wildcards_dir). Les lecteurs
-hors de ce module utilisent `cz_prompt.WILDCARDS_DIR` pour voir la valeur a jour.
+Note: WILDCARDS_DIR is reassignable at run time (set_wildcards_dir). Readers outside this
+module use `cz_prompt.WILDCARDS_DIR` to see the up-to-date value.
+
 """
 
 import os
@@ -26,8 +27,8 @@ _FALLBACK_STYLES = {
 
 
 def _load_styles():
-    """Charge la biblio de styles depuis styles/*.json (format Fooocus:
-    {name, prompt avec {prompt}, negative_prompt}). Vide -> fallback."""
+    """Loads the style library from styles/*.json (the Fooocus format:
+    {name, prompt with {prompt}, negative_prompt}). Empty -> the fallback."""
     out = {}
     sdir = os.path.join(HERE, "styles")
     if os.path.isdir(sdir):
@@ -58,19 +59,19 @@ def set_wildcards_dir(path):
         WILDCARDS_DIR = path
 
 
-# Tags LoRA dans le prompt, syntaxe A1111/ComfyUI: <lora:nom> ou <lora:nom:poids>.
-# Le nom peut etre un chemin relatif ('perso/ma_lora.safetensors'), avec ou sans
-# extension. Ces tags ne doivent JAMAIS atteindre l'encodeur de texte: ils sont
-# extraits ici et resolus/actives par cz_pipeline.consume_prompt_loras.
+# The LoRA tags in the prompt, the A1111/ComfyUI syntax: <lora:name> or
+# <lora:name:weight>. The name can be a relative path ('chars/my_lora.safetensors'),
+# with or without its extension. Those tags must NEVER reach the text encoder: they are
+# extracted here and resolved/activated by cz_pipeline.consume_prompt_loras.
 LORA_TAG_RE = re.compile(r"<\s*lora\s*:\s*([^:<>]+?)\s*(?::\s*([-+]?\d*\.?\d+)\s*)?>",
                          re.IGNORECASE)
 
 
 def extract_lora_tags(text):
-    """Extrait les tags <lora:nom[:poids]> d'un prompt. Renvoie (texte_nettoye, tags)
-    avec tags = liste de (nom, poids_ou_None) dans l'ordre d'apparition (doublons de nom
-    dedoublonnes, la derniere occurrence gagne — comme A1111). Le texte nettoye ne garde
-    ni les tags ni les doubles virgules/espaces qu'ils laissent derriere eux."""
+    """Extracts the <lora:name[:weight]> tags from a prompt. Returns (cleaned_text, tags)
+    with tags = a list of (name, weight_or_None) in order of appearance (duplicate names
+    deduplicated, the last occurrence wins — as in A1111). The cleaned text keeps neither
+    the tags nor the double commas/spaces they leave behind."""
     if not text or "<" not in text:
         return text, []
     tags = {}
@@ -86,8 +87,8 @@ def extract_lora_tags(text):
                 w = None
         tags[name] = w
     clean = LORA_TAG_RE.sub("", text)
-    # Nettoyage des restes la ou etait le tag: espaces doubles, espace avant virgule,
-    # virgules consecutives ('a, <tag>, b' -> 'a, b').
+    # Cleaning up what is left where the tag was: double spaces, a space before a
+    # comma, consecutive commas ('a, <tag>, b' -> 'a, b').
     clean = re.sub(r"\s{2,}", " ", clean)
     clean = re.sub(r"\s+,", ",", clean)
     clean = re.sub(r"(?:,\s*){2,}", ", ", clean)
@@ -96,8 +97,8 @@ def extract_lora_tags(text):
 
 
 def strip_lora_tags(text):
-    """Retire les tags <lora:...> restants (ex. injectes par un wildcard) sans les
-    activer: un fragment de syntaxe ne doit jamais partir a l'encodeur de texte."""
+    """Removes the remaining <lora:...> tags (injected by a wildcard, say) without
+    activating them: a fragment of syntax must never go to the text encoder."""
     if not text or "<" not in text:
         return text
     clean, _tags = extract_lora_tags(text)
@@ -105,7 +106,7 @@ def strip_lora_tags(text):
 
 
 def _seed_rng(seed):
-    """RNG reproductible si seed>=0 (memes wildcards/styles pour une meme seed)."""
+    """A reproducible RNG when seed>=0 (the same wildcards/styles for the same seed)."""
     try:
         s = int(seed)
         return random.Random(s) if s >= 0 else random.Random()
@@ -123,33 +124,33 @@ READ_WILDCARDS_IN_ORDER = bool(CONFIG.get("wildcards_in_order", False))
 
 
 def set_wildcards_in_order(v):
-    """Bascule le mode de lecture des wildcards (aleatoire <-> dans l'ordre)."""
+    """Switches the wildcards' reading mode (random <-> in order)."""
     global READ_WILDCARDS_IN_ORDER
     READ_WILDCARDS_IN_ORDER = bool(v)
     return f"Wildcards: {'in order' if READ_WILDCARDS_IN_ORDER else 'random'}"
 
 
 def _apply_wildcards(text, rng=None, index=None):
-    """Developpe les variantes {a|b|c} (prompt_variants) et les __nom__ (une ligne de
-    wildcards/nom.txt), imbrication comprise.
-    Par defaut: tirage ALEATOIRE (rng, reproductible par seed). Si READ_WILDCARDS_IN_ORDER
-    et index fourni: option (index % n) / ligne (index % nb_lignes) -> parcourt les
-    options au fil du batch, de facon deterministe (facon Fooocus 'read wildcards in
-    order'). Les deux syntaxes partagent ce booleen et ce rng.
+    """Expands the {a|b|c} variants (prompt_variants) and the __name__ (one line of
+    wildcards/name.txt), nesting included.
+    By default: a RANDOM draw (rng, reproducible by seed). With READ_WILDCARDS_IN_ORDER
+    and an index given: the option (index % n) / the line (index % line_count) -> it walks
+    the options along the batch, deterministically (Fooocus' 'read wildcards in order'
+    style). Both syntaxes share that boolean and that rng.
 
-    Ordre (identique a Fooocus2026 apply_wildcards): a chaque passe, UN niveau de
-    groupes est developpe (le plus interne) AVANT la recherche d'un __nom__. Un
-    placeholder place dans une option non choisie n'est donc jamais developpe. Quand il
-    ne reste plus de placeholder mais encore un groupe imbrique, on refait une passe.
-    Un texte sans groupe ni placeholder ne fait AUCUN tirage: les seeds des prompts
-    existants redonnent la meme image."""
+    The order (identical to Fooocus2026's apply_wildcards): on every pass, ONE level of
+    groups is expanded (the innermost one) BEFORE a __name__ is looked for. So a
+    placeholder placed in an option that was not drawn is never expanded. When no
+    placeholder is left but a nested group still is, we make another pass.
+    A text with neither a group nor a placeholder makes NO draw at all: the seeds of the
+    existing prompts give the same image again."""
     if not text or ("__" not in text and not has_variants(text)):
         return text
     raw = text
     rng = rng or random.Random()
     in_order = READ_WILDCARDS_IN_ORDER and index is not None
     idx = int(index) if index is not None else 0
-    for _ in range(64):  # garde-fou anti-boucle
+    for _ in range(64):  # an anti-loop guard rail
         text = expand_variants(text, rng, index=idx, in_order=in_order, max_depth=1)
         m = re.search(r"__([A-Za-z0-9_\-/]+)__", text)
         if not m:
@@ -175,9 +176,9 @@ def _apply_wildcards(text, rng=None, index=None):
 
 
 def resolve_seed(seed):
-    """Seed concrete: -1 (ou invalide) -> tirage aleatoire. Les variantes {a|b|c} et les
-    wildcards sont lies a la seed; une seed -1 non resolue les rendrait irreproductibles
-    et absentes des metadonnees."""
+    """A concrete seed: -1 (or invalid) -> a random draw. The {a|b|c} variants and the
+    wildcards are tied to the seed; an unresolved -1 seed would make them irreproducible
+    and absent from the metadata."""
     try:
         s = int(seed)
     except (TypeError, ValueError):
@@ -186,16 +187,16 @@ def resolve_seed(seed):
 
 
 def expand_prompt_pair(prompt, negative, seed, index=None):
-    """Variantes {a|b|c} + wildcards du positif ET du negatif pour UNE image. Chaque
-    texte a son propre random.Random(seed): memes tirages pour une meme seed, et
-    modifier le positif ne change pas les tirages du negatif."""
+    """The {a|b|c} variants + wildcards of the positive AND the negative for ONE image.
+    Each text has its own random.Random(seed): the same draws for the same seed, and
+    changing the positive does not change the negative's draws."""
     return (_apply_wildcards(prompt, _seed_rng(seed), index=index),
             _apply_wildcards(negative, _seed_rng(seed), index=index))
 
 
 def _pick_styles(selected, randomize):
-    """Si randomize: tire 1 style au hasard dans la selection (ou dans TOUS les
-    styles si rien n'est selectionne). Sinon renvoie la selection telle quelle."""
+    """When randomize: draws 1 style at random from the selection (or from ALL the
+    styles when nothing is selected). Otherwise it returns the selection as it is."""
     if not randomize:
         return list(selected or [])
     pool = [s for s in (selected or []) if s in STYLES] or list(STYLES)
@@ -203,8 +204,8 @@ def _pick_styles(selected, randomize):
 
 
 def _apply_styles(prompt, negative, style_names):
-    """Applique les styles Fooocus: enchaine les templates {prompt} et cumule les
-    negative_prompt. Renvoie (prompt_final, negative_final)."""
+    """Applies the Fooocus styles: it chains the {prompt} templates and accumulates the
+    negative_prompt. Returns (final_prompt, final_negative)."""
     cur = (prompt or "").strip()
     negs = [(negative or "").strip()] if (negative or "").strip() else []
     for n in (style_names or []):

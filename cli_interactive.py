@@ -1,7 +1,8 @@
-"""CLI interactive pour crispz.
+"""The interactive CLI for crispz.
 
-Demande chaque reglage avec un defaut (chargé depuis preferences.json si present),
-puis propose de sauver les choix. Couvre 1:1 ce que l'UI Gradio expose.
+Asks for every setting with a default (loaded from preferences.json when there is one),
+then offers to save the choices. Covers 1:1 what the Gradio UI exposes.
+
 """
 import json
 import os
@@ -87,7 +88,7 @@ def main():
 
     print("=== crispz - interactive CLI ===")
 
-    # 1) Chemins / modeles
+    # 1) Paths / models
     esrgan_dir = ask("ESRGAN folder", prefs.get("esrgan_dir") or app.ESRGAN_DIR, str)
     app.set_esrgan_dir(esrgan_dir)
     zimage_model = ask("Z-Image model (HF repo or local path)",
@@ -103,13 +104,13 @@ def main():
     print(f"Z-Image   : {app.BASE_REPO}")
     print(f"ESRGAN models available: {len(models)}\n")
 
-    # 2) Source : fichier ou dossier
+    # 2) The source: a file or a folder
     src = input("Source image OR folder (batch): ").strip().strip('"')
     while not src:
         src = input("  Required: ").strip().strip('"')
     is_batch = os.path.isdir(src)
 
-    # 3) Modele ESRGAN
+    # 3) The ESRGAN model
     print("\nESRGAN models:")
     for i, m in enumerate(models):
         marker = " *" if m == prefs.get("model") else ""

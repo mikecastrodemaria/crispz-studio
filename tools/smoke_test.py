@@ -88,8 +88,8 @@ check("improve instruction has {prompt}", "{prompt}" in app.IMPROVE_INSTRUCTION)
 g, st, msg = app._gallery_load("out", "Newest", "")
 check("gallery_load returns list+status", isinstance(g, list) and "image" in msg)
 
-# Batch img2img: le slider "Image number" doit appeler run() n fois, seed +1 par image
-# (regression 1.11.2: la branche Input image ignorait image_number et rendait 1 image).
+# An img2img batch: the "Image number" slider must call run() n times, seed +1 per image
+# (the 1.11.2 regression: the Input image branch ignored image_number and rendered 1 image).
 _calls = []
 
 
@@ -117,10 +117,10 @@ try:
     _imgs = _gen_img2img(3, True)
     check("img2img batch: n images, seed +1 per image",
           len(_imgs) == 3 and [c["seed"] for c in _calls] == [1234, 1235, 1236])
-    _imgs = _gen_img2img(4, False)   # refine decoche -> deterministe -> clampe a 1
+    _imgs = _gen_img2img(4, False)   # refine unticked -> deterministic -> clamped to 1
     check("img2img batch: no refine -> 1 image",
           len(_imgs) == 1 and len(_calls) == 1 and _calls[0]["denoise"] == 0.0)
-    _imgs = _gen_img2img(2, True, seed=-1)   # seed -1 resolu en valeur concrete
+    _imgs = _gen_img2img(2, True, seed=-1)   # seed -1 resolved to a concrete value
     check("img2img batch: seed -1 resolved + memorized",
           _calls[0]["seed"] >= 0 and _calls[1]["seed"] == _calls[0]["seed"] + 1
           and cz_pipeline._LAST_SEED == _calls[0]["seed"])

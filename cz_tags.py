@@ -1,9 +1,10 @@
-"""crispz-studio - Tag autocomplete: sources cote serveur.
+"""crispz-studio - Tag autocomplete: the server-side sources.
 
-Telecharge UNE FOIS les CSV de tags (config tag_autocomplete.sources) dans tags/,
-de facon atomique avec progression console. Tout .csv depose dans tags/ devient une
-source cote client. Ce module n'est importe QUE si la feature est activee (contrat
-zero-cout quand off); un echec reseau ne bloque jamais le boot (warning + continue).
+Downloads the tag CSVs (the tag_autocomplete.sources config) into tags/ ONCE,
+atomically and with console progress. Any .csv dropped into tags/ becomes a client-side
+source. This module is imported ONLY when the feature is enabled (the zero-cost contract
+when off); a network failure never blocks the boot (a warning + it carries on).
+
 """
 
 import os
@@ -14,7 +15,7 @@ TAGS_DIR = os.path.join(HERE, "tags")
 
 
 def _source_filename(url):
-    """Nom de fichier local d'une URL source (toujours .csv)."""
+    """The local file name of a source URL (always .csv)."""
     from urllib.parse import urlparse
     name = os.path.basename(urlparse(str(url)).path.rstrip("/")) or "tags"
     if not name.lower().endswith(".csv"):
@@ -23,8 +24,8 @@ def _source_filename(url):
 
 
 def ensure_tag_sources(sources):
-    """Telecharge chaque URL absente de tags/ (une fois). Echec = warning, on continue.
-    Renvoie le nombre de fichiers telecharges."""
+    """Downloads every URL absent from tags/ (once). A failure = a warning, we carry on.
+    Returns the number of files downloaded."""
     os.makedirs(TAGS_DIR, exist_ok=True)
     done = 0
     for url in (sources or []):
@@ -41,7 +42,7 @@ def ensure_tag_sources(sources):
 
 
 def list_tag_files():
-    """Tous les .csv du dossier tags/ (sources du client)."""
+    """Every .csv of the tags/ folder (the client's sources)."""
     if not os.path.isdir(TAGS_DIR):
         return []
     return sorted(os.path.join(TAGS_DIR, f) for f in os.listdir(TAGS_DIR)

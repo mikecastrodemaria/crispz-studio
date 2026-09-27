@@ -1,18 +1,19 @@
-"""Detection hardware + reco reglages pour crispz.
+"""Hardware detection + settings recommendations for crispz.
 
-Imprime un resume lisible. Utilise par run.bat / run.sh / boot_check.bat.
+Prints a readable summary. Used by run.bat / run.sh / boot_check.bat.
 
-Codes de sortie (pour que les scripts .bat puissent reagir):
-    0 = tout va bien
+Exit codes (so that the .bat scripts can react):
+    0 = all is well
     1 = PyTorch absent
-    2 = CUDA indisponible (CPU seulement)
-    3 = INCOMPATIBLE: ce build torch ne supporte pas l'architecture de ce GPU
-        (c'est le cas RTX 50xx + torch non-cu128 -> "WinError 127 torch_cuda.dll")
+    2 = CUDA unavailable (CPU only)
+    3 = INCOMPATIBLE: this torch build does not support this GPU's architecture
+        (that is the RTX 50xx + non-cu128 torch case -> "WinError 127 torch_cuda.dll")
+
 """
 import sys
 
-# Architectures NVIDIA par compute capability. Sert a nommer le GPU et a savoir
-# quel CUDA minimum il exige (Blackwell = 12.8, sinon le build par defaut suffit).
+# The NVIDIA architectures by compute capability. Serves to name the GPU and to know
+# which CUDA minimum it requires (Blackwell = 12.8, otherwise the default build is enough).
 ARCHS = [
     (12, 0, "Blackwell (RTX 50xx)", "12.8"),
     (9, 0, "Hopper (H100)", "12.0"),
@@ -33,13 +34,13 @@ def arch_name(major, minor):
 
 
 def offload_reco(vram_gb):
-    """Mode d'offload conseille selon la VRAM.
+    """The offload mode advised according to the VRAM.
 
-    Repere mesure sur ce projet: un transformer FLUX bf16 pese ~23,8 Go et son
-    encodeur T5 ~9,5 Go (~33 Go au total) -> il ne tient pas dans 32 Go, d'ou
-    l'offload. Un GGUF Q8 du meme modele tombe a ~12,7 Go et tient largement.
-    'sequential' deplace chaque sous-module a chaque forward: tres lent
-    (mesure ~3 s/step contre ~1,1 s/step en 'model'), a reserver aux petites cartes.
+    A landmark measured on this project: a bf16 FLUX transformer weighs ~23.8 GB and its
+    T5 encoder ~9.5 GB (~33 GB in total) -> it does not fit in 32 GB, hence the
+    offload. A Q8 GGUF of the same model drops to ~12.7 GB and fits with room to spare.
+    'sequential' moves every submodule on every forward: very slow
+    (measured ~3 s/step against ~1.1 s/step in 'model'), to be kept for the small cards.
     """
     if vram_gb >= 30:
         return ("none", "compact models (GGUF Q8, Z-Image) fit whole. "
@@ -47,8 +48,8 @@ def offload_reco(vram_gb):
     if vram_gb >= 20:
         return ("model", "a whole transformer fits on the GPU; the text encoder is "
                          "evicted once the prompt is encoded.")
-    # Seuil a 11 et non 12: une carte vendue "12 Go" expose ~11,6-11,9 Go. Les mettre
-    # en 'sequential' couterait ~3x le temps par step (mesure) sans necessite.
+    # The threshold at 11 and not 12: a card sold as "12 GB" exposes ~11.6-11.9 GB.
+    # Putting those in 'sequential' would cost ~3x the time per step (measured) for nothing.
     if vram_gb >= 11:
         return ("model", "prefer the GGUF quantizations (Q8 ~12.7 GB, Q4 ~7 GB) "
                          "to keep some headroom.")
@@ -85,9 +86,9 @@ def main():
     print(f"VRAM            : {vram_gb:.1f} GB")
     print(f"BF16 native     : {'yes' if bf16 else 'no (Turing/Pascal, FP16 advised)'}")
 
-    # --- LE check qui compte: ce build torch sait-il compiler pour ce GPU ? ---
-    # Un torch sans le sm_ de la carte se charge mais casse a la 1re allocation
-    # CUDA ("WinError 127 ... torch_cuda.dll", ou "no kernel image is available").
+    # --- THE check that counts: can this torch build compile for this GPU ? ---
+    # A torch without the card's sm_ loads but breaks on the 1st CUDA allocation
+    # ("WinError 127 ... torch_cuda.dll", or "no kernel image is available").
     try:
         arch_list = torch.cuda.get_arch_list()
     except Exception:
@@ -110,7 +111,7 @@ def main():
         print("=" * 62)
         return 3
 
-    # --- Recommandations (echelonnees selon la VRAM reelle) ---
+    # --- Recommendations (tiered according to the real VRAM) ---
     off, why = offload_reco(vram_gb)
     if vram_gb >= 20:
         tile, note = 0, "whole image (tile=0)"

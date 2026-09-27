@@ -1,13 +1,14 @@
-"""Lance toute la suite tests/test_*.py dans des processus separes et resume.
+"""Runs the whole tests/test_*.py suite in separate processes and summarises.
 
-Processus separes volontairement: les tests manipulent l'etat GLOBAL des modules
-(CHECKPOINTS_DIR, FORCE_RATIO, caches...) et se pollueraient l'un l'autre dans un
-meme interpreteur. Aucune dependance externe (pas de pytest).
+Separate processes on purpose: the tests manipulate the modules' GLOBAL state
+(CHECKPOINTS_DIR, FORCE_RATIO, the caches...) and would pollute one another in a single
+interpreter. No external dependency (no pytest).
 
 Usage:
-    .venv/Scripts/python tools/run_tests.py            # tout
-    .venv/Scripts/python tools/run_tests.py xyz quant  # ceux dont le nom matche
-    .venv/Scripts/python tools/run_tests.py -v         # sortie complete des echecs
+    .venv/Scripts/python tools/run_tests.py            # everything
+    .venv/Scripts/python tools/run_tests.py xyz quant  # the ones whose name matches
+    .venv/Scripts/python tools/run_tests.py -v         # the full output of the failures
+
 """
 import os
 import subprocess
@@ -34,8 +35,8 @@ def main(argv):
     failed, t_all = [], time.time()
     for f in files:
         t0 = time.time()
-        # UTF-8 force: les tests impriment des libelles non-ASCII, et une console
-        # Windows en cp1252 ferait echouer le print et non le test lui-meme.
+        # UTF-8 forced: the tests print non-ASCII labels, and a Windows console in
+        # cp1252 would make the print fail rather than the test itself.
         env = dict(os.environ, PYTHONIOENCODING="utf-8")
         p = subprocess.run([sys.executable, os.path.join(TESTS, f)],
                            capture_output=True, text=True, encoding="utf-8",

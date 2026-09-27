@@ -1,28 +1,29 @@
-"""crispz-studio - Z-Image txt2img + upscaler/detailer (standalone, sans ComfyUI).
+"""crispz-studio - Z-Image txt2img + an upscaler/detailer (standalone, without ComfyUI).
 
-Point d'entree mince. Tout le code a ete decoupe en modules cz_* :
-  cz_core (config/paths/logging/device) · cz_imageio (I/O image) · cz_prompt (styles/
+A thin entry point. All the code has been cut into cz_* modules:
+  cz_core (config/paths/logging/device) · cz_imageio (image I/O) · cz_prompt (styles/
   wildcards) · cz_ollama (describe/improve/compose) · cz_esrgan (Real-ESRGAN) ·
-  cz_face (faceswap/restore/BLIP/rembg) · cz_pipeline (coeur Z-Image: generation,
-  pipelines, LoRA/checkpoints, offload, guidance) · cz_assetbrowser / cz_assets ·
-  cz_ui (build_ui + handlers) · cz_cli (argparse + serveur).
+  cz_face (faceswap/restore/BLIP/rembg) · cz_pipeline (the Z-Image core: generation,
+  pipelines, LoRAs/checkpoints, offload, guidance) · cz_assetbrowser / cz_assets ·
+  cz_ui (build_ui + the handlers) · cz_cli (argparse + the server).
 
-Ce fichier ne fait que (1) lancer la CLI/UI via cz_cli.cli_main et (2) re-exporter les
-quelques symboles que tools/smoke_test.py lit via `import app`. L'etat mutable runtime
-(LORAS / FACESWAP_RESTORE) est expose en proxy live par __getattr__.
+This file only (1) launches the CLI/UI through cz_cli.cli_main and (2) re-exports the few
+symbols tools/smoke_test.py reads through `import app`. The mutable runtime state
+(LORAS / FACESWAP_RESTORE) is exposed as a live proxy by __getattr__.
 
-Lancer:  python app.py            (UI)
-         python app.py --help     (CLI)
+To run:  python app.py            (the UI)
+         python app.py --help     (the CLI)
+
 """
 
 import sys
 
-# Modules conservant l'etat mutable runtime (lus en live par __getattr__).
+# The modules that hold the mutable runtime state (read live by __getattr__).
 import cz_pipeline
 import cz_face
 import cz_esrgan
 
-# Re-exports pour le smoke et la retro-compat `import app` (noqa: symboles non utilises ici).
+# Re-exports for the smoke test and for the `import app` backward compatibility (noqa: symbols unused here).
 from cz_core import (  # noqa: F401
     CONFIG, COMPOSE_INSTRUCTION, IMPROVE_INSTRUCTION, DESCRIBE_INSTRUCTION,
     set_log_level,
@@ -42,10 +43,11 @@ from cz_cli import cli_main, serve_main  # noqa: F401
 main = cli_main
 
 
-# Facade retro-compat: tout symbole deplace (ETAT MUTABLE inclus: LORAS, ESRGAN_DIR,
-# BASE_REPO, FACESWAP_RESTORE, OFFLOAD_MODE, ...) reste accessible en live via app.NAME.
-# Le smoke (app.LORAS / app.FACESWAP_RESTORE) et cli_interactive.py (app.ESRGAN_DIR /
-# app.BASE_REPO / app.set_esrgan_dir ...) en dependent. Premier module qui matche gagne.
+# A backward-compatibility facade: every symbol that moved (MUTABLE STATE included:
+# LORAS, ESRGAN_DIR, BASE_REPO, FACESWAP_RESTORE, OFFLOAD_MODE, ...) stays reachable live
+# through app.NAME. The smoke test (app.LORAS / app.FACESWAP_RESTORE) and
+# cli_interactive.py (app.ESRGAN_DIR / app.BASE_REPO / app.set_esrgan_dir ...) depend on
+# it. The first module that matches wins.
 _PROXY_MODULES = (cz_pipeline, cz_esrgan, cz_face)
 
 

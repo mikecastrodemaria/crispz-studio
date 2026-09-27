@@ -1,10 +1,12 @@
-"""Verifie que toute cle lue via CONFIG.get("...") dans le code existe dans
-config-sample.txt (et inversement, signale les cles documentees mais jamais lues).
+"""Checks that every key read through CONFIG.get("...") in the code exists in
+config-sample.txt (and the other way round, it reports the keys documented but never
+read).
 
-Sans ca, une option ajoutee au code reste invisible pour l'utilisateur: elle n'est
-ni dans le fichier d'exemple ni dans le tutoriel. Aucune dependance (regex + json).
+Without it, an option added to the code stays invisible to the user: it is neither in the
+example file nor in the tutorial. No dependency (a regex + json).
 
-Usage:  python tools/check_config_keys.py        (code de sortie 1 si manquantes)
+Usage:  python tools/check_config_keys.py        (exit code 1 when some are missing)
+
 """
 import json
 import os
@@ -14,8 +16,8 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAMPLE = os.path.join(ROOT, "config-sample.txt")
 
-# CONFIG.get("cle"...) et CONFIG.get('cle'...) au premier niveau seulement: les
-# sous-blocs (asset_browser.*, xyz_grid.*) sont lus via un dict intermediaire.
+# CONFIG.get("key"...) and CONFIG.get('key'...) at the first level only: the
+# sub-blocks (asset_browser.*, xyz_grid.*) are read through an intermediate dict.
 _RE = re.compile(r"""CONFIG\.get\(\s*["']([A-Za-z0-9_]+)["']""")
 
 
@@ -23,7 +25,7 @@ def main():
     with open(SAMPLE, encoding="utf-8") as f:
         sample = json.load(f)
     documented = {k for k in sample if not k.startswith("_")}
-    # les cles d'aide '_x_help' documentent la cle 'x'
+    # the '_x_help' help keys document the key 'x'
     helped = {k[1:-5] for k in sample if k.startswith("_") and k.endswith("_help")}
 
     used = {}

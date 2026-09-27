@@ -1,8 +1,9 @@
-"""crispz-studio - Real-ESRGAN (charge via spandrel) + upscale tuile/overlap-add.
+"""crispz-studio - Real-ESRGAN (loaded through spandrel) + a tile/overlap-add upscale.
 
-Extrait de app.py. Calcul "feuille": ne depend que de cz_core (config/paths/log/
-device) + numpy/torch/PIL. L'etat mutable (ESRGAN_DIR + cache des modeles charges)
-et son setter vivent ici; app lit le dossier courant via cz_esrgan.ESRGAN_DIR.
+Pulled out of app.py. A "leaf" module: it depends only on cz_core (config/paths/log/
+device) + numpy/torch/PIL. The mutable state (ESRGAN_DIR + the cache of the loaded models)
+and its setter live here; app reads the current folder through cz_esrgan.ESRGAN_DIR.
+
 """
 
 import os
@@ -13,15 +14,15 @@ from PIL import Image
 
 from cz_core import DEVICE, DEFAULT_ESRGAN_DIR, _prefs, _log
 
-# Dossier des modeles ESRGAN (.pth/.safetensors). Ordre: env > preferences > defaut.
+# The folder of the ESRGAN models (.pth/.safetensors). The order: env > preferences > the default.
 ESRGAN_DIR = os.environ.get("ESRGAN_DIR") or _prefs.get("esrgan_dir") or DEFAULT_ESRGAN_DIR
 
-# Cache process-wide des modeles ESRGAN charges (nom -> descriptor spandrel).
+# A process-wide cache of the loaded ESRGAN models (name -> a spandrel descriptor).
 _ESRGAN_CACHE = {}
 
 
 def set_esrgan_dir(path):
-    """Change le dossier ESRGAN. Invalide le cache (les noms peuvent collisionner entre dossiers)."""
+    """Changes the ESRGAN folder. Invalidates the cache (names can collide between folders)."""
     global ESRGAN_DIR, _ESRGAN_CACHE
     if path and path != ESRGAN_DIR:
         ESRGAN_DIR = path
@@ -62,7 +63,7 @@ def _tensor_to_pil(t):
 
 
 def esrgan_upscale(img, model, tile, overlap):
-    """Upscale ESRGAN avec tiling overlap-add et feather lineaire pour eviter les coutures."""
+    """An ESRGAN upscale with overlap-add tiling and a linear feather, to avoid the seams."""
     scale = model.scale
     t = _pil_to_tensor(img)
     _, _, h, w = t.shape
@@ -85,7 +86,7 @@ def esrgan_upscale(img, model, tile, overlap):
             with torch.no_grad():
                 up = model(patch)
             ph, pw = up.shape[2], up.shape[3]
-            # masque feather: rampe lineaire sur la zone d'overlap
+            # the feather mask: a linear ramp over the overlap area
             mask = torch.ones(1, 1, ph, pw, device=DEVICE)
             f = overlap * scale
             if f > 0:

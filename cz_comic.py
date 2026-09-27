@@ -1,20 +1,21 @@
-"""crispz-studio - comic: modele de projet BD, layouts de planche, casting.
+"""crispz-studio - comic: the comic project model, the plate layouts, the cast.
 
-Couche PUREMENT geometrique et documentaire: aucun import torch / cz_pipeline, donc
-importable et testable sans GPU (les tests tournent en <1s). Le moteur (txt2img,
-omni, inpaint) est appele par l'appelant -- ce module lui dit QUOI generer, a
-QUELLE taille, avec QUELLES references, et recompose la planche apres coup.
+A PURELY geometric and documentary layer: no torch / cz_pipeline import, so it is
+importable and testable without a GPU (the tests run in <1s). The engine (txt2img,
+omni, inpaint) is called by the caller -- this module tells it WHAT to generate, at
+WHAT size, with WHICH references, and recomposes the plate afterwards.
 
-Contient:
-  - LAYOUTS / PAGE_PRESETS : gabarits de planche (fractions) et formats de page
-  - panel_rects / gen_size : geometrie des cases -> pixels, et taille de generation
-  - casting : resolution des @Name -> description + refs Omni + LoRA
-  - projet : new_project / load_project / save_project / add_chapter / add_page
-  - compose_page / export_pdf : assemblage de la planche finale
+It holds:
+  - LAYOUTS / PAGE_PRESETS : the plate templates (fractions) and the page formats
+  - panel_rects / gen_size : the panels' geometry -> pixels, and the generation size
+  - casting : the resolution of the @Name -> a description + Omni refs + a LoRA
+  - the project : new_project / load_project / save_project / add_chapter / add_page
+  - compose_page / export_pdf : the assembly of the final plate
 
-Principe important (rappel du bug corrige plusieurs fois ici): un FRAGMENT ne recoit
-jamais le prompt de la scene. La passe de detail sur un crop passe par detail_prompt(),
-qui renvoie une description LOCALE, jamais le texte du panneau. Voir detail_prompt().
+An important principle (a reminder of the bug fixed several times here): a FRAGMENT never
+receives the scene's prompt. The detail pass on a crop goes through detail_prompt(),
+which returns a LOCAL description, never the panel's text. See detail_prompt().
+
 """
 
 import os
@@ -30,20 +31,20 @@ from prompt_variants import expand_variants, has_variants
 
 SCHEMA_VERSION = 1
 
-# Tolerance sur les fractions de layout (un bord a 0.5 doit etre reconnu comme
-# interieur, un bord a 1.0 comme exterieur, malgre les flottants).
+# A tolerance on the layout fractions (an edge at 0.5 must be recognised as
+# interior, an edge at 1.0 as exterior, despite the floats).
 _EPS = 1e-6
 
-# Alignement des dimensions de generation. 32 et pas 16: le transformer Z-Image
-# patchifie par 2 le latent VAE (voir cz_pipeline.round_to_multiple).
+# The alignment of the generation dimensions. 32 and not 16: the Z-Image transformer
+# patchifies the VAE latent by 2 (see cz_pipeline.round_to_multiple).
 GEN_ALIGN = 32
 
 
 # ----------------------------------------------------------------------------
-# Gabarits
+# Templates
 # ----------------------------------------------------------------------------
-# Une case = (x, y, w, h) en FRACTIONS de la zone utile (page moins les marges).
-# L'ordre de la liste = l'ordre de lecture des cases.
+# A panel = (x, y, w, h) in FRACTIONS of the usable area (the page minus the margins).
+# The list's order = the panels' reading order.
 LAYOUTS = {
     "splash":       [(0, 0, 1, 1)],
     "2-up":         [(0, 0, 1, .5), (0, .5, 1, .5)],
@@ -61,10 +62,10 @@ LAYOUTS = {
     "9-grid":       [(c / 3, r / 3, 1 / 3, 1 / 3) for r in range(3) for c in range(3)],
 }
 
-# Formats de planche courants. dpi sert a l'export (PDF) et a rien d'autre.
+# The common plate formats. dpi serves the export (PDF) and nothing else.
 PAGE_PRESETS = {
-    # formats imprimes traditionnels (300 dpi): marge ~2 cm (236 px), gouttiere
-    # 5 mm (59 px) - les valeurs d'usage en impression, modifiables ensuite
+    # the traditional print formats (300 dpi): a margin of ~2 cm (236 px), a gutter of
+    # 5 mm (59 px) - the customary print values, changeable afterwards
     "Franco-Belge 24x32 cm":   {"width": 2835, "height": 3780, "dpi": 300, "margin": 236, "gutter": 59},
     "A4 300dpi":               {"width": 2480, "height": 3508, "dpi": 300, "margin": 236, "gutter": 59},
     "US comic 17x26 cm":       {"width": 1988, "height": 3075, "dpi": 300, "margin": 200, "gutter": 59},
@@ -72,12 +73,12 @@ PAGE_PRESETS = {
     "Graphic novel 17x24 cm":  {"width": 2008, "height": 2835, "dpi": 300, "margin": 200, "gutter": 59},
     "Square album 21x21 cm":   {"width": 2480, "height": 2480, "dpi": 300, "margin": 236, "gutter": 59},
     "Landscape 29.7x21 cm":    {"width": 3508, "height": 2480, "dpi": 300, "margin": 236, "gutter": 59},
-    # numerique
+    # digital
     "Web":                     {"width": 1280, "height": 1980, "dpi": 96, "margin": 96, "gutter": 48},
     "Webtoon":                 {"width": 800, "height": 1280, "dpi": 96, "margin": 40, "gutter": 80},
 }
 
-# Une ligne d'explication par format, pour le wizard (jamais dans project.json)
+# One line of explanation per format, for the wizard (never in project.json)
 PAGE_NOTES = {
     "Franco-Belge 24x32 cm": "hardcover album, colour, 48-64 pages",
     "A4 300dpi": "Franco-Belge A4 21x29.7 cm, print",
@@ -92,20 +93,20 @@ PAGE_NOTES = {
 
 DEFAULT_PAGE = {
     "width": 2480, "height": 3508, "dpi": 300,
-    "margin": 96,          # blanc autour de la zone utile (px)
-    "gutter": 48,          # gouttiere ENTRE deux cases (px)
+    "margin": 96,          # the white around the usable area (px)
+    "gutter": 48,          # the gutter BETWEEN two panels (px)
     "background": "#ffffff",
-    "border": 0,           # cadre noir autour de chaque case (px, 0 = aucun)
+    "border": 0,           # a black frame around every panel (px, 0 = none)
     "border_color": "#000000",
 }
 
 PANEL_STATUS = ("draft", "locked")
 
-# Role d'une planche dans le LIVRE. L'ordre de publication est trie par rang:
-# les 'cover' ouvrent l'album, les 'back' le ferment - meme si des planches
-# d'histoire sont ajoutees apres coup. 'title' = page de garde d'un chapitre
-# (traitee comme l'histoire pour l'ordre, mais exclue de la numerotation).
-# Les anciens project.json sans 'role' sont lus comme 'story'.
+# A plate's role in the BOOK. The publication order is sorted by rank:
+# the 'cover' ones open the album, the 'back' ones close it - even when story
+# plates are added afterwards. 'title' = a chapter's flyleaf (treated like the
+# story for the order, but excluded from the numbering).
+# The old project.json with no 'role' are read as 'story'.
 PAGE_ROLES = ("cover", "title", "story", "back")
 _ROLE_RANK = {"cover": 0, "title": 1, "story": 1, "back": 2}
 
@@ -115,7 +116,7 @@ def layout_names():
 
 
 def layout_cells(name):
-    """Cases d'un gabarit. Leve ValueError si le nom est inconnu."""
+    """The panels of a template. Raises ValueError when the name is unknown."""
     cells = LAYOUTS.get(name)
     if cells is None:
         raise ValueError(f"unknown layout '{name}' (known: {', '.join(layout_names())})")
@@ -123,8 +124,8 @@ def layout_cells(name):
 
 
 def validate_cells(cells):
-    """Verifie qu'un gabarit tient dans [0,1] et que ses cases ne se chevauchent pas.
-    Renvoie la liste des problemes (vide = gabarit sain)."""
+    """Checks that a template fits in [0,1] and that its panels do not overlap.
+    Returns the list of problems (empty = a sound template)."""
     problems = []
     for i, cell in enumerate(cells):
         if len(cell) != 4:
@@ -147,14 +148,14 @@ def validate_cells(cells):
 
 
 # ----------------------------------------------------------------------------
-# Geometrie
+# Geometry
 # ----------------------------------------------------------------------------
 def panel_rects(cells, page_w, page_h, margin=0, gutter=0):
-    """Fractions -> rectangles pixel (x, y, w, h) sur la planche.
+    """Fractions -> pixel rectangles (x, y, w, h) on the plate.
 
-    Chaque case est rentree de gutter/2 sur ses bords INTERIEURS uniquement: deux
-    cases voisines sont donc separees d'exactement `gutter`, et les cases de bord
-    touchent exactement la marge (pas de demi-gouttiere parasite au bord de page)."""
+    Every panel is pulled in by gutter/2 on its INTERIOR edges only: so two neighbouring
+    panels are separated by exactly `gutter`, and the edge panels touch the margin
+    exactly (no stray half-gutter at the edge of the page)."""
     cw = page_w - 2 * margin
     ch = page_h - 2 * margin
     if cw <= 0 or ch <= 0:
@@ -187,12 +188,12 @@ def _align(x, m=GEN_ALIGN):
 
 
 def gen_size(rect_w, rect_h, target_pixels=1024 * 1024, align=GEN_ALIGN, max_side=2048):
-    """Taille de GENERATION d'une case: garde le ratio du rectangle final, vise
-    ~target_pixels de surface, aligne sur `align`, plafonne le grand cote.
+    """A panel's GENERATION size: it keeps the final rectangle's ratio, aims at
+    ~target_pixels of area, aligns on `align`, caps the long side.
 
-    On ne genere pas a la taille d'impression (une case A4 300dpi fait 2000+ px de
-    haut, hors budget VRAM et hors distribution du modele): on genere a resolution
-    de travail au BON RATIO, l'upscale se fait a l'export."""
+    We do not generate at the printing size (an A4 300dpi panel is 2000+ px tall, outside
+    the VRAM budget and outside the model's distribution): we generate at a working
+    resolution at the RIGHT RATIO, and the upscale happens at export time."""
     if rect_w <= 0 or rect_h <= 0:
         raise ValueError(f"invalid rect {rect_w}x{rect_h}")
     ar = float(rect_w) / float(rect_h)
@@ -206,7 +207,7 @@ def gen_size(rect_w, rect_h, target_pixels=1024 * 1024, align=GEN_ALIGN, max_sid
 
 
 def page_size(preset_or_dict):
-    """Resout un format de page: nom de PAGE_PRESETS ou dict deja complet."""
+    """Resolves a page format: a PAGE_PRESETS name or an already complete dict."""
     if isinstance(preset_or_dict, str):
         p = PAGE_PRESETS.get(preset_or_dict)
         if p is None:
@@ -221,17 +222,17 @@ def page_size(preset_or_dict):
 # ----------------------------------------------------------------------------
 # Casting: @Name -> description + references Omni + LoRA
 # ----------------------------------------------------------------------------
-# @@ = un @ litteral. @Name = une entree de casting.
+# @@ = a literal @. @Name = a cast entry.
 _AT = re.compile(r"@@|@([A-Za-z0-9_\-]+)")
 
 
 def new_character(desc, refs=None, lora=None, negative="", kind="character"):
-    """Fiche de casting. `lora` = 'fichier.safetensors:0.85' ou une liste.
-    `kind` = 'character' (defaut) ou 'setting' (decor/lieu): les deux se
-    substituent pareil dans les prompts, mais un decor n'est JAMAIS choisi par
-    detail_prompt() comme sujet d'une passe de detail (un crop de visage refine
-    avec 'a ruined castle' derive vers le chateau). Les fiches d'anciens
-    project.json sans 'kind' sont lues comme 'character'."""
+    """A cast sheet. `lora` = 'file.safetensors:0.85' or a list.
+    `kind` = 'character' (the default) or 'setting' (scenery/a place): both substitute
+    the same way in the prompts, but a setting is NEVER chosen by detail_prompt() as
+    the subject of a detail pass (a face crop refined with 'a ruined castle' drifts
+    towards the castle). The sheets of old project.json with no 'kind' are read as
+    'character'."""
     if kind not in ("character", "setting"):
         raise ValueError(f"kind must be 'character' or 'setting', got {kind!r}")
     loras = [lora] if isinstance(lora, str) else list(lora or [])
@@ -241,10 +242,10 @@ def new_character(desc, refs=None, lora=None, negative="", kind="character"):
 
 
 def _casting_lookup(casting, name):
-    """(cle canonique, fiche) pour un @Name: recherche exacte puis insensible a la
-    casse (le scenariste tape @hero ou @Hero). (None, None) si absent. On renvoie la
-    CLE et pas seulement la fiche: c'est elle qui sert a dedupliquer, sinon @hero et
-    @Hero comptent comme deux personnages differents."""
+    """(the canonical key, the sheet) for a @Name: an exact search then a
+    case-insensitive one (the scriptwriter types @hero or @Hero). (None, None) when
+    absent. We return the KEY and not only the sheet: it is the key that serves to
+    deduplicate, otherwise @hero and @Hero count as two different characters."""
     if name in casting:
         return name, casting[name]
     low = name.lower()
@@ -255,23 +256,23 @@ def _casting_lookup(casting, name):
 
 
 def _casting_get(casting, name):
-    """Fiche d'un @Name (voir _casting_lookup), ou None."""
+    """The sheet of a @Name (see _casting_lookup), or None."""
     return _casting_lookup(casting, name)[1]
 
 
 def resolve_casting(text, casting, max_refs=None):
-    """Remplace les @Name par leur description et collecte refs / LoRA / negatifs.
+    """Replaces the @Name with their description and collects the refs / LoRAs / negatives.
 
-    Renvoie un dict:
-      prompt   : texte avec les @Name substitues (@@ -> @)
-      refs     : chemins de reference, dans l'ordre d'apparition, dedupliques
-      loras    : specs LoRA 'nom[:poids]', dedupliquees par fichier (1er poids gagne)
-      negative : negatifs cumules des personnages cites
-      used     : noms de casting effectivement resolus
-      unknown  : @Name absents du casting (le nom nu reste dans le prompt)
+    Returns a dict:
+      prompt   : the text with the @Name substituted (@@ -> @)
+      refs     : the reference paths, in order of appearance, deduplicated
+      loras    : the LoRA specs 'name[:weight]', deduplicated by file (the 1st weight wins)
+      negative : the accumulated negatives of the characters cited
+      used     : the cast names actually resolved
+      unknown  : the @Name absent from the cast (the bare name stays in the prompt)
 
-    Un @Name inconnu n'est PAS laisse tel quel dans le prompt: '@Superhero' partirait
-    tel quel dans l'encodeur de texte. On garde le nom nu et on remonte l'oubli."""
+    A @Name that is unknown is NOT left as it is in the prompt: '@Superhero' would go to
+    the text encoder as it is. We keep the bare name and report the omission."""
     casting = casting or {}
     refs, loras, negs, used, unknown = [], [], [], [], []
     seen_lora_files = set()
@@ -301,7 +302,7 @@ def resolve_casting(text, casting, max_refs=None):
         return (char.get("desc") or "").strip() or name
 
     prompt = _AT.sub(_sub, text or "")
-    # La substitution laisse parfois des doubles espaces / virgules orphelines.
+    # The substitution sometimes leaves double spaces / orphan commas.
     prompt = re.sub(r"\s{2,}", " ", prompt).strip()
     prompt = re.sub(r"\s+,", ",", prompt).strip(" ,")
     if max_refs is not None:
@@ -311,7 +312,7 @@ def resolve_casting(text, casting, max_refs=None):
 
 
 # ----------------------------------------------------------------------------
-# Modele de projet
+# The project model
 # ----------------------------------------------------------------------------
 def new_project(name, description="", page=None, style=None, casting=None):
     return {
@@ -335,9 +336,9 @@ def _next_id(existing, prefix, width=2):
 
 
 def add_chapter(project, name, synopsis="", mood=""):
-    """`mood` = ambiance visuelle DU CHAPITRE (palette, lumiere, meteo...),
-    qui remplace le mood global du style (style['mood']) pour ses planches.
-    Vide = le mood global s'applique."""
+    """`mood` = THE CHAPTER's visual atmosphere (palette, light, weather...),
+    which replaces the style's global mood (style['mood']) for its plates.
+    Empty = the global mood applies."""
     chapter = {"id": _next_id(project["chapters"], "ch"), "name": name or "Chapter",
                "synopsis": synopsis or "", "pages": [], "mood": (mood or "").strip()}
     project["chapters"].append(chapter)
@@ -345,9 +346,9 @@ def add_chapter(project, name, synopsis="", mood=""):
 
 
 def chapter_of_page(project, page):
-    """Le chapitre qui contient cette planche (None si aucune). `page` =
-    le dict de la planche (identite d'objet: les ids de planche p01, p02...
-    se repetent d'un chapitre a l'autre) ou son id quand il est unique."""
+    """The chapter that holds this plate (None when there is none). `page` =
+    the plate's dict (object identity: the plate ids p01, p02... repeat from one
+    chapter to the next) or its id when it is unique."""
     chapters = project.get("chapters") or []
     if isinstance(page, dict):
         for ch in chapters:
@@ -360,8 +361,8 @@ def chapter_of_page(project, page):
 
 
 def effective_mood(project, page):
-    """Mood applique a une planche: celui du chapitre s'il est renseigne,
-    sinon le mood global du style (style['mood']), sinon rien."""
+    """The mood applied to a plate: the chapter's when it is filled in,
+    otherwise the style's global mood (style['mood']), otherwise nothing."""
     ch = chapter_of_page(project, page) if page else None
     mood = (ch or {}).get("mood") or ""
     if not str(mood).strip():
@@ -375,14 +376,14 @@ def new_panel(pid, text=""):
 
 
 def add_page(project, chapter_id, layout="4-grid", texts=None, role="story"):
-    """Ajoute une planche a un chapitre. Cree autant de panneaux que le gabarit a
-    de cases; `texts` (optionnel) pre-remplit les textes dans l'ordre de lecture.
-    `role` (PAGE_ROLES) place la planche dans le livre: cover en tete, back en
-    queue, title/story dans l'ordre du document.
+    """Adds a plate to a chapter. It creates as many panels as the template has
+    panels; `texts` (optional) pre-fills the texts in reading order.
+    `role` (PAGE_ROLES) places the plate in the book: cover at the head, back at the
+    tail, title/story in the document's order.
 
-    Plus de textes que de cases = ERREUR, pas une troncature silencieuse: le
-    decoupage d'un scenariste ne doit jamais disparaitre sans un mot. L'appelant
-    choisit un gabarit plus grand ou coupe la planche en deux."""
+    More texts than panels = an ERROR, not a silent truncation: a scriptwriter's
+    breakdown must never disappear without a word. The caller picks a bigger template
+    or cuts the plate in two."""
     if role not in PAGE_ROLES:
         raise ValueError(f"role must be one of {PAGE_ROLES}, got {role!r}")
     chapter = find_chapter(project, chapter_id)
@@ -401,13 +402,13 @@ def add_page(project, chapter_id, layout="4-grid", texts=None, role="story"):
 
 
 def set_layout(project, chapter_id, page_id, layout):
-    """Change le gabarit d'une planche en gardant le travail deja fait: les panneaux
-    existants sont conserves dans l'ordre, les cases en trop sont ajoutees vides.
+    """Changes a plate's template while keeping the work already done: the existing
+    panels are kept in order, and the extra panels are added empty.
 
-    Renvoie (page, removed): en reduisant, les panneaux excedentaires sont RETIRES
-    de la planche mais RENDUS a l'appelant (texte, seed, image comprises) - a lui
-    de les re-injecter ailleurs, de les proposer a l'utilisateur ou de les jeter
-    en connaissance de cause. Rien n'est detruit silencieusement."""
+    Returns (page, removed): on a reduction, the surplus panels are REMOVED from the
+    plate but RETURNED to the caller (text, seed, image included) - it is up to it to
+    re-inject them elsewhere, to offer them to the user or to throw them away
+    knowingly. Nothing is destroyed silently."""
     page = find_page(project, chapter_id, page_id)
     n = len(layout_cells(layout))
     panels = page["panels"]
@@ -443,7 +444,7 @@ def find_panel(project, chapter_id, page_id, panel_id):
 
 
 def iter_panels(project):
-    """(chapter, page, panel, index_de_case) sur tout le projet, dans l'ordre."""
+    """(chapter, page, panel, panel_index) over the whole project, in order."""
     for chapter in project["chapters"]:
         for page in chapter["pages"]:
             for i, panel in enumerate(page["panels"]):
@@ -459,13 +460,13 @@ def page_path(project_dir, chapter_id, page_id, ext="png"):
 
 
 # ----------------------------------------------------------------------------
-# Variantes {a|b|c} (prompt_variants, syntaxe partagee par toute la famille)
+# The {a|b|c} variants (prompt_variants, the syntax shared by the whole family)
 # ----------------------------------------------------------------------------
 def _expand_text(text, seed):
-    """Developpe les groupes {a|b|c} d'UN champ avec son propre random.Random(seed):
-    meme seed + meme texte = meme choix, quel que soit l'appelant (rendu du
-    panneau, variation, passe de detail). Un texte sans groupe est rendu tel quel,
-    sans aucun tirage."""
+    """Expands the {a|b|c} groups of ONE field with its own random.Random(seed):
+    the same seed + the same text = the same choice, whatever the caller (the panel's
+    render, a variation, a detail pass). A text with no group is returned as it is,
+    with no draw at all."""
     if not text or not has_variants(text):
         return text
     out = expand_variants(text, random.Random(int(seed)) if int(seed) >= 0
@@ -475,8 +476,8 @@ def _expand_text(text, seed):
 
 
 def _panel_variant_texts(project, page, panel):
-    """Tous les textes qui composent le prompt de ce panneau, bruts: texte de la
-    case, style, ambiance, et description / negatif des fiches citees."""
+    """Every text that makes up this panel's prompt, raw: the panel's text,
+    the style, the atmosphere, and the description / negative of the sheets cited."""
     casting = project.get("casting") or {}
     style = project.get("style") or {}
     texts = [panel.get("text") or "", style.get("prompt_suffix") or "",
@@ -488,11 +489,11 @@ def _panel_variant_texts(project, page, panel):
 
 
 def panel_seed(project, page, panel):
-    """Seed de rendu du panneau. Un panneau dont un texte utilise {a|b|c} et dont la
-    seed vaut -1 recoit une seed CONCRETE, ecrite dans panel['seed'] (l'appelant
-    sauvegarde le projet comme d'habitude): les options tirees doivent survivre a
-    un nouveau rendu, a une variation et a la passe de detail. Sans groupe, rien
-    ne change: -1 reste -1 (le moteur tire la seed, comme avant)."""
+    """The panel's render seed. A panel one of whose texts uses {a|b|c} and whose seed
+    is -1 receives a CONCRETE seed, written into panel['seed'] (the caller saves the
+    project as usual): the options drawn must survive a new render, a variation and the
+    detail pass. With no group, nothing changes: -1 stays -1 (the engine draws the seed,
+    as before)."""
     seed = int(panel.get("seed", -1))
     if seed < 0 and any(has_variants(t)
                         for t in _panel_variant_texts(project, page, panel)):
@@ -502,7 +503,7 @@ def panel_seed(project, page, panel):
 
 
 def _expanded_casting(casting, seed):
-    """Copie du casting dont desc / negatif ont leurs groupes developpes (seed)."""
+    """A copy of the cast whose desc / negative have their groups expanded (seed)."""
     out = {}
     for name, char in (casting or {}).items():
         c = dict(char)
@@ -514,15 +515,14 @@ def _expanded_casting(casting, seed):
 
 
 # ----------------------------------------------------------------------------
-# Ce qu'il faut envoyer au moteur pour UNE case
+# What has to be sent to the engine for ONE panel
 # ----------------------------------------------------------------------------
 def resolve_panel(project, page, panel, index=None, target_pixels=1024 * 1024):
-    """Tout ce dont l'appelant a besoin pour generer ce panneau: prompt resolu,
-    negatif, refs Omni, LoRA, et la taille de generation au ratio de la case.
+    """Everything the caller needs to generate this panel: the resolved prompt, the
+    negative, the Omni refs, the LoRAs, and the generation size at the panel's ratio.
 
-    Le style du projet est applique en SUFFIXE (apres le texte du panneau) et ses
-    LoRA passent en dernier: une LoRA de personnage prime sur la LoRA de style si
-    les deux designent le meme fichier."""
+    The project's style is applied as a SUFFIX (after the panel's text) and its LoRAs go
+    last: a character LoRA wins over the style LoRA when both name the same file."""
     cells = layout_cells(page["layout"])
     if index is None:
         index = page["panels"].index(panel)
@@ -532,15 +532,15 @@ def resolve_panel(project, page, panel, index=None, target_pixels=1024 * 1024):
     rects = panel_rects(cells, pg["width"], pg["height"], pg["margin"], pg["gutter"])
     rw, rh = rects[index][2], rects[index][3]
 
-    # Variantes {a|b|c}: developpees AVANT la substitution des @Name, avec la seed
-    # du panneau (fixee et memorisee si besoin). '{@Lea|@Sam}' ne cite donc qu'UN
-    # personnage: seules ses refs, LoRA et negatifs partent au moteur.
+    # The {a|b|c} variants: expanded BEFORE the @Name substitution, with the panel's
+    # seed (fixed and remembered when needed). So '{@Lea|@Sam}' cites only ONE
+    # character: only its refs, LoRAs and negatives go to the engine.
     seed = panel_seed(project, page, panel)
     res = resolve_casting(_expand_text(panel.get("text", ""), seed),
                           _expanded_casting(project.get("casting"), seed))
     style = project.get("style") or {}
-    # ordre: texte de la case (casting resolu), style du livre, mood
-    # (chapitre > global) - le mood est une ambiance, jamais un sujet
+    # the order: the panel's text (the cast resolved), the book's style, the mood
+    # (chapter > global) - the mood is an atmosphere, never a subject
     parts = [res["prompt"],
              (_expand_text(style.get("prompt_suffix") or "", seed) or "").strip(),
              _expand_text(effective_mood(project, page), seed)]
@@ -571,26 +571,26 @@ def resolve_panel(project, page, panel, index=None, target_pixels=1024 * 1024):
 
 
 def detail_prompt(project, panel, subject=None):
-    """Prompt LOCAL pour une passe de detail (visage / main) sur un CROP du panneau.
+    """A LOCAL prompt for a detail pass (a face / a hand) on a CROP of the panel.
 
-    Ne renvoie JAMAIS le texte de scene: envoyer le prompt global sur un fragment
-    fait deriver le crop vers la scene entiere (bug corrige quatre fois dans ce
-    repo -- voir l'historique du detailer). On renvoie la description du personnage
-    cite en premier, ou `subject` si l'appelant sait mieux, ou une chaine vide -- un
-    prompt vide est un resultat VALIDE et sur, pas un cas d'echec."""
+    It NEVER returns the scene's text: sending the global prompt on a fragment makes the
+    crop drift towards the whole scene (a bug fixed four times in this repo -- see the
+    detailer's history). We return the description of the character cited first, or
+    `subject` when the caller knows better, or an empty string -- an empty prompt is a
+    VALID and safe result, not a failure case."""
     if subject:
         return subject.strip()
-    # texte DEVELOPPE (meme seed que le rendu): dans '{@Lea|@Sam}' le sujet est
-    # le personnage reellement tire, pas le premier cite
+    # the EXPANDED text (the same seed as the render): in '{@Lea|@Sam}' the subject is
+    # the character actually drawn, not the first one cited
     text = _expand_text(panel.get("text") or "", int(panel.get("seed", -1)))
     m = _AT.search(text)
     while m:
         if m.group(0) != "@@":
             char = _casting_get(project.get("casting") or {}, m.group(1))
-            # kind 'setting' saute: 'wide shot of @Castle, @Hero on the ramparts'
-            # doit detailler Hero, pas renvoyer le chateau comme sujet de visage.
+            # kind 'setting' skipped: 'wide shot of @Castle, @Hero on the ramparts'
+            # must detail Hero, not return the castle as the subject of a face.
             if char and char.get("kind", "character") == "character":
-                # Meme option {a|b|c} que le rendu du panneau (meme seed, meme champ).
+                # The same {a|b|c} option as the panel's render (the same seed, the same field).
                 return (_expand_text(char.get("desc") or "",
                                      int(panel.get("seed", -1))) or "").strip()
         m = _AT.search(text, m.end())
@@ -598,11 +598,11 @@ def detail_prompt(project, panel, subject=None):
 
 
 # ----------------------------------------------------------------------------
-# Composition de la planche
+# Composing the plate
 # ----------------------------------------------------------------------------
 def _placeholder_font(px):
-    """Police du label de placeholder, proportionnelle a la case. La bitmap PIL
-    par defaut fait ~10 px: invisible sur une planche de 2048 px de large."""
+    """The font of the placeholder label, proportional to the panel. PIL's default
+    bitmap is ~10 px: invisible on a plate 2048 px wide."""
     from PIL import ImageFont
     for name in ("arial.ttf", "segoeui.ttf", "DejaVuSans.ttf"):
         try:
@@ -624,12 +624,13 @@ def _placeholder(size, label, background="#ffffff"):
 
 
 def compose_page(project, page, images=None, fit="cover", placeholders=True):
-    """Assemble une planche PIL a partir des images de ses panneaux.
+    """Assembles a PIL plate from its panels' images.
 
-    images : dict panel_id -> PIL.Image (prioritaire), sinon on charge panel['image'].
-    fit    : 'cover' = remplit la case et recadre au centre (defaut, sans bande vide);
-             'contain' = image entiere, fond visible autour.
-    placeholders : dessine une case barree numerotee pour les panneaux non rendus."""
+    images : a dict panel_id -> PIL.Image (it has the priority), otherwise we load
+             panel['image'].
+    fit    : 'cover' = fills the panel and crops at the centre (the default, with no
+             empty band); 'contain' = the whole image, the background visible around it.
+    placeholders : draws a numbered crossed-out box for the panels not rendered."""
     pg = page_size(project.get("page"))
     cells = layout_cells(page["layout"])
     rects = panel_rects(cells, pg["width"], pg["height"], pg["margin"], pg["gutter"])
@@ -666,7 +667,7 @@ def compose_page(project, page, images=None, fit="cover", placeholders=True):
 
 
 def export_pdf(images, path, dpi=300):
-    """Multi-page PDF a partir d'une liste d'images de planches (ordre = pagination)."""
+    """A multi-page PDF from a list of plate images (the order = the pagination)."""
     imgs = [im.convert("RGB") for im in images if im is not None]
     if not imgs:
         raise ValueError("export_pdf: no page to export")
@@ -677,24 +678,24 @@ def export_pdf(images, path, dpi=300):
 
 
 # ----------------------------------------------------------------------------
-# Persistance (project.json)
+# Persistence (project.json)
 # ----------------------------------------------------------------------------
 def project_json_path(project_dir):
     return os.path.join(project_dir, "project.json")
 
 
 def save_project(project, project_dir):
-    """Ecriture ATOMIQUE (tmp + os.replace): un crash en cours d'ecriture ne laisse
-    jamais un project.json tronque -- c'est le seul endroit ou vit le scenario."""
+    """An ATOMIC write (tmp + os.replace): a crash while writing never leaves a
+    truncated project.json -- it is the only place where the script lives."""
     os.makedirs(project_dir, exist_ok=True)
     dst = project_json_path(project_dir)
     tmp = dst + f".{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(project, f, indent=2, ensure_ascii=False)
-    # Windows refuse os.replace() sur un fichier qu'un AUTRE lecteur tient
-    # ouvert (PermissionError WinError 5): un sondage UI qui relit
-    # project.json pendant qu'un batch le sauve suffit. La fenetre dure des
-    # millisecondes -> on reessaie brievement au lieu d'echouer.
+    # Windows refuses os.replace() on a file that ANOTHER reader holds
+    # open (PermissionError WinError 5): a UI poll re-reading
+    # project.json while a batch saves it is enough. The window lasts
+    # milliseconds -> we retry briefly instead of failing.
     import time
     for attempt in range(40):
         try:
@@ -708,8 +709,8 @@ def save_project(project, project_dir):
 
 
 def load_project(project_dir):
-    """Relit un projet et complete les cles absentes (tolerant aux fichiers ecrits
-    par une version anterieure du schema)."""
+    """Re-reads a project and completes the absent keys (tolerant of the files written
+    by an earlier version of the schema)."""
     path = project_json_path(project_dir) if os.path.isdir(project_dir) else project_dir
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f) or {}
@@ -737,20 +738,20 @@ def load_project(project_dir):
 
 
 # ----------------------------------------------------------------------------
-# Lettrage: dialogues, bulles, cartouches, onomatopees
+# Lettering: dialogue, bubbles, captions, onomatopoeia
 # ----------------------------------------------------------------------------
-# Le texte n'est JAMAIS demande au modele (Z-Image invente des lettres:
-# 'Mendian Station'), il est dessine vectoriellement APRES la composition:
-# editable sans regenerer l'image, traduisible, net a l'impression.
+# The text is NEVER asked of the model (Z-Image invents letters:
+# 'Mendian Station'), it is drawn vectorially AFTER the composition:
+# editable without regenerating the image, translatable, sharp in print.
 DIALOGUE_KINDS = ("speech", "thought", "caption", "sfx")
 
-# Formes de bulle: round = ellipse (classique), rounded = rectangle a coins
-# arrondis (compact, lecture dense), angular = polygone a pans coupes (voix
-# dure, mecanique, cri). Resolution: style de la replique > style.bubble du
-# projet > 'round'.
+# The bubble shapes: round = an ellipse (the classic), rounded = a rectangle with
+# rounded corners (compact, for dense reading), angular = a polygon with cut corners
+# (a hard, mechanical voice, a shout). The resolution: the line's style > the
+# project's style.bubble > 'round'.
 BUBBLE_STYLES = ("round", "rounded", "angular")
 
-# Polices essayees dans l'ordre (Windows puis fallbacks libres).
+# The fonts tried in order (Windows then free fallbacks).
 _BUBBLE_FONTS = ("comicbd.ttf", "comic.ttf", "segoeui.ttf", "arial.ttf",
                  "DejaVuSans.ttf")
 _SFX_FONTS = ("impact.ttf", "arialbd.ttf", "comicbd.ttf", "DejaVuSans-Bold.ttf")
@@ -758,10 +759,10 @@ _SFX_FONTS = ("impact.ttf", "arialbd.ttf", "comicbd.ttf", "DejaVuSans-Bold.ttf")
 
 def add_dialogue(panel, text, speaker=None, kind="speech", anchor=None,
                  style=None):
-    """Ajoute une replique a une case. `anchor` = (fx, fy) en fractions de la
-    case, vers quoi pointe la queue de la bulle (defaut: bouche du locuteur
-    detectee, sinon bas de la bulle). `style` = forme de bulle (BUBBLE_STYLES),
-    None = style du projet."""
+    """Adds a line of dialogue to a panel. `anchor` = (fx, fy) in fractions of the
+    panel, what the bubble's tail points at (the default: the speaker's mouth as
+    detected, otherwise the bottom of the bubble). `style` = the bubble's shape
+    (BUBBLE_STYLES), None = the project's style."""
     if kind not in DIALOGUE_KINDS:
         raise ValueError(f"kind must be one of {DIALOGUE_KINDS}, got {kind!r}")
     if style is not None and style not in BUBBLE_STYLES:
@@ -779,17 +780,17 @@ def add_dialogue(panel, text, speaker=None, kind="speech", anchor=None,
 
 
 def parse_dialogue(block):
-    """Syntaxe scenariste -> liste de repliques, une par ligne:
+    """The scriptwriter's syntax -> a list of lines, one per line:
          Kira: On y va.                 -> speech (speaker Kira)
          Kira (think): Trop tard.       -> thought
-         Rook (angular): The case stays -> speech, bulle a pans coupes
-         Kira (think, rounded): ...     -> thought, rectangle arrondi
+         Rook (angular): The case stays -> speech, a bubble with cut corners
+         Kira (think, rounded): ...     -> thought, a rounded rectangle
          CAP: Trois heures plus tot.    -> caption (narration)
-         SFX: KRAK                      -> onomatopee
-       Modificateurs entre parentheses (cumulables, virgule): think/thought =
-       pensee; round/rounded/angular = forme de bulle (BUBBLE_STYLES). Une
-       parenthese inconnue reste dans le nom du locuteur. Une ligne sans ':'
-       est une caption. Lignes vides ignorees."""
+         SFX: KRAK                      -> onomatopoeia
+       The modifiers in parentheses (cumulative, comma-separated): think/thought =
+       a thought; round/rounded/angular = the bubble's shape (BUBBLE_STYLES). An
+       unknown parenthesis stays in the speaker's name. A line with no ':' is a
+       caption. Empty lines are ignored."""
     out = []
     for line in (block or "").splitlines():
         line = line.strip()
@@ -861,10 +862,10 @@ def parse_dialogue(block):
     return out
 
 
-# Polices proposees dans l'UI (fichier -> libelle). Sondees a la demande: seules
-# celles qui se chargent sont listees. Un dossier fonts/ a cote de ce module
-# (ou du projet) ajoute ses .ttf/.otf - c'est la que vont les polices BD
-# telechargees (Komika, Anime Ace, Blambot...).
+# The fonts offered in the UI (file -> label). Probed on demand: only the ones that
+# load are listed. A fonts/ folder next to this module (or next to the project) adds
+# its .ttf/.otf - that is where the downloaded comic fonts go (Komika, Anime Ace,
+# Blambot...).
 FONT_CANDIDATES = (
     ("comicbd.ttf", "Comic Sans Bold"), ("comic.ttf", "Comic Sans"),
     ("segoepr.ttf", "Segoe Print"), ("segoeprb.ttf", "Segoe Print Bold"),
@@ -879,8 +880,8 @@ _FONT_DIRS = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")]
 
 
 def _resolve_font(name):
-    """Nom de police -> chemin si elle vit dans un dossier fonts/, sinon le
-    nom tel quel (PIL cherche dans les polices systeme)."""
+    """A font name -> the path when it lives in a fonts/ folder, otherwise the
+    name as it is (PIL looks through the system fonts)."""
     if not name:
         return None
     for d in _FONT_DIRS:
@@ -891,9 +892,9 @@ def _resolve_font(name):
 
 
 def available_fonts(extra_dirs=()):
-    """[{'file', 'label'}] des polices utilisables ici: candidates systeme qui
-    se chargent + tout .ttf/.otf des dossiers fonts/ (module, puis extra_dirs,
-    p.ex. le dossier du livre)."""
+    """[{'file', 'label'}] of the fonts usable here: the system candidates that
+    load + every .ttf/.otf of the fonts/ folders (the module's, then extra_dirs,
+    the book's folder say)."""
     from PIL import ImageFont
     out, seen = [], set()
     dirs = list(_FONT_DIRS) + [d for d in extra_dirs if d]
@@ -929,14 +930,14 @@ def _font(candidates, px):
 
 
 def manual_breaks(text):
-    """'\\n' tape dans une replique (deux caracteres) = retour a la ligne
-    force; les vrais retours sont gardes tels quels."""
+    """A '\\n' typed in a line of dialogue (two characters) = a forced line
+    break; the real breaks are kept as they are."""
     return str(text or "").replace("\\n", "\n")
 
 
 def _wrap(draw, text, font, max_w):
-    """Coupe le texte en lignes tenant dans max_w pixels (par mots). Un
-    retour force (\\n dans la replique) commence toujours une ligne."""
+    """Cuts the text into lines fitting in max_w pixels (by words). A forced
+    break (\\n in the line of dialogue) always starts a line."""
     lines = []
     for para in manual_breaks(text).split("\n"):
         words, cur = para.split(), ""
@@ -952,15 +953,15 @@ def _wrap(draw, text, font, max_w):
 
 
 def _overlap_area(a, b):
-    """Aire d'intersection de deux rects (x, y, w, h)."""
+    """The intersection area of two rects (x, y, w, h)."""
     ox = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
     oy = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
     return max(0, ox) * max(0, oy)
 
 
 def _face_zone(box, panel_rect, grow=0.15):
-    """Bbox visage (x1,y1,x2,y2) -> rect interdit (x,y,w,h), elargi de `grow`
-    et borne a la case."""
+    """A face bbox (x1,y1,x2,y2) -> a forbidden rect (x,y,w,h), widened by `grow`
+    and bounded by the panel."""
     x1, y1, x2, y2 = box
     gx, gy = (x2 - x1) * grow, (y2 - y1) * grow
     x1, y1, x2, y2 = x1 - gx, y1 - gy, x2 + gx, y2 + gy
@@ -971,13 +972,13 @@ def _face_zone(box, panel_rect, grow=0.15):
 
 
 def _place_rect(panel_rect, bw, bh, forbidden, taken, prefer):
-    """Position d'un rect bw x bh dans la case: balaye du haut vers le bas,
-    ordre des colonnes selon `prefer` ('left' / 'right' / 'center').
+    """The position of a bw x bh rect in the panel: it sweeps from the top down,
+    the columns' order according to `prefer` ('left' / 'right' / 'center').
 
-    Priorite absolue: ZERO recouvrement des zones visage (`forbidden`) et des
-    bulles deja posees (`taken`). Si aucune position propre n'existe, renvoie
-    celle qui recouvre le MOINS de visage (dernier recours, jamais silencieux:
-    le placement est signale clipped=True dans le retour du lettrage)."""
+    The absolute priority: ZERO overlap of the face areas (`forbidden`) and of the
+    bubbles already placed (`taken`). Should no clean position exist, it returns the
+    one that overlaps the LEAST face (a last resort, never silent: the placement is
+    reported as clipped=True in the lettering's return value)."""
     x, y, w, h = panel_rect
     pad = 8
     cols = {"left": [x + pad, x + w - bw - pad, x + (w - bw) // 2],
@@ -1002,12 +1003,12 @@ def _place_rect(panel_rect, bw, bh, forbidden, taken, prefer):
 
 
 def _pos_rect(d, panel_rect, bw, bh, forbidden):
-    """Position MANUELLE d'une bulle: d['pos'] = coin haut-gauche en FRACTIONS
-    de case, ecrit par Comic Studio quand l'utilisateur deplace la bulle.
-    Prioritaire sur le placement automatique (_place_rect), clampee dans la
-    case. clean=False si elle recouvre un visage: on ne la re-deplace PAS
-    (l'utilisateur l'a posee la volontairement), on le signale seulement.
-    Renvoie ((x, y, w, h), clean) ou None si pas de position manuelle."""
+    """A bubble's MANUAL position: d['pos'] = the top-left corner in FRACTIONS of
+    the panel, written by Comic Studio when the user moves the bubble.
+    It has the priority over the automatic placement (_place_rect), clamped inside
+    the panel. clean=False when it overlaps a face: we do NOT move it again
+    (the user put it there on purpose), we only report it.
+    Returns ((x, y, w, h), clean) or None when there is no manual position."""
     pos = d.get("pos")
     if not pos:
         return None
@@ -1020,9 +1021,9 @@ def _pos_rect(d, panel_rect, bw, bh, forbidden):
 
 
 def _thought_steps(dist, fpx):
-    """Nombre de ronds d'une queue de PENSEE: ~1 rond tous les 1.6 corps de
-    police le long du trajet bulle->pointe, borne a [2, 8]. Une pensee
-    lointaine trace un vrai chapelet, une pensee collee reste sobre."""
+    """The number of circles of a THOUGHT tail: ~1 circle every 1.6 font bodies
+    along the bubble->tip path, bounded to [2, 8]. A distant thought draws a real
+    string of them, a thought stuck to the face stays sober."""
     return max(2, min(8, int(round(dist / max(12.0, fpx * 1.6)))))
 
 
@@ -1050,7 +1051,7 @@ def _tail_tip(bubble_center, mouth, face_box):
 
 
 def _cos(a, b):
-    """Similarite cosinus de deux vecteurs (listes de floats)."""
+    """The cosine similarity of two vectors (lists of floats)."""
     num = sum(x * y for x, y in zip(a, b))
     da = math.sqrt(sum(x * x for x in a))
     db = math.sqrt(sum(x * x for x in b))
@@ -1058,15 +1059,15 @@ def _cos(a, b):
 
 
 def _match_speakers(speakers, faces, char_embeddings=None, threshold=0.2):
-    """Apparie les locuteurs (noms lower, ordre de citation) aux visages d'une
-    case -> {speaker: face}.
+    """Pairs the speakers (lowercase names, in order of citation) with the faces of
+    a panel -> {speaker: face}.
 
-    1. RECONNAISSANCE d'abord: si char_embeddings fournit l'embedding du
-       portrait de reference d'un locuteur et que les visages detectes portent
-       le leur, appariement glouton par meilleure similarite cosinus (>= threshold).
-    2. Les locuteurs restants prennent les visages restants dans le SENS DE
-       LECTURE (1er locuteur cite = visage le plus a gauche) - l'heuristique
-       v1, qui reste le fallback quand il n'y a pas de references."""
+    1. RECOGNITION first: when char_embeddings supplies the embedding of a speaker's
+       reference portrait and the detected faces carry theirs, a greedy pairing by
+       best cosine similarity (>= threshold).
+    2. The remaining speakers take the remaining faces in READING ORDER (the 1st
+       speaker cited = the leftmost face) - the v1 heuristic, which stays the
+       fallback when there are no references."""
     result = {}
     remaining = list(range(len(faces)))
     if char_embeddings:
@@ -1097,26 +1098,26 @@ def _match_speakers(speakers, faces, char_embeddings=None, threshold=0.2):
 
 def render_lettering(project, page, sheet, face_detector=None,
                      char_embeddings=None):
-    """Dessine les dialogues sur la planche composee (in place) et renvoie la
-    liste des placements [{panel, kind, rect, tip, clean}].
+    """Draws the dialogue on the composed plate (in place) and returns the list of
+    placements [{panel, kind, rect, tip, clean}].
 
-    Une replique peut porter d['pos'] = [fx, fy] (coin haut-gauche en fractions
-    de case, ecrit par Comic Studio au drag): la bulle est alors posee LA,
-    clampee dans la case, au lieu du placement automatique. d['anchor'] (deja
-    en v1) pilote de la meme facon la POINTE de la queue. d['scale'] (0.4-3.0)
-    est une HOMOTHETIE par replique: police, marges, queue et bulle grandissent
-    ensemble, proportions conservees.
+    A line of dialogue can carry d['pos'] = [fx, fy] (the top-left corner in fractions
+    of the panel, written by Comic Studio on a drag): the bubble is then placed THERE,
+    clamped inside the panel, instead of the automatic placement. d['anchor'] (already
+    in v1) drives the tail's TIP the same way. d['scale'] (0.4-3.0) is a per-line
+    HOMOTHETY: the font, the margins, the tail and the bubble grow together,
+    proportions preserved.
 
-    Avec `face_detector` (callable image -> [{'box': (x1,y1,x2,y2),
-    'mouth': (x,y)|None}], voir cz_face.detect_faces_full):
-      - les bulles ne recouvrent JAMAIS un visage (zones interdites elargies;
-        si la case est trop pleine, recouvrement minimal et clean=False);
-      - la queue d'une bulle vise la BOUCHE de son locuteur: les locuteurs
-        sont apparies aux visages dans le sens de lecture (1er locuteur =
-        visage le plus a gauche), un `anchor` explicite gagne toujours;
-      - un locuteur SANS visage (voix hors-champ, cri derriere, narrateur)
-        recoit une bulle generique: queue vers le bord de case le plus proche.
-    Sans detecteur: comportement v1 (empilage haut, alternance gauche/droite)."""
+    With `face_detector` (a callable image -> [{'box': (x1,y1,x2,y2),
+    'mouth': (x,y)|None}], see cz_face.detect_faces_full):
+      - the bubbles NEVER overlap a face (the forbidden areas are widened;
+        when the panel is too full, the overlap is minimal and clean=False);
+      - a bubble's tail aims at its speaker's MOUTH: the speakers are paired
+        with the faces in reading order (the 1st speaker = the leftmost face),
+        an explicit `anchor` always wins;
+      - a speaker with NO face (an off-screen voice, a shout from behind, a narrator)
+        gets a generic bubble: the tail towards the nearest panel edge.
+    Without a detector: the v1 behaviour (stacked at the top, alternating left/right)."""
     pg = page_size(project.get("page"))
     cells = layout_cells(page["layout"])
     rects = panel_rects(cells, pg["width"], pg["height"], pg["margin"], pg["gutter"])
@@ -1132,7 +1133,7 @@ def render_lettering(project, page, sheet, face_detector=None,
             continue
         x, y, w, h = rect
 
-        # --- visages de la case (coordonnees planche) ---
+        # --- the panel's faces (plate coordinates) ---
         faces = []
         if face_detector is not None:
             try:
@@ -1145,13 +1146,13 @@ def render_lettering(project, page, sheet, face_detector=None,
                         "embedding": f.get("embedding")})
             except Exception:
                 faces = []
-        faces.sort(key=lambda f: f["box"][0])            # sens de lecture
+        faces.sort(key=lambda f: f["box"][0])            # reading order
         forbidden = [_face_zone(f["box"], rect) for f in faces]
 
-        # locuteur -> visage: reconnaissance par embeddings (portraits de
-        # reference du casting) puis fallback sens de lecture
-        # d['hidden']: la replique reste dans le scenario mais n'est pas
-        # lettree (le texte est deja DANS l'image, ou on veut la case muette)
+        # speaker -> face: recognition by embeddings (the cast's reference
+        # portraits) then a reading-order fallback
+        # d['hidden']: the line stays in the script but is not
+        # lettered (the text is already IN the image, or we want the panel mute)
         dialogue = [d for d in dialogue if not d.get("hidden")]
         if not dialogue:
             continue
@@ -1162,10 +1163,10 @@ def render_lettering(project, page, sheet, face_detector=None,
                 speakers.append(s)
         face_of = _match_speakers(speakers, faces, char_embeddings)
 
-        # taille de police RELATIVE a la planche rendue (pas des px absolus):
-        # la meme bulle garde la meme proportion a l'ecran (1980 px de haut)
-        # et a l'impression (3508 px) - avant, le plafond de 44 px rendait le
-        # texte deux fois plus petit sur la sortie print
+        # a font size RELATIVE to the rendered plate (not absolute px):
+        # the same bubble keeps the same proportion on the screen (1980 px tall)
+        # and in print (3508 px) - before, the 44 px cap made the text
+        # twice as small on the print output
         ph = sheet.height
         fpx = max(int(ph * 0.008), min(int(ph * 0.0225), h // 22))
         book_font = (project.get("style") or {}).get("font") or None
@@ -1178,10 +1179,10 @@ def render_lettering(project, page, sheet, face_detector=None,
         for d in dialogue:
             kind = d.get("kind", "speech")
             text = d.get("text") or ""
-            # police: celle de la replique > celle du livre > defauts
+            # the font: the line's > the book's > the defaults
             d_fonts = ([d["font"]] if d.get("font") else []) + bubble_fonts
-            # Homothetie par replique (Comic Studio): d['scale'] multiplie la
-            # police -> bulle ET texte grandissent ensemble, memes proportions.
+            # A per-line homothety (Comic Studio): d['scale'] multiplies the
+            # the font -> the bubble AND the text grow together, the same proportions.
             try:
                 scale = float(d.get("scale") or 1.0)
             except (TypeError, ValueError):
@@ -1192,7 +1193,7 @@ def render_lettering(project, page, sheet, face_detector=None,
                 else _font(d_fonts, fpx_d)
             pad_d = max(8, fpx_d // 2)
             sfx_fonts = ([d["font"]] if d.get("font") else []) + list(_SFX_FONTS)
-            # epaisseur du contour (bulle, cartouche, trait du SFX): x0.3..x3
+            # the outline's thickness (the bubble, the caption, the SFX stroke): x0.3..x3
             try:
                 outline_k = float(d.get("outline") or 1.0)
             except (TypeError, ValueError):
@@ -1201,9 +1202,9 @@ def render_lettering(project, page, sheet, face_detector=None,
             bw = max(1, int(round(3 * outline_k)))
             text = manual_breaks(text)
             if kind == "sfx":
-                # auto-fit: un cri long ou un TITRE de couverture ne doit pas
-                # deborder la case -> la police retrecit jusqu'a tenir en
-                # largeur (une echelle manuelle desserre/serre ce plafond)
+                # auto-fit: a long shout or a cover TITLE must not overflow
+                # the panel -> the font shrinks until it fits in
+                # width (a manual scale loosens/tightens that cap)
                 size = int(max(fpx * 2, h // 8) * scale)
                 sfx_font = _font(sfx_fonts, size)
                 sw = max(1, int(round(max(3, fpx_d // 5) * outline_k)))
@@ -1225,8 +1226,8 @@ def render_lettering(project, page, sheet, face_detector=None,
                                    "clean": clean})
                 continue
 
-            # la largeur de coupe suit l'echelle (vraie homothetie: la bulle
-            # garde ses proportions), plafonnee a la case
+            # the wrapping width follows the scale (a true homothety: the bubble
+            # keeps its proportions), capped by the panel
             max_text_w = min(int(w * 0.92),
                              int(w * (0.86 if kind == "caption" else 0.58)
                                  * scale))
@@ -1256,30 +1257,30 @@ def render_lettering(project, page, sheet, face_detector=None,
                 or "round"
             if bstyle not in BUBBLE_STYLES:
                 bstyle = "round"
-            if bstyle == "round":     # ellipse: le texte tient dans l'inscrite
+            if bstyle == "round":     # an ellipse: the text fits in the inscribed rectangle
                 bw_ = int((text_w + pad_d * 2) * 1.25)
                 bh_ = int((text_h + pad_d * 2) * 1.45)
-            else:                     # rectangle arrondi / pans coupes: compact
+            else:                     # a rounded rectangle / cut corners: compact
                 bw_ = text_w + pad_d * 3
                 bh_ = text_h + pad_d * 3
             prefer = "left" if side == 0 else "right"
             spk = (d.get("speaker") or "").strip().lower()
             fc = face_of.get(spk)
-            if fc:  # pres du locuteur: colonne du cote de son visage
+            if fc:  # near the speaker: the column on the side of their face
                 prefer = "left" if (fc["box"][0] + fc["box"][2]) / 2 < x + w / 2 \
                     else "right"
             (bx0, by0, _, _), clean = _pos_rect(d, rect, bw_, bh_, forbidden) \
                 or _place_rect(rect, bw_, bh_, forbidden, taken, prefer)
             cx, cy = bx0 + bw_ // 2, by0 + bh_ // 2
 
-            # pointe de la queue: anchor explicite > bouche du locuteur > bord
+            # the tail's tip: an explicit anchor > the speaker's mouth > an edge
             if d.get("anchor"):
                 ax, ay = d["anchor"]
                 tip = (max(x + 2, min(x + int(ax * w), x + w - 2)),
                        max(y + 2, min(y + int(ay * h), y + h - 2)))
             elif fc:
                 bx1, by1, bx2, by2 = fc["box"]
-                # sans keypoints: la bouche est ~au 4/5 de la hauteur du visage
+                # with no keypoints: the mouth is ~at 4/5 of the face's height
                 mouth = fc.get("mouth") or ((bx1 + bx2) / 2,
                                             by1 + 0.82 * (by2 - by1))
                 tip = _tail_tip((cx, cy), mouth, fc["box"])
@@ -1295,8 +1296,8 @@ def render_lettering(project, page, sheet, face_detector=None,
                 tip = (max(x + 2, min(tx, x + w - 2)),
                        min(y + h - 4, by0 + bh_ + int(0.22 * h)))
 
-            # base de la queue: bord de la bulle COTE pointe (bas si la pointe
-            # est dessous, haut si elle est au-dessus de la bulle)
+            # the tail's base: the bubble's edge on the TIP's SIDE (the bottom when
+            # the tip is below, the top when it is above the bubble)
             tail_up = tip[1] < by0
             base_y = by0 + int(bh_ * (0.18 if tail_up else 0.82))
             base_out = base_y + (3 if tail_up else -3)
@@ -1335,8 +1336,8 @@ def render_lettering(project, page, sheet, face_detector=None,
                         (bh_ / 2) / abs(dy) if dy else float("inf"))
                 t = 1.0 if t == float("inf") else min(t, 1.0)
                 ex, ey = cx + dx * t, cy + dy * t
-                # Nombre de ronds PROPORTIONNEL a la distance bulle->pointe
-                # (voir _thought_steps), rayons decroissants vers la pointe.
+                # A number of circles PROPORTIONAL to the bubble->tip distance
+                # (see _thought_steps), with decreasing radii towards the tip.
                 dist = math.hypot(tip[0] - ex, tip[1] - ey)
                 n = _thought_steps(dist, fpx_d)
                 for i in range(n):
@@ -1364,10 +1365,10 @@ def render_lettering(project, page, sheet, face_detector=None,
 # Character sheets & exports
 # ----------------------------------------------------------------------------
 def sheet_prompt(char, style=None, seed=-1):
-    """(prompt, negative) pour generer la planche de reference d'une fiche de
-    casting: un portrait canonique (seed fixe cote appelant) qui sert ensuite
-    de ref Omni. Pour un decor (kind 'setting'): un plan d'ensemble vide.
-    Les groupes {a|b|c} des champs sont developpes avec `seed` (-1 = tirage libre)."""
+    """(prompt, negative) to generate the reference plate of a cast sheet: a
+    canonical portrait (the seed fixed on the caller's side) which then serves as an
+    Omni ref. For a setting (kind 'setting'): an empty establishing shot.
+    The fields' {a|b|c} groups are expanded with `seed` (-1 = a free draw)."""
     char = _expanded_casting({"_": char}, seed)["_"]
     style = dict(style or {})
     for key in ("prompt_suffix", "negative"):
@@ -1386,8 +1387,8 @@ def sheet_prompt(char, style=None, seed=-1):
 
 
 def export_cbz(pages, path):
-    """CBZ (format standard des liseuses BD): zip d'images numerotees.
-    `pages` = images PIL ou chemins de fichiers, dans l'ordre de pagination."""
+    """A CBZ (the standard format of the comic readers): a zip of numbered images.
+    `pages` = PIL images or file paths, in pagination order."""
     import io
     import zipfile
     if not pages:
@@ -1406,17 +1407,17 @@ def export_cbz(pages, path):
 
 
 # ----------------------------------------------------------------------------
-# Orchestration de rendu (le moteur est INJECTE: testable sans GPU)
+# The render orchestration (the engine is INJECTED: testable without a GPU)
 # ----------------------------------------------------------------------------
 def render_project(project, project_dir, engine, only=None, force=False,
                    progress=None):
-    """Genere les cases du projet via `engine(spec) -> PIL.Image`.
+    """Generates the project's panels through `engine(spec) -> PIL.Image`.
 
-    spec = resolve_panel() + {'chapter','page','panel'} (les ids). Une case qui
-    a deja une image est sautee sauf `force`. `only` filtre par id complet
-    'ch01.p02.pn3' ou par prefixe ('ch01', 'ch01.p02'). L'image est sauvee via
-    panel_path() et le project.json est mis a jour apres CHAQUE case (un crash
-    au milieu ne perd rien). Renvoie la liste des ids rendus."""
+    spec = resolve_panel() + {'chapter','page','panel'} (the ids). A panel that
+    already has an image is skipped unless `force`. `only` filters by full id
+    'ch01.p02.pn3' or by prefix ('ch01', 'ch01.p02'). The image is saved through
+    panel_path() and the project.json is updated after EVERY panel (a crash
+    halfway loses nothing). Returns the list of the ids rendered."""
     only = set(only or [])
 
     def _selected(cid, pid, pnid):
@@ -1451,7 +1452,7 @@ def render_project(project, project_dir, engine, only=None, force=False,
 
 
 def set_page_role(project, chapter_id, page_id, role):
-    """Change le role d'une planche dans le livre (PAGE_ROLES)."""
+    """Changes a plate's role in the book (PAGE_ROLES)."""
     if role not in PAGE_ROLES:
         raise ValueError(f"role must be one of {PAGE_ROLES}, got {role!r}")
     page = find_page(project, chapter_id, page_id)
@@ -1460,25 +1461,25 @@ def set_page_role(project, chapter_id, page_id, role):
 
 
 def book_order(project):
-    """(chapter, page) dans l'ORDRE DE PUBLICATION: les 'cover' d'abord, puis
-    title/story chapitre par chapitre dans l'ordre du document, les 'back' en
-    dernier - meme si des planches ont ete ajoutees apres le dos. Tri STABLE:
-    a rang egal, l'ordre du document est conserve."""
+    """(chapter, page) in PUBLICATION ORDER: the 'cover' ones first, then
+    title/story chapter by chapter in the document's order, the 'back' ones
+    last - even when plates have been added after the back cover. A STABLE sort:
+    at an equal rank, the document's order is preserved."""
     flat = [(ch, pg) for ch in project["chapters"] for pg in ch["pages"]]
     return sorted(flat, key=lambda t: _ROLE_RANK.get(t[1].get("role", "story"), 1))
 
 
 def _draw_page_number(sheet, pg, number):
-    """Folio bas-centre, dans la marge (jamais sur les cases)."""
+    """The folio at the bottom centre, in the margin (never over the panels)."""
     draw = ImageDraw.Draw(sheet)
     margin = int(pg.get("margin") or 0)
     fpx = max(14, min(36, margin - 8)) if margin >= 24 else 0
     if not fpx:
-        return                                  # pas de marge = pas de folio
+        return                                  # no margin = no folio
     font = _font(_BUBBLE_FONTS, fpx)
     text = str(number)
     tw = draw.textlength(text, font=font)
-    try:                                        # encre selon la luminance du fond
+    try:                                        # the ink according to the background's luminance
         from PIL import ImageColor
         r, g, b = ImageColor.getrgb(pg.get("background", "#ffffff"))[:3]
         ink = "#000000" if (0.299 * r + 0.587 * g + 0.114 * b) > 128 else "#e8e8e8"
@@ -1490,14 +1491,13 @@ def _draw_page_number(sheet, pg, number):
 
 def compose_book(project, project_dir, letter=True, fit="cover",
                  face_detector=None, char_embeddings=None, numbers=None):
-    """Compose et sauve TOUT le livre dans l'ordre de publication (book_order):
-    couvertures, chapitres, dos. Renvoie la liste des chemins, prete pour
+    """Composes and saves the WHOLE book in publication order (book_order):
+    covers, chapters, back. Returns the list of paths, ready for
     export_pdf / export_cbz.
 
-    numbers: None = suit project['page']['page_numbers'] (defaut False, pour ne
-    pas alterer les albums existants); True/False force. Seules les planches
-    'story' sont foliotees (1, 2, ...) - couvertures, pages de garde et dos
-    n'ont jamais de numero."""
+    numbers: None = follows project['page']['page_numbers'] (False by default, so as
+    not to alter the existing albums); True/False forces it. Only the 'story' plates
+    are folioed (1, 2, ...) - covers, flyleaves and back covers never have a number."""
     pg_conf = page_size(project.get("page"))
     if numbers is None:
         numbers = bool(pg_conf.get("page_numbers", False))
@@ -1520,8 +1520,8 @@ def compose_book(project, project_dir, letter=True, fit="cover",
 
 def compose_chapter(project, project_dir, chapter_id, letter=True, fit="cover",
                     face_detector=None, char_embeddings=None):
-    """Compose et sauve toutes les planches d'un chapitre (+ lettrage), renvoie
-    la liste des chemins dans l'ordre de pagination."""
+    """Composes and saves every plate of a chapter (+ the lettering), returns the
+    list of paths in pagination order."""
     chapter = find_chapter(project, chapter_id)
     paths = []
     for page in chapter["pages"]:

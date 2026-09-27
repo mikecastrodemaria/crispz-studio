@@ -36,9 +36,10 @@ DEFAULT_CHECK_UPDATES = bool(_BATCH_CFG.get("check_updates", True))
 
 
 def resolve_dirs(loras_dir=None, checkpoints_dir=None):
-    """Resout (loras_dir, [checkpoints_dirs...]) sans importer cz_pipeline (donc sans
-    charger torch). Meme ordre de priorite que cz_pipeline: arg > env > prefs > config >
-    defaut <HERE>/loras|checkpoints. Le dossier 'extra' checkpoints est inclus s'il existe."""
+    """Resolves (loras_dir, [checkpoints_dirs...]) without importing cz_pipeline (so
+    without loading torch). The same order of priority as cz_pipeline: the arg > the env >
+    the prefs > the config > the default <HERE>/loras|checkpoints. The 'extra' checkpoints
+    folder is included when it exists."""
     loras = (loras_dir or os.environ.get("LORAS_DIR") or _prefs.get("loras_dir")
              or CONFIG.get("loras_dir") or os.path.join(HERE, "loras"))
     main_ck = (checkpoints_dir or os.environ.get("CHECKPOINTS_DIR")
@@ -51,8 +52,8 @@ def resolve_dirs(loras_dir=None, checkpoints_dir=None):
 
 
 def _list_safetensors(dirs):
-    """Liste RECURSIVE des modeles (.safetensors/.ckpt/.pt) dans les dossiers donnes.
-    Dedoublonne par nom de fichier (le 1er dossier a la priorite, comme les checkpoints)."""
+    """A RECURSIVE list of the models (.safetensors/.ckpt/.pt) in the given folders.
+    Deduplicated by file name (the 1st folder has the priority, as for the checkpoints)."""
     out, seen = [], set()
     for d in dirs:
         if not d or not os.path.isdir(d):
@@ -67,8 +68,8 @@ def _list_safetensors(dirs):
 
 
 def _apply_shard(files, shard):
-    """shard 'i/m' (1<=i<=m) -> sous-ensemble files[i-1::m] (partition disjointe pour
-    lancer m process en parallele). shard None/invalide -> liste inchangee."""
+    """shard 'i/m' (1<=i<=m) -> the subset files[i-1::m] (a disjoint partition, to launch
+    m processes in parallel). shard None/invalid -> the list unchanged."""
     if not shard:
         return files
     try:
@@ -92,9 +93,9 @@ def collect_files(kind, loras_dir=None, checkpoints_dir=None, shard=None):
 
 
 def _needs_enrich(path, overwrite):
-    """True s'il faut (re)telecharger: pas d'enrichissement CivitAI, OU pas de preview, OU
-    overwrite demande. On teste 'modelId' et non la simple presence du sidecar: celui-ci
-    peut ne contenir que notre cache de hash (modele inconnu de CivitAI)."""
+    """True when it has to be (re)downloaded: no CivitAI enrichment, OR no preview, OR
+    overwrite was asked for. We test 'modelId' and not the mere presence of the sidecar:
+    that one can hold nothing but our hash cache (a model unknown to CivitAI)."""
     if overwrite:
         return True
     if not cz_civitai.load_civitai_sidecar(path).get("modelId"):
@@ -104,9 +105,10 @@ def _needs_enrich(path, overwrite):
 
 def enrich(files, api_key=None, overwrite=False, only_missing=True, sleep=DEFAULT_SLEEP,
            check_updates=DEFAULT_CHECK_UPDATES, progress=None):
-    """Coeur partage (CLI + bouton UI). Pour chaque fichier: enrichit s'il manque des infos
-    (ou overwrite), sinon rafraichit seulement le drapeau 'nouvelle version'. progress est
-    appele progress(i, n, name, phase, text) — i est 1-base. Renvoie un dict resume."""
+    """The shared core (the CLI + the UI button). For every file: it enriches when some
+    info is missing (or overwrite), otherwise it only refreshes the 'new version' flag.
+    progress is called as progress(i, n, name, phase, text) — i is 1-based. Returns a
+    summary dict."""
     n = len(files)
     summary = {"total": n, "enriched": 0, "skipped": 0, "updated": 0, "failed": 0,
                "warnings": []}
@@ -122,7 +124,7 @@ def enrich(files, api_key=None, overwrite=False, only_missing=True, sleep=DEFAUL
         name = os.path.basename(path)
         try:
             if only_missing and not _needs_enrich(path, overwrite):
-                # deja enrichi -> juste (re)verifier la version, sans re-telecharger
+                # already enriched -> just (re)check the version, without re-downloading
                 _emit(i, name, "update", f"{name}: checking version…")
                 res = cz_civitai.refresh_update_flag(path, api_key) if check_updates else {}
                 summary["skipped"] += 1
@@ -149,7 +151,7 @@ def enrich(files, api_key=None, overwrite=False, only_missing=True, sleep=DEFAUL
                 summary["failed"] += 1
                 summary["warnings"].append(f"{name}: {res.get('message', 'failed')}")
             time.sleep(sleep)
-        except Exception as e:  # noqa: BLE001 - un fichier ne doit jamais casser le lot
+        except Exception as e:  # noqa: BLE001 - one file must never break the batch
             summary["failed"] += 1
             summary["warnings"].append(f"{name}: {e}")
             cz_core._dbg(f"batch enrich failed for {name}: {e}")
@@ -165,14 +167,14 @@ def run(kind="all", loras_dir=None, checkpoints_dir=None, shard=None, api_key=No
 
 
 def _cli_progress(i, n, name, phase, text):
-    # une ligne reecrite en place: [12/48] modelname: Downloading preview…
+    # a single line rewritten in place: [12/48] modelname: Downloading preview…
     sys.stderr.write(f"\r[{i}/{n}] {text}".ljust(90)[:90])
     sys.stderr.flush()
 
 
 def main(argv=None):
-    # Sorties robustes meme sur une console cp1252 (le .bat peut tourner hors env Pinokio):
-    # UTF-8 + remplacement, pour ne jamais planter sur … / — / emojis.
+    # Robust output even on a cp1252 console (the .bat can run outside the Pinokio env):
+    # UTF-8 + replacement, so as never to crash on … / — / emojis.
     for _s in (sys.stdout, sys.stderr):
         try:
             _s.reconfigure(encoding="utf-8", errors="replace")
@@ -213,7 +215,7 @@ def main(argv=None):
           f"updated={s['updated']} failed={s['failed']}")
     for w in s["warnings"][:50]:
         print(f"  - {w}")
-    # code de sortie non nul seulement si TOUT a echoue (utile pour un .bat)
+    # a non-zero exit code only when EVERYTHING failed (useful for a .bat)
     return 1 if (s["failed"] and not s["enriched"] and not s["skipped"]) else 0
 
 

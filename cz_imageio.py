@@ -1,8 +1,9 @@
 """crispz-studio - image saving, metadata and output filenames.
 
-Extrait de app.py. I/O pure: ne depend que de cz_core (config/paths/log) + PIL.
-_gen_meta (qui construit le dict de metadonnees a partir de l'etat modele) reste
-dans app.py et passe le dict a save_image().
+Pulled out of app.py. Pure I/O: it depends only on cz_core (config/paths/log) + PIL.
+_gen_meta (which builds the metadata dict from the model state) stays in app.py and
+passes the dict to save_image().
+
 """
 
 import os
@@ -21,7 +22,7 @@ def _now_stamp():
 
 
 def _unique_path(path):
-    """Evite l'ecrasement: ajoute _2, _3... si le fichier existe deja."""
+    """Avoids overwriting: it adds _2, _3... when the file already exists."""
     if not os.path.exists(path):
         return path
     base, ext = os.path.splitext(path)
@@ -32,8 +33,8 @@ def _unique_path(path):
 
 
 def _format_filename(tag, seed, w, h, index=0):
-    """Nom de fichier depuis CONFIG['filename_pattern']. Placeholders: {date} {tag}
-    {seed} {w} {h} {index} {name}. Defaut: date + tag + seed + dimensions + index."""
+    """The file name from CONFIG['filename_pattern']. The placeholders: {date} {tag}
+    {seed} {w} {h} {index} {name}. The default: date + tag + seed + dimensions + index."""
     pat = CONFIG.get("filename_pattern", "{date}_{tag}_seed{seed}_{w}x{h}{index}")
     seed_s = str(int(seed)) if (seed is not None and int(seed) >= 0) else "rand"
     idx_s = f"_{int(index)}" if index else ""
@@ -48,9 +49,9 @@ def _format_filename(tag, seed, w, h, index=0):
 
 def build_output_path(source_path, save_mode, output_dir, output_format,
                       tag=None, seed=None, size=None, index=0):
-    """Chemin de sortie (ou None si display). Le nom suit CONFIG['filename_pattern']
-    (date + seed + tag + dimensions + index) et est rendu UNIQUE (pas d'ecrasement).
-    tag = 'upscaled' / 'txt2img' / 'img2img' (+ nom source si fourni)."""
+    """The output path (or None when display). The name follows CONFIG['filename_pattern']
+    (date + seed + tag + dimensions + index) and is made UNIQUE (no overwriting).
+    tag = 'upscaled' / 'txt2img' / 'img2img' (+ the source name when one is given)."""
     if save_mode == "display":
         return None
     ext = output_format.lower().lstrip(".")
@@ -73,7 +74,7 @@ def build_output_path(source_path, save_mode, output_dir, output_format,
         target_dir = output_dir or DEFAULT_OUTPUT_DIR
         if not os.path.isabs(target_dir):
             target_dir = os.path.join(HERE, target_dir)
-    # Sous-dossier par date (facon Fooocus) pour local/custom, si active (defaut oui).
+    # A subfolder per date (Fooocus-style) for local/custom, when enabled (yes by default).
     if save_mode in ("local", "custom") and CONFIG.get("date_subfolders", True):
         target_dir = os.path.join(target_dir, datetime.datetime.now().strftime("%Y-%m-%d"))
     os.makedirs(target_dir, exist_ok=True)
@@ -81,7 +82,7 @@ def build_output_path(source_path, save_mode, output_dir, output_format,
 
 
 def _exif_bytes(meta):
-    """EXIF (ImageDescription=0x010e) contenant le JSON des metadonnees, pour jpg/webp."""
+    """The EXIF (ImageDescription=0x010e) holding the metadata JSON, for jpg/webp."""
     try:
         exif = Image.Exif()
         exif[0x010E] = json.dumps(meta, ensure_ascii=False)  # ImageDescription
@@ -90,9 +91,9 @@ def _exif_bytes(meta):
         return None
 
 
-# Scheme de metadonnees (reglable dans l'UI Advanced / config 'metadata_scheme'):
-#   "crispz" (defaut) = chunk PNG 'crispz' (json) + sidecar .json.
-#   "a1111"           = idem + chunk PNG 'parameters' (texte A1111) -> lu par Civitai.
+# The metadata scheme (settable in the UI's Advanced / the 'metadata_scheme' config):
+#   "crispz" (the default) = a 'crispz' PNG chunk (json) + a .json sidecar.
+#   "a1111"                = the same + a 'parameters' PNG chunk (A1111 text) -> read by Civitai.
 METADATA_SCHEME = (CONFIG.get("metadata_scheme") or "crispz").lower()
 
 
@@ -104,7 +105,7 @@ def set_metadata_scheme(v):
 
 
 def _a1111_parameters(meta):
-    """Formate un dict de metadonnees facon Automatic1111 / Civitai (chunk 'parameters'):
+    """Formats a metadata dict the Automatic1111 / Civitai way (the 'parameters' chunk):
         <prompt>\\nNegative prompt: <neg>\\nSteps: N, Sampler: X, CFG scale: Y, Seed: Z, Size: WxH, Model: M"""
     if not meta:
         return ""
@@ -128,7 +129,7 @@ def _a1111_parameters(meta):
             parts.append(f"Size: {size}")
     if meta.get("model"):
         parts.append(f"Model: {os.path.basename(str(meta['model']))}")
-    # Encodeur texte de remplacement: meme prompt, meme seed, autre encodeur = autre image.
+    # A replacement text encoder: the same prompt, the same seed, another encoder = another image.
     if meta.get("text_encoder"):
         parts.append(f"Text encoder: {meta['text_encoder']}")
     if parts:
@@ -137,11 +138,11 @@ def _a1111_parameters(meta):
 
 
 def save_image(img, dst_path, output_format, meta=None):
-    """Sauve avec le bon format Pillow. Si meta (dict): embarque dans le PNG (chunk
-    'crispz', + chunk 'parameters' A1111 si metadata_scheme=a1111), en EXIF
-    (ImageDescription) pour jpg/webp, ET ecrit un sidecar .json.
-    Si provenance_watermark=on (et trustmark installe): watermark invisible
-    TrustMark applique aux pixels AVANT l'encodage (voir cz_provenance)."""
+    """Saves with the right Pillow format. When meta (a dict): embedded in the PNG (the
+    'crispz' chunk, + an A1111 'parameters' chunk when metadata_scheme=a1111), in the EXIF
+    (ImageDescription) for jpg/webp, AND written as a .json sidecar.
+    When provenance_watermark=on (and trustmark is installed): an invisible TrustMark
+    watermark applied to the pixels BEFORE the encoding (see cz_provenance)."""
     try:
         import cz_provenance
         if cz_provenance.wm_enabled():
@@ -179,9 +180,9 @@ def save_image(img, dst_path, output_format, meta=None):
                 json.dump(meta, f, indent=2, ensure_ascii=False)
         except Exception as e:
             _dbg(f"sidecar json failed: {e}")
-    # Indexation incrementale de l'Asset Browser (facon Fooocus): la miniature et le
-    # manifest du jour sont mis a jour ICI, a la sauvegarde -> plus besoin de rescanner
-    # le dossier a l'ouverture. Import tardif: cz_assetbrowser importe cz_imageio.
+    # The Asset Browser's incremental indexing (Fooocus-style): the thumbnail and the
+    # day's manifest are updated HERE, at saving time -> no need to rescan the folder at
+    # opening time any more. A late import: cz_assetbrowser imports cz_imageio.
     try:
         import cz_assetbrowser
         cz_assetbrowser.on_image_saved(dst_path, meta=meta)
@@ -190,8 +191,8 @@ def save_image(img, dst_path, output_format, meta=None):
 
 
 def _list_output_files(output_dir, limit=300):
-    """Liste les images du dossier de sortie, recursif (sous-dossiers date),
-    plus recentes en tete. Ignore _index (artefacts Asset Browser)."""
+    """Lists the images of the output folder, recursively (the date subfolders), the most
+    recent first. Ignores _index (the Asset Browser's artefacts)."""
     d = output_dir or DEFAULT_OUTPUT_DIR
     if not os.path.isabs(d):
         d = os.path.join(HERE, d)
@@ -208,7 +209,7 @@ def _list_output_files(output_dir, limit=300):
 
 
 def _read_image_meta(path):
-    """Lit les metadonnees: sidecar '<fichier>.json', sinon chunk PNG 'crispz'."""
+    """Reads the metadata: the '<file>.json' sidecar, otherwise the 'crispz' PNG chunk."""
     sc = path + ".json"
     if os.path.isfile(sc):
         try:

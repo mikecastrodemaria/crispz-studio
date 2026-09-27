@@ -27,8 +27,8 @@ from cz_core import _log, _dbg, CONFIG, _prefs
 CIVITAI_API = "https://civitai.com/api/v1"
 _UA = "crispz-studio/asset-browser"
 
-# Cle API CivitAI (optionnelle: previews gated/NSFW + anti rate-limit). Source: UI
-# (preferences.json) -> config.txt. Reglable a chaud via set_api_key().
+# The CivitAI API key (optional: gated/NSFW previews + anti rate-limit). The source: UI
+# (preferences.json) -> config.txt. Settable hot through set_api_key().
 API_KEY = (str(_prefs.get("civitai_api_key") or CONFIG.get("civitai_api_key") or "").strip() or None)
 
 
@@ -38,9 +38,9 @@ def set_api_key(k):
 
 
 def _api_get(endpoint, params=None, api_key=None, timeout=20):
-    """GET sur l'API CivitAI. api_key=None -> on retombe sur la cle GLOBALE (UI/prefs/
-    config): sinon les appels internes (versions, images) partaient anonymes et rataient
-    les contenus gates/NSFW."""
+    """A GET on the CivitAI API. api_key=None -> we fall back on the GLOBAL key (UI/prefs/
+    config): otherwise the internal calls (versions, images) went out anonymous and missed
+    the gated/NSFW contents."""
     params = dict(params or {})
     key = api_key or API_KEY
     if key:
@@ -53,8 +53,8 @@ def _api_get(endpoint, params=None, api_key=None, timeout=20):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        # Visible par defaut: 401/403 (cle absente/invalide) et 429 (rate limit) sont
-        # exactement ce qu'on veut voir en batch, pas noyer dans le debug.
+        # Visible by default: 401/403 (a missing/invalid key) and 429 (the rate limit) are
+        # exactly what one wants to see in a batch, not drowned in the debug output.
         body = ""
         try:
             body = e.read().decode("utf-8", errors="ignore")[:160]
@@ -70,7 +70,7 @@ def _api_get(endpoint, params=None, api_key=None, timeout=20):
 
 
 def _sidecar_sha256(safepath):
-    """SHA256 (64 hex) lu depuis '<stem>.metadata.json' si present, sinon None."""
+    """The SHA256 (64 hex) read from '<stem>.metadata.json' when present, otherwise None."""
     mp = os.path.splitext(safepath)[0] + ".metadata.json"
     try:
         if os.path.isfile(mp):
@@ -84,8 +84,8 @@ def _sidecar_sha256(safepath):
 
 
 def _compute_sha256(safepath, progress=None):
-    """SHA256 en streaming. Rapporte un % REEL via progress('hash', frac, texte) — c'est
-    la seule phase potentiellement longue (fichiers multi-Go sans sidecar)."""
+    """A streaming SHA256. It reports a REAL % through progress('hash', frac, text) — that
+    is the only potentially long phase (multi-GB files with no sidecar)."""
     h = hashlib.sha256()
     try:
         total = os.path.getsize(safepath)
@@ -110,8 +110,8 @@ def _safe_size(p):
 
 
 def _cached_sha256(safepath):
-    """SHA256 mis en cache par nos soins dans '<stem>.civitai.json'. Invalide si la taille
-    du fichier a change (modele re-telecharge / autre version) -> recalcul."""
+    """A SHA256 cached by us in '<stem>.civitai.json'. Invalidated when the file's size
+    has changed (a model re-downloaded / another version) -> recomputed."""
     sc = load_civitai_sidecar(safepath)
     sha = str(sc.get("sha256") or "").strip().lower()
     if len(sha) != 64:
@@ -126,9 +126,9 @@ def _cached_sha256(safepath):
 
 
 def _cache_sha256(safepath, sha):
-    """Persiste le SHA256 dans '<stem>.civitai.json' (fusion, on ne perd rien d'existant).
-    Sans ca, chaque passe re-lisait TOUT le fichier (des centaines de Go sur une grosse
-    bibliotheque) juste pour retrouver le meme hash. Ecriture atomique (tmp + replace)."""
+    """Persists the SHA256 in '<stem>.civitai.json' (a merge, nothing existing is lost).
+    Without it, every pass re-read the WHOLE file (hundreds of GB on a big library) just to
+    find the same hash again. An atomic write (tmp + replace)."""
     p = os.path.splitext(safepath)[0] + ".civitai.json"
     try:
         sc = load_civitai_sidecar(safepath)
@@ -143,8 +143,8 @@ def _cache_sha256(safepath, sha):
 
 
 def model_sha256(safepath, allow_compute=True, progress=None):
-    """SHA256 du modele. Ordre: sidecar '<stem>.metadata.json' (convention externe) ->
-    notre cache '<stem>.civitai.json' -> calcul (puis mise en cache)."""
+    """The model's SHA256. The order: the '<stem>.metadata.json' sidecar (an external
+    convention) -> our '<stem>.civitai.json' cache -> a computation (then cached)."""
     sha = _sidecar_sha256(safepath) or _cached_sha256(safepath)
     if sha:
         return sha
@@ -152,7 +152,7 @@ def model_sha256(safepath, allow_compute=True, progress=None):
         try:
             sha = _compute_sha256(safepath, progress=progress)
             if sha:
-                _cache_sha256(safepath, sha)   # meme si le modele est inconnu de CivitAI
+                _cache_sha256(safepath, sha)   # even when the model is unknown to CivitAI
             return sha
         except Exception as e:
             _dbg(f"sha256 compute failed {safepath}: {e}")
@@ -170,30 +170,30 @@ def get_version_by_hash(sha, api_key=None):
         "modelName": (data.get("model") or {}).get("name") or data.get("name") or "Unknown",
         "baseModel": data.get("baseModel") or "",
         "trainedWords": triggers,
-        # Images vitrine de la version: contrairement a l'endpoint /images, celles-ci
-        # portent un 'meta' REMPLI (prompt, steps, cfg...) + les drapeaux hasMeta /
-        # hasPositivePrompt. Deja dans cette reponse -> zero requete supplementaire.
+        # The version's showcase images: unlike the /images endpoint, these carry a
+        # FILLED 'meta' (prompt, steps, cfg...) + the hasMeta / hasPositivePrompt flags.
+        # Already in this answer -> zero extra request.
         "images": data.get("images") or [],
     }
 
 
 def _norm_base(s):
-    """'Z-Image', 'Z Image', 'zimage' -> 'zimage'. Les libelles de modele de base CivitAI
-    varient en casse/espaces/tirets d'une version a l'autre -> comparaison tolerante."""
+    """'Z-Image', 'Z Image', 'zimage' -> 'zimage'. The CivitAI base model labels vary in
+    case/spaces/dashes from one version to the next -> a tolerant comparison."""
     return re.sub(r"[^a-z0-9]+", "", str(s or "").lower())
 
 
 def get_latest_version(model_id, api_key=None, base_model=None, current_version_id=None):
-    """Derniere version publiee d'un modele CivitAI: {id, name, baseModel} ou None.
-    GET /models/<id> -> modelVersions[0] est la plus recente (l'API les trie du plus recent
-    au plus ancien).
+    """The latest published version of a CivitAI model: {id, name, baseModel} or None.
+    GET /models/<id> -> modelVersions[0] is the most recent one (the API sorts them from the
+    most recent to the oldest).
 
-    base_model (ex. 'Z-Image') restreint la recherche aux versions du MEME modele de base.
-    Beaucoup de pages CivitAI publient la suite d'un LoRA pour une AUTRE base (Krea2, Flux,
-    SDXL...): ce n'est pas une mise a jour de notre fichier, qui ne tournerait pas dessus.
-    Aucune version de la meme base -> None (pas d'update). Si l'API ne renseigne le
-    baseModel nulle part, on ne filtre pas: l'info est indisponible, pas contradictoire.
-    base_model inconnue (vieux sidecar) -> deduite de current_version_id dans la reponse."""
+    base_model ('Z-Image', say) restricts the search to the versions of the SAME base model.
+    Many CivitAI pages publish a LoRA's sequel for ANOTHER base (Krea2, Flux, SDXL...):
+    that is not an update of our file, which would not run on it.
+    No version of the same base -> None (no update). When the API states the baseModel
+    nowhere, we do not filter: the information is unavailable, not contradictory.
+    An unknown base_model (an old sidecar) -> deduced from current_version_id in the answer."""
     if not model_id:
         return None
     data = _api_get(f"/models/{model_id}", api_key=api_key)
@@ -212,10 +212,10 @@ def get_latest_version(model_id, api_key=None, base_model=None, current_version_
 
 
 def _update_fields(model_id, current_version_id, api_key=None, base_model=None):
-    """Compare la version locale a la derniere sur CivitAI *pour le meme modele de base*
-    (base_model, cf. get_latest_version). Renvoie un dict a fusionner dans le sidecar:
-    {update_available, latest_versionId, latest_versionName}. Silencieux en cas d'echec
-    (network/inconnu) -> pas de faux positif."""
+    """Compares the local version with the latest one on CivitAI *for the same base model*
+    (base_model, see get_latest_version). Returns a dict to merge into the sidecar:
+    {update_available, latest_versionId, latest_versionName}. Silent on a failure
+    (network/unknown) -> no false positive."""
     try:
         latest = get_latest_version(model_id, api_key, base_model=base_model,
                                     current_version_id=current_version_id)
@@ -230,18 +230,19 @@ def _update_fields(model_id, current_version_id, api_key=None, base_model=None):
 
 
 def get_top_images(version_id, api_key=None, limit=8):
-    """Images communautaires d'une version (FALLBACK). Attention: cet endpoint renvoie
-    'meta': null (CivitAI ne publie plus les parametres de generation ici) -> pas de
-    prompt. Les images de get_version_by_hash()['images'] sont a preferer."""
+    """A version's community images (a FALLBACK). Careful: that endpoint returns
+    'meta': null (CivitAI does not publish the generation parameters there any more) -> no
+    prompt. The images from get_version_by_hash()['images'] are to be preferred."""
     data = _api_get("/images", {"modelVersionId": version_id, "sort": "Most Reactions",
                                 "limit": int(limit)}, api_key=api_key)
     return (data or {}).get("items") or []
 
 
 def _examples_from(imgs, limit=8):
-    """Normalise des images CivitAI en exemples {url, prompt, width, height, has_prompt}.
-    'meta' peut etre None (parametres non publies) -> prompt vide + has_prompt=False, ce
-    qui permet a l'UI de dire 'non publie' au lieu de laisser croire a un bug."""
+    """Normalises CivitAI images into examples {url, prompt, width, height, has_prompt}.
+    'meta' can be None (the parameters are not published) -> an empty prompt +
+    has_prompt=False, which lets the UI say 'not published' instead of letting one believe
+    in a bug."""
     out = []
     for it in imgs[:limit]:
         if not isinstance(it, dict) or not it.get("url"):
@@ -257,10 +258,10 @@ def _examples_from(imgs, limit=8):
 
 
 def analyze_settings(imgs, min_meta=2):
-    """Consensus des reglages communautaires (technique Fooocus2026): a partir des 'meta'
-    des images d'exemple (sampler, cfgScale, steps, Size), renvoie
-      {steps, guidance, sampler, size, n} (mediane pour steps/CFG, majorite pour le reste)
-    ou {} si moins de min_meta images publient leurs parametres."""
+    """The consensus of the community settings (the Fooocus2026 technique): from the 'meta'
+    of the example images (sampler, cfgScale, steps, Size), it returns
+      {steps, guidance, sampler, size, n} (the median for steps/CFG, the majority for the rest)
+    or {} when fewer than min_meta images publish their parameters."""
     samplers, cfgs, steps, sizes = [], [], [], []
     for it in imgs or []:
         meta = (it or {}).get("meta") or {}
@@ -306,9 +307,9 @@ def analyze_settings(imgs, min_meta=2):
 
 
 def map_sampler_name(name):
-    """Mappe un nom de sampler CivitAI/A1111 vers (sampler crispz, schedule crispz).
-    Conservateur: renvoie (None, None) pour les familles sans equivalent (DPM++ etc.),
-    l'appelant garde alors le sampler courant et n'applique que steps/CFG."""
+    """Maps a CivitAI/A1111 sampler name to (a crispz sampler, a crispz schedule).
+    Conservative: it returns (None, None) for the families with no equivalent (DPM++ etc.),
+    and the caller then keeps the current sampler and only applies steps/CFG."""
     n = str(name or "").strip().lower()
     if not n:
         return None, None
@@ -323,7 +324,7 @@ def map_sampler_name(name):
         sched = "sgm_uniform"
     samp = None
     if n.startswith("euler"):
-        samp = "euler"          # 'Euler a' -> euler (le plus proche chez Z-Image)
+        samp = "euler"          # 'Euler a' -> euler (the closest thing on Z-Image)
     elif "unipc" in n or n.startswith("uni"):
         samp = "unipc"
     elif "lcm" in n:
@@ -338,14 +339,14 @@ def _download(url, timeout=30):
 
 
 def search_loras(query, limit=10, api_key=None, types="LORA", base_model=None):
-    """Recherche CivitAI par NOM: GET /models?query=...&types=LORA. Renvoie une liste de
-    candidats PLATS, une entree par VERSION du modele (les versions d'une meme page
-    CivitAI visent souvent des bases differentes: Z-Image, Flux, SDXL...). Champs:
+    """A CivitAI search by NAME: GET /models?query=...&types=LORA. It returns a FLAT list
+    of candidates, one entry per model VERSION (the versions of a single CivitAI page often
+    target different bases: Z-Image, Flux, SDXL...). The fields:
       {modelId, modelName, creator, nsfw, versionId, versionName, baseModel,
        fileName, sizeKB, downloadUrl, sha256, previewUrl, url}
-    base_model (ex. 'Z-Image') remonte les versions de cette base EN TETE sans exclure
-    les autres (tri stable) — l'appelant filtre s'il veut du strict. [] si echec reseau
-    ou aucun resultat (jamais d'exception: l'UI affiche 'no result')."""
+    base_model ('Z-Image', say) brings the versions of that base UP FRONT without excluding
+    the others (a stable sort) — the caller filters when it wants strictness. [] on a
+    network failure or no result (never an exception: the UI displays 'no result')."""
     q = str(query or "").strip()
     if not q:
         return []
@@ -383,13 +384,13 @@ def search_loras(query, limit=10, api_key=None, types="LORA", base_model=None):
 
 
 def download_model_file(cand, dest_dir, api_key=None, progress=None):
-    """Telecharge le fichier d'un candidat search_loras() dans dest_dir (stream 1 Mo +
-    progress('download', frac, texte) avec % REEL si la taille est connue). Le SHA256 est
-    calcule PENDANT le streaming et compare a celui annonce par CivitAI: mismatch ->
-    fichier supprime + echec propre (pas de LoRA corrompue silencieuse). Ecrit vers un
-    '.part' puis renomme (jamais de fichier partiel visible), met le hash en cache dans
-    '<stem>.civitai.json' et enrichit preview + trigger words (best effort).
-    Renvoie {success, message, path}. Jamais d'exception vers l'appelant."""
+    """Downloads the file of a search_loras() candidate into dest_dir (a 1 MB stream +
+    progress('download', frac, text) with a REAL % when the size is known). The SHA256 is
+    computed DURING the streaming and compared with the one CivitAI announced: a mismatch
+    -> the file is deleted + a clean failure (no silently corrupted LoRA). It writes to a
+    '.part' then renames (never a partial file visible), caches the hash in
+    '<stem>.civitai.json' and enriches the preview + trigger words (best effort).
+    Returns {success, message, path}. Never an exception towards the caller."""
     def _p(frac, text):
         if progress:
             try:
@@ -452,8 +453,9 @@ def download_model_file(cand, dest_dir, api_key=None, progress=None):
         os.replace(tmp, dest)
         _cache_sha256(dest, sha)
         _log(f"civitai download: {fname} ({done / 1024**2:.0f} MB) -> {dest_dir}")
-        # Enrichissement (preview + trigger words): le hash est deja en cache -> aucune
-        # relecture du fichier. Best effort: un echec reseau ne gache pas le download.
+        # The enrichment (the preview + the trigger words): the hash is cached already
+        # -> no re-reading of the file. Best effort: a network failure does not spoil the
+        # download.
         try:
             _p(None, "Fetching preview + trigger words…")
             fetch_civitai_for_model(dest, api_key=api_key, check_update=False)
@@ -495,12 +497,12 @@ def load_civitai_sidecar(safepath):
 
 def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=None,
                             check_update=True):
-    """Enrichit un .safetensors depuis CivitAI: ecrit '<stem>.preview.png' (si absent) et
-    '<stem>.civitai.json' (trainedWords + examples + drapeau nouvelle version). Renvoie
+    """Enriches a .safetensors from CivitAI: it writes '<stem>.preview.png' (when absent)
+    and '<stem>.civitai.json' (trainedWords + examples + the new-version flag). Returns
     {success, message, triggers, update_available}.
 
-    progress(phase, frac, text) est appele a chaque etape (phase: hash|query|images|
-    download). frac est un % reel pour 'hash' seulement (sinon None -> barre indeterminee)."""
+    progress(phase, frac, text) is called at every step (phase: hash|query|images|
+    download). frac is a real % for 'hash' only (None otherwise -> an indeterminate bar)."""
     def _p(phase, frac, text):
         if progress:
             try:
@@ -512,7 +514,7 @@ def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=No
     api_key = api_key or API_KEY
     stem = os.path.splitext(safepath)[0]
     if has_preview(safepath) and not overwrite:
-        # On rafraichit quand meme les infos (triggers/examples), sans re-telecharger.
+        # We refresh the info (triggers/examples) anyway, without re-downloading.
         want_preview = False
     else:
         want_preview = True
@@ -525,10 +527,10 @@ def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=No
     if not ver:
         return {"success": False, "message": "not found on CivitAI (unknown hash)"}
     _p("images", None, "Fetching example images…")
-    # Source 1 (gratuite, AVEC les prompts): les images de la reponse by-hash.
+    # Source 1 (free, WITH the prompts): the images of the by-hash answer.
     imgs = ver.get("images") or []
     if not imgs and ver.get("versionId"):
-        # Source 2 (fallback): endpoint /images -- images communautaires, sans prompt.
+        # Source 2 (a fallback): the /images endpoint -- community images, with no prompt.
         imgs = get_top_images(ver["versionId"], api_key, limit=8)
     saved_preview = False
     if want_preview:
@@ -543,8 +545,8 @@ def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=No
             except Exception as e:
                 _dbg(f"civitai preview save failed: {e}")
     examples = _examples_from(imgs)
-    # Fusion (et non remplacement): le sidecar porte aussi notre cache de hash
-    # (sha256/sha256_size) -- l'ecraser reprovoquerait un re-hash complet au run suivant.
+    # A merge (and not a replacement): the sidecar also carries our hash cache
+    # (sha256/sha256_size) -- overwriting it would trigger a full re-hash on the next run.
     sidecar = load_civitai_sidecar(safepath)
     sidecar.update({
         "modelName": ver.get("modelName"), "modelId": ver.get("modelId"),
@@ -582,9 +584,9 @@ def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=No
 
 
 def refresh_update_flag(safepath, api_key=None):
-    """Rafraichit UNIQUEMENT le drapeau 'nouvelle version' d'un modele deja enrichi (lit le
-    sidecar existant, compare a CivitAI, reecrit). Pas de re-telechargement de preview.
-    Renvoie {success, update_available}. Utilise par le batch pour les fichiers deja faits."""
+    """Refreshes ONLY the 'new version' flag of a model already enriched (it reads the
+    existing sidecar, compares with CivitAI, rewrites). No preview is downloaded again.
+    Returns {success, update_available}. Used by the batch for the files already done."""
     sc = load_civitai_sidecar(safepath)
     if not sc or sc.get("modelId") is None or sc.get("versionId") is None:
         return {"success": False, "update_available": False}

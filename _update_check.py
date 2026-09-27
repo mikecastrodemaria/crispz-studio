@@ -1,22 +1,23 @@
-"""Mise a jour GitHub proposee au demarrage (boot_check.bat), et garde de securite
-d'update.bat / update.sh. Bibliotheque standard seulement: ce script tourne AVANT que
-l'app ne s'importe, et doit marcher meme quand ses dependances sont cassees.
+"""A GitHub update offered at startup (boot_check.bat), and the safety guard of
+update.bat / update.sh. The standard library only: this script runs BEFORE the app
+imports, and must work even when its dependencies are broken.
 
-  python _update_check.py           boot: cherche, affiche, dit si c'est sur
-  python _update_check.py --guard   update: bloque si le pull toucherait du travail local
+  python _update_check.py           boot: looks, displays, says whether it is safe
+  python _update_check.py --guard   update: blocks when the pull would touch local work
 
-Codes de sortie:
-  0   rien a proposer: a jour, hors ligne, pas de git, pas de branche suivie, desactive
+Exit codes:
+  0   nothing to offer: up to date, offline, no git, no tracked branch, disabled
       (CRISPZ_NO_UPDATE_CHECK=1)
-  10  mise a jour disponible ET sure: boot_check.bat propose alors O/N
-  11  mise a jour disponible mais bloquee: branche divergente, ou elle toucherait un
-      fichier modifie ici, ou ecraserait un fichier present ici hors de git
-En mode --guard: 0 = `git pull --ff-only` peut tourner, 11 = bloque.
+  10  an update is available AND safe: boot_check.bat then offers Y/N
+  11  an update is available but blocked: a diverged branch, or it would touch a file
+      modified here, or overwrite a file present here outside git
+In --guard mode: 0 = `git pull --ff-only` may run, 11 = blocked.
 
-La regle de securite est celle de git, en plus strict: un pull en avance rapide conserve
-les modifications locales des fichiers qu'il ne touche pas. Il refuse de toucher un fichier
-modifie ici -- et il ECRASE sans rien dire un fichier IGNORE que le depot ajoute (tests/
-est ignore dans ces depots, et les tests y sont ajoutes de force). On bloque les deux.
+The safety rule is git's own, only stricter: a fast-forward pull keeps the local changes
+of the files it does not touch. It refuses to touch a file modified here -- and it
+OVERWRITES without a word an IGNORED file that the repo adds (tests/ is ignored in these
+repos, and the tests are force-added there). We block both.
+
 """
 import os
 import subprocess
@@ -31,8 +32,8 @@ SHOW = 8                                  # commits listes au plus
 
 
 def _git(*args, timeout=15):
-    """(code, sortie) d'une commande git dans le depot; (None, raison) si git manque ou
-    si la commande depasse son delai (un reseau qui pend ne doit pas bloquer le boot)."""
+    """(code, output) of a git command in the repo; (None, a reason) when git is missing or
+    when the command runs past its timeout (a hanging network must not block the boot)."""
     try:
         p = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=timeout)
@@ -48,8 +49,8 @@ def _lines(out):
 
 
 def assess(fetch=True):
-    """Etat de la mise a jour, sous forme de dict. status: 'skip', 'uptodate', 'safe' ou
-    'blocked'. Separe de main() pour les tests."""
+    """The state of the update, as a dict. status: 'skip', 'uptodate', 'safe' or
+    'blocked'. Kept apart from main() for the tests."""
     code, out = _git("rev-parse", "--is-inside-work-tree")
     if code is None:
         return {"status": "skip", "why": out}
@@ -74,11 +75,11 @@ def assess(fetch=True):
     if ahead:
         return {**info, "status": "blocked",
                 "why": f"diverged branch: {ahead} local commit(s) missing from GitHub"}
-    # Ce que les commits a recuperer touchent (un renommage compte comme suppression + ajout).
+    # What the commits to fetch touch (a rename counts as a deletion + an addition).
     _, changed = _git("diff", "--name-only", "--no-renames", "HEAD", "@{u}")
     _, added = _git("diff", "--name-only", "--no-renames", "--diff-filter=A", "HEAD", "@{u}")
     changed, added = set(_lines(changed)), set(_lines(added))
-    # Travail local: fichiers suivis modifies, indexes ou non.
+    # Local work: tracked files modified, staged or not.
     _, local = _git("diff", "--name-only", "HEAD")
     local = set(_lines(local))
     overlap = sorted(changed & local)
@@ -96,7 +97,7 @@ def _plural(n, word):
 
 def main(argv):
     try:
-        sys.stdout.reconfigure(errors="replace")      # console cmd: pas d'UTF-8 garanti
+        sys.stdout.reconfigure(errors="replace")      # the cmd console: no guaranteed UTF-8
     except Exception:
         pass
     guard = "--guard" in argv

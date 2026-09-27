@@ -1,9 +1,10 @@
 """crispz-studio - UI/static assets (pure strings, no logic).
 
-Extrait de app.py pour alleger le fichier principal:
-  - ASSET_BROWSER_HTML : la SPA de l'Asset Browser (deposee dans le dossier de sortie).
-  - CZ_JS              : JS injecte au chargement (theme sombre + preview de style au survol).
-  - FOOOCUS_CSS        : CSS de l'interface (facon Fooocus).
+Pulled out of app.py to lighten the main file:
+  - ASSET_BROWSER_HTML : the Asset Browser's SPA (dropped into the output folder).
+  - CZ_JS              : the JS injected on load (the dark theme + a style preview on hover).
+  - FOOOCUS_CSS        : the interface's CSS (Fooocus-style).
+
 """
 
 ASSET_BROWSER_HTML = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -516,11 +517,11 @@ FOOOCUS_CSS = """
 """
 
 
-# JS autonome du tag-autocomplete (injecte via gr.Blocks(head=...) UNIQUEMENT si la
-# feature est activee -> zero JS/fetch quand off). Placeholders remplaces au build:
-# __SRC__ (URLs des CSV), __LOCAL__ (assets locaux, ex. __wildcards__), __MAX__.
-# Index: tri global par popularite une fois, dedoublonnage entre sources, buckets par
-# prefixe de 2 caracteres, sortie anticipee a MAX resultats.
+# The tag-autocomplete's standalone JS (injected through gr.Blocks(head=...) ONLY when
+# the feature is enabled -> zero JS/fetch when off). The placeholders are replaced at
+# build time: __SRC__ (the CSVs' URLs), __LOCAL__ (the local assets, e.g. __wildcards__),
+# __MAX__. The index: a global sort by popularity once, deduplication between sources,
+# buckets by 2-character prefix, an early exit at MAX results.
 TAG_AC_JS = r"""
 (() => {
   const SRC = __SRC__, LOCAL = __LOCAL__, MAXR = __MAX__;
@@ -709,10 +710,11 @@ TAG_AC_JS = r"""
 """
 
 
-# Autosuggest des champs de valeurs X/Y/Z: apres 3 caracteres tapes, propose les
-# checkpoints / LoRA VALIDES a l ouverture (listes injectees au build) selon l axe
-# choisi; sur les axes Prompt / Prompt S/R, propose les __wildcards__ quand le token
-# courant commence par __. Segments CSV respectes (guillemets proteges).
+# The autosuggest of the X/Y/Z value fields: after 3 characters typed, it offers the
+# checkpoints / LoRAs VALID at opening time (the lists are injected at build time)
+# according to the axis chosen; on the Prompt / Prompt S/R axes, it offers the
+# __wildcards__ when the current token starts with __. The CSV segments are respected
+# (quotes protected).
 XYZ_AC_JS = r"""
 (() => {
   const ROWS = __ROWS__;      // [[id dropdown axe, id textbox valeurs], ...]

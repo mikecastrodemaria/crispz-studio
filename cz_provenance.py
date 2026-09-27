@@ -1,18 +1,19 @@
-"""crispz - provenance IA (EU AI Act art. 50) : lecture et marquage.
+"""crispz - AI provenance (EU AI Act art. 50): reading and marking.
 
-Deux briques, toutes deux OPTIONNELLES (degradation propre, pattern rembg):
-  - c2pa-python : LECTURE des manifestes C2PA / Content Credentials embarques
-    (Firefly, ChatGPT/DALL-E, Gemini... signent leurs sorties ainsi).
-  - trustmark   : watermark invisible pixel-level (Adobe, open source).
-    Ecriture a la sauvegarde (si provenance_watermark=on) + decodage a la
-    demande dans PNG Info. Payload utile ~9 caracteres ASCII (ECC actif).
+Two bricks, both OPTIONAL (clean degradation, the rembg pattern):
+  - c2pa-python : READS the embedded C2PA / Content Credentials manifests
+    (Firefly, ChatGPT/DALL-E, Gemini... sign their outputs that way).
+  - trustmark   : an invisible pixel-level watermark (Adobe, open source).
+    Written at saving time (when provenance_watermark=on) + decoded on demand
+    in PNG Info. A useful payload of ~9 ASCII characters (ECC active).
 
-Tout tourne sur CPU (device='cpu' force) : le GPU est reserve aux renders.
-Le modele TrustMark (~40 MB, telecharge au 1er usage dans site-packages)
-charge en ~4 s puis encode/decode en ~0.1 s par image.
+Everything runs on the CPU (device='cpu' forced): the GPU is reserved for the renders.
+The TrustMark model (~40 MB, downloaded on the 1st use into site-packages)
+loads in ~4 s then encodes/decodes in ~0.1 s per image.
 
-L'ABSENCE de marque ne prouve rien (image d'un autre outil, metadonnees
-strippees, watermark retire) : l'UI ne doit jamais afficher "authentique".
+The ABSENCE of a mark proves nothing (an image from another tool, stripped
+metadata, a watermark removed): the UI must never display "authentic".
+
 """
 
 import importlib.util
@@ -24,7 +25,7 @@ from cz_core import CONFIG, _dbg
 C2PA_AVAILABLE = importlib.util.find_spec("c2pa") is not None
 TRUSTMARK_AVAILABLE = importlib.util.find_spec("trustmark") is not None
 
-# TrustMark Q + ECC: ~68 bits utiles -> 9 caracteres ASCII max (tronque au-dela).
+# TrustMark Q + ECC: ~68 useful bits -> 9 ASCII characters max (truncated beyond).
 WM_MAX_CHARS = 9
 
 _TM = None  # singleton TrustMark (init ~4s, lazy)
@@ -40,8 +41,8 @@ def _tm():
 
 
 def wm_id():
-    """Identifiant embarque dans le watermark (config provenance_wm_id),
-    tronque a WM_MAX_CHARS caracteres ASCII."""
+    """The identifier embedded in the watermark (the provenance_wm_id config),
+    truncated to WM_MAX_CHARS ASCII characters."""
     ident = str(CONFIG.get("provenance_wm_id", "crispzAI") or "crispzAI")
     ident = ident.encode("ascii", "ignore").decode("ascii")[:WM_MAX_CHARS]
     return ident or "crispzAI"
@@ -53,9 +54,9 @@ def wm_enabled():
 
 
 def wm_apply(img):
-    """Applique le watermark invisible (RGB, meme taille). Renvoie l'image
-    inchangee si trustmark absent ou en cas d'erreur (la sauvegarde ne doit
-    jamais echouer a cause de la provenance)."""
+    """Applies the invisible watermark (RGB, the same size). Returns the image
+    unchanged when trustmark is absent or on an error (saving must never fail
+    because of the provenance)."""
     if not TRUSTMARK_AVAILABLE:
         return img
     try:
@@ -70,8 +71,9 @@ def wm_apply(img):
 
 
 def wm_read(path_or_img):
-    """Decode le watermark TrustMark. Renvoie (present: bool, secret: str).
-    (False, '') si trustmark absent, image illisible ou pas de watermark."""
+    """Decodes the TrustMark watermark. Returns (present: bool, secret: str).
+    (False, '') when trustmark is absent, the image is unreadable or there is no
+    watermark."""
     if not TRUSTMARK_AVAILABLE:
         return False, ""
     try:
@@ -88,8 +90,8 @@ def wm_read(path_or_img):
 
 
 def read_c2pa(path):
-    """Lit le manifeste C2PA embarque. Renvoie un dict {generator, issuer,
-    when, state} ou None (pas de manifeste / c2pa absent / format non gere)."""
+    """Reads the embedded C2PA manifest. Returns a dict {generator, issuer,
+    when, state} or None (no manifest / c2pa absent / an unhandled format)."""
     if not C2PA_AVAILABLE or not path or not os.path.isfile(path):
         return None
     try:
@@ -111,12 +113,12 @@ def read_c2pa(path):
                 "state": state,
             }
     except Exception:
-        return None  # pas de manifeste (cas normal) ou lecture impossible
+        return None  # no manifest (the normal case) or it could not be read
 
 
 def provenance_markdown(path, check_wm=False):
-    """Section 'Provenance' pour PNG Info (markdown). check_wm=True ajoute le
-    decodage TrustMark (~4s au 1er appel, ~0.1s ensuite)."""
+    """The 'Provenance' section for PNG Info (markdown). check_wm=True adds the
+    TrustMark decoding (~4s on the 1st call, ~0.1s afterwards)."""
     lines = []
     c2 = read_c2pa(path)
     if c2:

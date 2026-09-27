@@ -1,20 +1,21 @@
-"""crispz-studio - Comic Studio: SPA d'edition de BD servie dans le dossier du projet.
+"""crispz-studio - Comic Studio: a comic editing SPA served in the project's folder.
 
-Meme mecanique que l'Asset Browser (cz_assetbrowser): la page HTML (vanilla JS,
-source dans assets/comicstudio/comicstudio.html) est ecrite DANS le dossier du
-projet (studio.html) et servie par Gradio via /gradio_api/file=... Elle parle a
-l'app par UN endpoint generique (api_name='comic_studio': op + dir + payload
-JSON -> JSON), stateless comme l'accordeon Gradio: chaque operation relit et
-reecrit project.json, donc compatible avec les edits manuels, le CLI et
-l'accordeon ouverts en meme temps.
+The same mechanics as the Asset Browser (cz_assetbrowser): the HTML page (vanilla JS,
+the source in assets/comicstudio/comicstudio.html) is written INTO the project's
+folder (studio.html) and served by Gradio through /gradio_api/file=... It talks to
+the app through ONE generic endpoint (api_name='comic_studio': op + dir + a JSON
+payload -> JSON), stateless like the Gradio accordion: every operation re-reads and
+rewrites project.json, so it is compatible with manual edits, the CLI and the
+accordion open at the same time.
 
-Aucun import torch/GPU ici: le moteur de generation et le detecteur de visages
-sont INJECTES par cz_ui (studio_api(engine=..., face_detector_factory=...)),
-le module se teste donc sans GPU, comme cz_comic.
+No torch/GPU import here: the generation engine and the face detector
+are INJECTED by cz_ui (studio_api(engine=..., face_detector_factory=...)),
+so the module is testable without a GPU, like cz_comic.
 
-Les placements de bulles (retour de render_lettering) sont sauves en sidecar
-'<page>.placements.json' a cote du PNG compose: la SPA peut ainsi afficher et
-faire glisser les bulles sans recomposer la planche a chaque ouverture.
+The bubble placements (render_lettering's return value) are saved as a sidecar
+'<page>.placements.json' next to the composed PNG: the SPA can thus display and
+drag the bubbles without recomposing the plate on every opening.
+
 """
 
 import os
@@ -29,17 +30,17 @@ _HTML_PATH = os.path.join(HERE, "assets", "comicstudio", "comicstudio.html")
 
 
 def _resolve_dir(d):
-    """Meme resolution que l'accordeon Comic: relatif = sous le dossier de l'app."""
+    """The same resolution as the Comic accordion: relative = under the app's folder."""
     d = (d or "").strip() or "comics/my-comic"
     return d if os.path.isabs(d) else os.path.join(HERE, d)
 
 
 def _write_if_changed(path, text):
-    """Ecrit un fichier servi par la SPA, atomiquement, et seulement s'il change
-    (meme raison que cz_assetbrowser._write_text_if_changed: la page est une
-    constante, on ne paie le write + scan antivirus qu'apres une mise a jour du
-    code). Copie locale volontaire: importer cz_assetbrowser tirerait toute la
-    SPA Asset Browser pour 15 lignes."""
+    """Writes a file served by the SPA, atomically, and only when it changes
+    (the same reason as cz_assetbrowser._write_text_if_changed: the page is a
+    constant, we only pay the write + antivirus scan after a code update). A
+    deliberate local copy: importing cz_assetbrowser would pull the whole Asset
+    Browser SPA in for 15 lines."""
     try:
         if os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as f:
@@ -62,16 +63,16 @@ def _write_if_changed(path, text):
 
 
 def studio_html(dir_label):
-    """SPA avec le dossier du projet injecte (c'est la valeur que la page renvoie
-    telle quelle a l'endpoint comic_studio, comme la textbox de l'accordeon)."""
+    """The SPA with the project's folder injected (that is the value the page returns
+    as it is to the comic_studio endpoint, like the accordion's textbox)."""
     with open(_HTML_PATH, "r", encoding="utf-8") as f:
         html = f.read()
     return html.replace("__CZ_DIR__", json.dumps(dir_label or ""))
 
 
 def open_studio(project_dir, dir_label=""):
-    """Ecrit studio.html dans le dossier du projet et renvoie son chemin.
-    Le projet doit exister (project.json): on n'ecrit jamais de page orpheline."""
+    """Writes studio.html into the project's folder and returns its path.
+    The project must exist (project.json): we never write an orphan page."""
     d = _resolve_dir(project_dir)
     if not os.path.isfile(cz_comic.project_json_path(d)):
         raise FileNotFoundError(f"no project.json in {d}")
@@ -81,12 +82,12 @@ def open_studio(project_dir, dir_label=""):
 
 
 # ----------------------------------------------------------------------------
-# Etat envoye a la SPA
+# The state sent to the SPA
 # ----------------------------------------------------------------------------
 def _fmt_dialogue(dlg):
-    """Repliques -> syntaxe scenariste (l'inverse de parse_dialogue), en
-    conservant les modificateurs de style ('Rook (angular): ...') pour que
-    l'aller-retour edition ne perde pas la forme des bulles."""
+    """Lines of dialogue -> the scriptwriter's syntax (the inverse of parse_dialogue),
+    keeping the style modifiers ('Rook (angular): ...') so that the editing
+    round trip does not lose the bubbles' shape."""
     lines = []
     for x in dlg or []:
         k, t, s = x.get("kind", "speech"), x.get("text", ""), x.get("speaker", "")
@@ -105,11 +106,11 @@ def _fmt_dialogue(dlg):
 
 
 def _merge_dialogue(old, new):
-    """parse_dialogue repart du TEXTE: les positions posees au drag (anchor/pos)
-    seraient perdues a chaque sauvegarde du panneau. On les recolle sur les
-    repliques inchangees: meme (kind, speaker, texte) d'abord, sinon premiere
-    replique libre du meme (kind, speaker) - une replique reecrite garde ainsi
-    sa bulle en place."""
+    """parse_dialogue starts again from the TEXT: the positions placed by dragging
+    (anchor/pos) would be lost on every save of the panel. We stick them back onto
+    the unchanged lines: the same (kind, speaker, text) first, otherwise the first
+    free line of the same (kind, speaker) - a rewritten line thus keeps
+    its bubble in place."""
     used = set()
     for nd in new:
         best = None
@@ -136,11 +137,11 @@ def _placements_path(project_dir, cid, pid):
 
 
 def _rel_url(path, project_dir):
-    """Chemin relatif POSIX pour la SPA (servie depuis le dossier du projet),
-    ou URL absolue /gradio_api/file= si le fichier vit ailleurs."""
+    """A POSIX relative path for the SPA (served from the project's folder),
+    or an absolute /gradio_api/file= URL when the file lives elsewhere."""
     try:
         rel = os.path.relpath(path, project_dir)
-    except ValueError:                     # autre lecteur Windows
+    except ValueError:                     # another Windows reader
         rel = ".."
     if rel.startswith(".."):
         return "/gradio_api/file=" + os.path.abspath(path).replace("\\", "/")
@@ -148,8 +149,8 @@ def _rel_url(path, project_dir):
 
 
 def _folio_of(project, cid, pid):
-    """Numero de page (folio) d'une planche 'story' dans l'ordre de publication,
-    None pour cover/title/back (jamais foliotees, comme compose_book)."""
+    """The page number (folio) of a 'story' plate in publication order,
+    None for cover/title/back (never folioed, as in compose_book)."""
     folio = 0
     for ch, pg in cz_comic.book_order(project):
         if pg.get("role", "story") == "story":
@@ -162,10 +163,10 @@ def _folio_of(project, cid, pid):
 
 
 def _page_state(project, project_dir, chapter, page):
-    """Tout ce que la SPA doit savoir sur UNE planche: geometrie des cases en
-    fractions de page (pour l'overlay cliquable), panneaux + dialogues, image
-    composee (URL relative + mtime pour le cache-buster) et placements de
-    bulles (sidecar ecrit a la composition)."""
+    """Everything the SPA has to know about ONE plate: the panels' geometry in
+    fractions of the page (for the clickable overlay), the panels + the dialogue, the
+    composed image (a relative URL + the mtime for the cache-buster) and the bubble
+    placements (the sidecar written at composition time)."""
     pg = cz_comic.page_size(project.get("page"))
     cells = cz_comic.layout_cells(page["layout"])
     rects = cz_comic.panel_rects(cells, pg["width"], pg["height"],
@@ -222,14 +223,14 @@ def _state(project, project_dir):
 
 
 # ----------------------------------------------------------------------------
-# Composition d'une planche (+ sidecar de placements)
+# Composing a plate (+ the placements sidecar)
 # ----------------------------------------------------------------------------
 def _compose_one(project, project_dir, cid, pid, face_detector=None,
                  char_embeddings=None):
-    """Compose UNE planche + lettrage + folio (memes regles que compose_book:
-    seules les planches 'story' sont foliotees, si page_numbers est actif),
-    sauve le PNG et le sidecar de placements. Renvoie les placements enrichis
-    (fractions de page + index de replique par panneau, pour le drag SPA)."""
+    """Composes ONE plate + the lettering + the folio (the same rules as compose_book:
+    only the 'story' plates are folioed, when page_numbers is active),
+    saves the PNG and the placements sidecar. Returns the enriched placements
+    (fractions of the page + the line index per panel, for the SPA drag)."""
     page = cz_comic.find_page(project, cid, pid)
     pg = cz_comic.page_size(project.get("page"))
     sheet = cz_comic.compose_page(project, page)
@@ -244,9 +245,9 @@ def _compose_one(project, project_dir, cid, pid, face_detector=None,
     sheet.save(dst)
     W, H = float(pg["width"]), float(pg["height"])
     counters, placements = {}, []
-    for pl in raw:                        # une replique = exactement un placement,
-        pnid = pl["panel"]                # dans l'ordre du dialogue du panneau ->
-        idx = counters.get(pnid, 0)       # index = position dans panel['dialogue']
+    for pl in raw:                        # one line of dialogue = exactly one placement,
+        pnid = pl["panel"]                # in the order of the panel's dialogue ->
+        idx = counters.get(pnid, 0)       # the index = the position in panel['dialogue']
         counters[pnid] = idx + 1
         x, y, w, h = pl["rect"]
         placements.append({
@@ -264,26 +265,26 @@ def _compose_one(project, project_dir, cid, pid, face_detector=None,
 
 
 # ----------------------------------------------------------------------------
-# Endpoint generique (api_name='comic_studio')
+# The generic endpoint (api_name='comic_studio')
 # ----------------------------------------------------------------------------
 def studio_api(op, project_dir, payload="", engine=None,
                face_detector_factory=None, char_embeddings_factory=None):
-    """Dispatch des operations de la SPA. Renvoie TOUJOURS une chaine JSON
-    ({ok: true, ...} ou {ok: false, error}): la SPA n'a qu'un chemin d'erreur.
+    """The dispatch of the SPA's operations. It ALWAYS returns a JSON string
+    ({ok: true, ...} or {ok: false, error}): the SPA has only one error path.
 
     op / payload:
-      state                                   -> projet complet (vue livre)
+      state                                   -> the whole project (the book view)
       save_panel   {cid,pid,pnid,text,dialogue,seed} -> {ok, unknown, page}
       set_bubble   {cid,pid,pnid,index, pos|anchor:[fx,fy] | clear:[...]}
-                    -> recompose la planche, {ok, page}
+                    -> recomposes the plate, {ok, page}
       compose      {cid,pid}                  -> {ok, page}
-      compose_book {}                         -> {ok, state}  (tout le livre)
-      generate     {cid,pid,pnid}             -> genere la case (moteur injecte),
-                                                 recompose la planche, {ok, page}
+      compose_book {}                         -> {ok, state}  (the whole book)
+      generate     {cid,pid,pnid}             -> generates the panel (the injected
+                                                 engine), recomposes the plate, {ok, page}
 
-    Le moteur (engine) et le lettrage face-aware (factories) sont injectes par
-    cz_ui; absents (tests, comic desactive), generate echoue proprement et la
-    composition lettre sans zones interdites (comportement v1)."""
+    The engine (engine) and the face-aware lettering (factories) are injected by
+    cz_ui; absent (the tests, comic disabled), generate fails cleanly and the
+    composition letters with no forbidden areas (the v1 behaviour)."""
     try:
         d = _resolve_dir(project_dir)
         data = json.loads(payload) if (payload or "").strip() else {}
