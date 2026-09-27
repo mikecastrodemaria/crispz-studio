@@ -87,3 +87,15 @@ onnxruntime-gpu==1.23.2
 # says "check unavailable" and no watermark can be written or read.
 trustmark==0.9.2
 c2pa-python==0.37.12
+
+# 🖐 Detail hands: ultralytics and onnx are used ONCE, in a SUBPROCESS, to export the
+# YOLOv8 hand detector (~6 MB, pulled from Bingsu/adetailer) to ONNX in cache/. They are
+# never imported inside the app process: loading the torch YOLO model there corrupts the
+# shared model weights during the offload transfers (renders turn to mosaic then NaN,
+# proven by checksum - see cz_detailer._ensure_hand_onnx). At run time the detection uses
+# onnxruntime only, pinned above. Without these two the hands pass stays unavailable and
+# says so. torchvision, which ultralytics needs, is already pinned from the cu128 index
+# next to torch: resolved from PyPI it comes built against a stock torch and every vision
+# import dies on "operator torchvision::nms does not exist".
+ultralytics==8.4.126
+onnx==1.22.0
