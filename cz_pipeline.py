@@ -1508,7 +1508,7 @@ def free_vram():
     _BASE_PIPE = None
     _DERIVED = {}
     _LOADED_KEY = None
-    _APPLIED_LORAS = []      # plus de pipe -> plus d'adaptateur pose
+    _APPLIED_LORAS = []      # no pipe any more -> no adapter applied either
     _TEXT_ENCODER_ACTIVE = ""  # ... nor of a replacement encoder loaded
     gc.collect()
     if DEVICE == "cuda":
@@ -1986,7 +1986,7 @@ def _dequant_cache_prune(keep=None):
             files.append((max(st.st_atime, st.st_mtime), st.st_size, fp))
         total = sum(s for _t, s, _p in files)
         cap = DEQUANT_CACHE_MAX_GB * 1024**3
-        for _t, size, fp in sorted(files):          # plus ancien acces d'abord
+        for _t, size, fp in sorted(files):          # oldest access first
             if total <= cap:
                 break
             if keep and os.path.abspath(fp) == os.path.abspath(keep):
@@ -2688,7 +2688,7 @@ def _parse_ratio(spec):
 
 
 def _crop_to_ratio(image, ratio_w, ratio_h):
-    """Recadre (centre) l'image au ratio ratio_w:ratio_h en gardant l'aire maximale."""
+    """Centre-crops the image to the ratio_w:ratio_h ratio, keeping the largest area."""
     image = image.convert("RGB")
     w, h = image.size
     target = float(ratio_w) / float(ratio_h)
@@ -2807,7 +2807,7 @@ MODEL_TARGET_PX = 1024 * 1024
 
 
 def _ratio_canvas(ratio_w, ratio_h, target_px=MODEL_TARGET_PX):
-    """Dimensions (multiples de 32) d'un canevas au ratio donne, a ~target_px pixels."""
+    """A canvas's size (multiples of 32) at the given ratio, around target_px pixels."""
     r = float(ratio_w) / float(ratio_h)
     nh = (target_px / r) ** 0.5
     nw = nh * r

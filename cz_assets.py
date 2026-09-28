@@ -61,7 +61,7 @@ body.blur .cell img{filter:blur(14px)}body.blur .cell:hover img{filter:none}
 user-select:none;padding:0 14px;opacity:.7}.nav:hover{opacity:1}#prev{left:0}#next{right:344px}
 #close{position:fixed;top:10px;right:352px;font-size:30px;color:#fff;cursor:pointer;z-index:11}
 .ex img{cursor:zoom-in;transition:transform .12s}.ex img:hover{transform:scale(1.05)}
-/* Statut du fetch CivitAI (barre + phase) dans le panneau lateral */
+/* CivitAI fetch status (bar + phase) in the side panel */
 .cvstatus{margin:8px 0;padding:10px;border:1px solid var(--line);border-radius:8px;background:#141b29}
 .cvstatus .lbl{display:flex;align-items:center;gap:8px;font-size:12px;color:#cfd8e6}
 .cvstatus.err .lbl{color:#ff9db0}.cvstatus.ok .lbl{color:#8fe0a5}
@@ -74,7 +74,7 @@ border-radius:4px;transition:width .25s}
 .cvbar.indet>i{width:35%;animation:cvindet 1.1s ease-in-out infinite}
 @keyframes cvindet{0%{margin-left:-35%}100%{margin-left:100%}}
 button:disabled{opacity:.6;cursor:default}
-/* Badge "nouvelle version dispo" sur les cartes modeles + toast batch */
+/* The "new version available" badge on the model cards + the batch toast */
 .cell .upd{position:absolute;top:6px;left:6px;z-index:2;font-size:10px;font-weight:600;
 padding:2px 6px;border-radius:6px;background:#7a4a12ee;color:#ffd27a;border:1px solid #b6803a;
 pointer-events:none}
@@ -85,7 +85,7 @@ background:#141b29;border:1px solid var(--line);color:#cfd8e6;font-size:13px;
 box-shadow:0 6px 24px #000a}
 #batchstatus.ok{color:#8fe0a5;border-color:#2f6b45}#batchstatus.err{color:#ff9db0;border-color:#7a2e40}
 #batchstatus .spin{margin-right:8px;vertical-align:-2px}
-/* Visionneuse d'exemples (grand format + prompt), au-dessus de la lightbox */
+/* Example viewer (full size + prompt), on top of the lightbox */
 #exlb{position:fixed;inset:0;background:#000e;z-index:20;display:none;
 grid-template-columns:1fr 360px}#exlb.open{display:grid}
 #eximg{display:flex;align-items:center;justify-content:center;padding:16px;min-width:0}
@@ -116,9 +116,9 @@ grid-template-columns:1fr 360px}#exlb.open{display:grid}
 <div id="exside"></div></div>
 <script>
 let DATA=[],VIEW=[],cur=0,EX=[],excur=0;
-var CZ_BATCH=("__CZ_BATCH__"==="1");   // bouton "Fetch all missing" (injecte par le serveur)
-// Anti-cache: apres un rebuild, les miniatures ont la MEME url -> le navigateur servirait
-// les anciennes. On suffixe un jeton pour forcer le rechargement.
+var CZ_BATCH=("__CZ_BATCH__"==="1");   // the "Fetch all missing" button (injected by the server)
+// Cache busting: after a rebuild the thumbnails keep the SAME url -> the browser would
+// serve the old ones. A token is appended to force the reload.
 var _bust=0;
 function _bustUrl(u){return _bust?(u+(u.indexOf('?')<0?'?b=':'&b=')+_bust):u;}
 const grid=document.getElementById('grid'),lb=document.getElementById('lb'),big=document.getElementById('big'),
@@ -189,7 +189,7 @@ try{const r=await fetch('/gradio_api/call/delete_asset',{method:'POST',headers:{
 body:JSON.stringify({data:[e.file]})});const j=await r.json();const eid=j.event_id||j.hash;
 if(eid){await fetch('/gradio_api/call/delete_asset/'+eid);}
 DATA=DATA.filter(x=>x.file!==e.file);close();filter();}catch(err){alert('Delete failed: '+err);}}
-// Appel generique d'un endpoint Gradio (POST event_id -> GET stream -> 1re sortie)
+// Generic call to a Gradio endpoint (POST event_id -> GET stream -> first output)
 async function gcall(name,data){
 const r=await fetch('/gradio_api/call/'+name,{method:'POST',headers:{'Content-Type':'application/json'},
 body:JSON.stringify({data:data})});const j=await r.json();const eid=j.event_id||j.hash;if(!eid)return null;
@@ -219,7 +219,7 @@ cvStatus((ok?'✅ ':'⚠️ ')+msg,null,ok?'ok':'err',false);
 if(ok)setTimeout(function(){close();loadSource(curSource);},1000);
 }catch(err){cvStatus('⚠️ CivitAI fetch failed: '+err,null,'err',false);}
 finally{if(btn)btn.disabled=false;}}
-// --- Batch: recuperer toutes les infos CivitAI manquantes de l'onglet courant ---
+// --- Batch: fetch every CivitAI info missing from the current tab ---
 function batchStatus(html,cls){var s=document.getElementById('batchstatus');
 if(!s){s=document.createElement('div');s.id='batchstatus';document.body.appendChild(s);}
 s.className=(cls||'');s.innerHTML=html||'';s.style.display=html?'block':'none';return s;}
@@ -241,7 +241,7 @@ batchStatus('✅ Batch done: '+(sm.enriched||0)+' enriched · '+(sm.updated||0)+
 loadSource(src);setTimeout(function(){batchStatus('');},7000);
 }catch(err){batchStatus('⚠️ Batch failed: '+esc(''+err),'err');}
 finally{if(btn)btn.disabled=false;}}
-// --- Rebuild force de TOUTES les miniatures de l'onglet courant (parallele, en fond) ---
+// --- Force-rebuild EVERY thumbnail of the current tab (parallel, in the background) ---
 async function rebuildThumbs(){var src=curSource;
 if(!confirm('Force-rebuild every thumbnail of the "'+src+'" tab?\nExisting thumbnails are regenerated from scratch.'))return;
 var btn=document.getElementById('rebuildthumbs');if(btn)btn.disabled=true;
@@ -261,7 +261,7 @@ batchStatus((st&&st.ok?'✅ ':'⚠️ ')+'Thumbnails: '+(sm.made||0)+' rebuilt �
 _bust=Date.now();loadSource(src);setTimeout(function(){batchStatus('');},7000);
 }catch(err){batchStatus('⚠️ Rebuild failed: '+esc(''+err),'err');}
 finally{if(btn)btn.disabled=false;}}
-// --- Visionneuse d'exemples (grand format + prompt + navigation) ---
+// --- Example viewer (full size + prompt + navigation) ---
 function exRender(){var x=EX[excur];if(!x)return;exbig.src=encodeURI(x.url);
 var h='<div id="excount">'+(excur+1)+' / '+EX.length+'</div>';
 h+='<h3>Prompt</h3><div class="v">'+(x.prompt?esc(x.prompt):
@@ -297,7 +297,7 @@ document.getElementById('blurbtn').onclick=()=>document.body.classList.toggle('b
 document.getElementById('fetchall').onclick=fetchAll;
 document.getElementById('rebuildthumbs').onclick=rebuildThumbs;
 function _today(){const d=new Date(),m=String(d.getMonth()+1).padStart(2,'0'),da=String(d.getDate()).padStart(2,'0');return d.getFullYear()+'-'+m+'-'+da;}
-// --- Sous-dossiers (sidebar) + hide, persistant en localStorage ---
+// --- Sub-folders (sidebar) + hide, persisted in localStorage ---
 let curFolder='',showHidden=false,_folderUserSet=false,curSource='outputs',hidden=new Set();
 try{hidden=new Set(JSON.parse(localStorage.getItem('cz_ab_hidden')||'[]'));}catch(e){}
 function saveHidden(){try{localStorage.setItem('cz_ab_hidden',JSON.stringify([...hidden]));}catch(e){}}
@@ -322,10 +322,10 @@ document.getElementById('hiddenbtn').onclick=function(){showHidden=!showHidden;
 this.classList.toggle('on',showHidden);
 if(_isOut()){renderDays();filter();return;}renderFolders();filter();};
 var _gen='',_focus='';var _srcUrls={outputs:'_index/manifest.json',loras:'_index/loras.json',models:'_index/models.json'};
-// --- Outputs: index par JOUR (facon Fooocus) ---------------------------------
-// _index/days.json = liste {date,count} (quelques Ko) -> la page s'ouvre tout de suite.
-// Le manifest d'un jour n'est charge qu'a l'affichage de ce jour. La recherche, elle,
-// a besoin de TOUT: on charge alors les jours en tache de fond (caches en memoire).
+// --- Outputs: a per-DAY index (Fooocus style) --------------------------------
+// _index/days.json = a {date,count} list (a few KB) -> the page opens straight away.
+// A day's manifest is only loaded when that day is shown. Search, on the other hand,
+// needs EVERYTHING: the days are then loaded in the background (cached in memory).
 var DAYS=[],_dayCache={},_allLoaded=false,_searching=false;
 function _dayUrl(day){return (day==='(root)'?'':encodeURIComponent(day)+'/')+'manifest.json';}
 function _fetchDay(day){if(_dayCache[day])return Promise.resolve(_dayCache[day]);
@@ -338,7 +338,7 @@ if(ix>=0){open(ix);_focus='';}}
 function _apply(m){DATA=m.images||[];if(m.blur)document.body.classList.add('blur');renderFolders();filter();
 if(!DATA.length&&m&&m.building){grid.innerHTML='<p style="padding:20px;color:#8b98ad">Indexing your output folder… '+
 '(first run — can take ~30 s for large folders; it will fill in automatically)</p>';}}
-// Barre laterale construite depuis days.json (pas depuis DATA) quand on est en Outputs.
+// The sidebar is built from days.json (not from DATA) when the Outputs tab is open.
 function renderDays(){var h='<div class="f'+(curFolder===''?' active':'')+'" data-f=""><span>All</span>'+
 '<span class="cnt">'+DAYS.reduce(function(a,d){return a+(d.count||0);},0)+'</span></div>';
 DAYS.forEach(function(d){var isH=hidden.has(d.date);if(isH&&!showHidden)return;
@@ -346,11 +346,11 @@ h+='<div class="f'+(curFolder===d.date?' active':'')+(isH?' hidden-f':'')+'" dat
 '<span>'+esc(d.date)+'</span><span><span class="cnt">'+d.count+'</span>'+
 '<button class="hb" data-h="'+esc(d.date)+'">'+(isH?'show':'hide')+'</button></span></div>';});
 folders.innerHTML=h;}
-// Affiche un jour (ou tout, si recherche / vue All)
+// Shows one day (or everything, when searching / in the All view)
 function showDay(day){curFolder=day||'';renderDays();
 if(_searching||curFolder===''){return _ensureAll().then(function(){filter();});}
 return _fetchDay(curFolder).then(function(imgs){DATA=imgs;filter();_tryFocus();});}
-// Charge TOUS les jours (recherche globale ou vue All), progressivement.
+// Loads EVERY day (a global search or the All view), progressively.
 function _ensureAll(){if(_allLoaded)return Promise.resolve();
 grid.innerHTML='<p style="padding:20px;color:#8b98ad">Loading all days…</p>';
 return Promise.all(DAYS.map(function(d){return _fetchDay(d.date);})).then(function(lists){
@@ -358,12 +358,12 @@ DATA=[].concat.apply([],lists);_allLoaded=true;});}
 function loadOutputs(){
 return fetch('_index/'+'days.json?t='+Date.now()).then(function(r){return r.ok?r.json():null;})
 .then(function(idx){
-if(!idx||!idx.days||!idx.days.length){return _loadLegacy(6);}   // repli: manifest global
+if(!idx||!idx.days||!idx.days.length){return _loadLegacy(6);}   // fallback: global manifest
 DAYS=idx.days;_gen=idx.generated||'';if(idx.blur)document.body.classList.add('blur');
 if(!_folderUserSet&&DAYS.length){var t=idx.today;
 curFolder=(DAYS.some(function(d){return d.date===t;})?t:DAYS[0].date);}
 renderDays();return showDay(curFolder);}).catch(function(){return _loadLegacy(6);});}
-// Repli sur l'ancien manifest global (index pas encore migre).
+// Falls back on the old global manifest (an index not migrated yet).
 function _loadLegacy(tries){return fetch('_index/manifest.json?t='+Date.now())
 .then(function(r){if(!r.ok)throw 0;return r.json();})
 .then(function(m){_gen=m.generated||'';_allLoaded=true;_apply(m);_tryFocus();})
@@ -379,7 +379,7 @@ fetch(_srcUrls[src]+'?t='+Date.now()).then(function(r){return r.ok?r.json():null
 if(m){_apply(m);_tryFocus();}
 else{DATA=[];renderFolders();grid.innerHTML='<p style="padding:20px;color:#8b98ad">No '+src+' catalog yet (building in background). Reopen the Asset Browser in a few seconds.</p>';cnt.textContent='0 / 0';}});}
 [].slice.call(document.querySelectorAll('.src')).forEach(function(b){b.onclick=function(){loadSource(b.getAttribute('data-s'));};});
-// Rafraichissement: days.json est minuscule -> on peut le sonder longtemps sans cout.
+// Refresh: days.json is tiny -> it can be polled for a long time at no cost.
 function _poll(n){if(n<=0)return;setTimeout(function(){
 fetch('_index/'+'days.json?t='+Date.now()).then(function(r){return r.ok?r.json():null;}).then(function(idx){
 if(idx&&idx.generated&&idx.generated!==_gen&&curSource==='outputs'){_gen=idx.generated;DAYS=idx.days||[];
@@ -400,7 +400,7 @@ CZ_JS = """
   }
   const SAMPLES = __MAP__;
 
-  // --- Preview de style au survol ---
+  // --- Style preview on hover ---
   let tip = null;
   const ensureTip = () => {
     if (!tip) { tip = document.createElement('div'); tip.className = 'cz-style-preview';
@@ -430,8 +430,8 @@ CZ_JS = """
     if (lbl && tip) tip.style.display = 'none';
   });
 
-  // Le plein ecran + les fleches sont gerees nativement par la galerie Gradio
-  // (preview / fullscreen). Pas de lightbox custom (evite le doublon au clic).
+  // Fullscreen and the arrows are handled natively by the Gradio gallery
+  // (preview / fullscreen). No custom lightbox (it would double up on click).
 }
 """
 
@@ -447,9 +447,9 @@ FOOOCUS_CSS = """
   --border-color-primary: #2a3346;
   --input-background-fill: #141b29;
 }
-/* Rendu homothetique: image entierement visible (contain), centree, jamais plus
-   grande que la zone -> pas de scroll, pas de cover. La galerie se dimensionne a
-   l'image (plafond 78vh), donc plus de bande vide ni d'image coupee. */
+/* Aspect-preserving rendering: the image fully visible (contain), centred, never
+   larger than the area -> no scrolling, no cover. The gallery sizes itself to the
+   image (78vh ceiling), so no empty band and no cropped image any more. */
 #cz_result { min-height: 60vh !important; }
 #cz_result .grid-wrap, #cz_result .grid-container { min-height: 58vh !important; max-height: 82vh !important; }
 #cz_result .empty, #cz_result .image-container { min-height: 56vh !important; }
@@ -466,9 +466,9 @@ FOOOCUS_CSS = """
 #cz_result .thumbnail-item, #cz_result .thumbnail-item img, #cz_result button img {
   object-fit: contain !important; }
 #cz_prompt textarea, #cz_neg textarea { font-size: 1.04rem; }
-/* Un prompt long grandit jusqu'au plafond (max_lines +20%) puis SCROLLE, avec
-   une scrollbar visible sur le theme sombre - avant, la croissance dependait
-   de la version de Gradio et le texte semblait coupe sans indication. */
+/* A long prompt grows up to the ceiling (max_lines +20%) then SCROLLS, with a
+   scrollbar visible on the dark theme - before, the growth depended on the
+   Gradio version and the text looked cut off with no indication. */
 #cz_prompt textarea { max-height: 17em; overflow-y: auto !important;
   scrollbar-width: thin; scrollbar-color: #5d6884 transparent; }
 #cz_neg textarea { max-height: 9em; overflow-y: auto !important;
@@ -485,30 +485,30 @@ FOOOCUS_CSS = """
 #cz_generate { min-height: 96px !important; height: 100% !important; }
 #cz_edit_generate { min-height: 48px !important; }
 #cz_generate:hover, #cz_edit_generate:hover { background: linear-gradient(180deg,#69738a,#454e63) !important; }
-/* Spinner anime pendant la generation (classe .generating posee/retiree en JS) */
+/* Animated spinner during a render (the .generating class is set/removed in JS) */
 @keyframes cz-spin { to { transform: rotate(360deg); } }
 #cz_generate.generating, #cz_edit_generate.generating { opacity: .85; }
 #cz_generate.generating::after, #cz_edit_generate.generating::after { content: ""; display: inline-block;
   width: 15px; height: 15px; margin-left: 10px; vertical-align: middle;
   border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; border-radius: 50%;
   animation: cz-spin .7s linear infinite; }
-/* Bloc styles: scroller interne */
+/* Styles block: an internal scroller */
 #cz_styles { max-height: 340px; overflow-y: auto; padding-right: 6px; }
-/* Sliders de poids LoRA: Gradio pose overflow-x:auto sur .block avec un
-   min-width: min(160px, 100%). Dans la colonne Advanced (etroite) le contenu du
-   slider depasse et Windows affiche une barre de defilement horizontale sous
-   chaque "Weight N". Un slider n'a rien a faire defiler lateralement -> on la
-   supprime. overflow-y reste intact. */
+/* LoRA weight sliders: Gradio puts overflow-x:auto on .block with a
+   min-width: min(160px, 100%). In the (narrow) Advanced column the slider's
+   content overflows and Windows shows a horizontal scrollbar under every
+   "Weight N". A slider has nothing to scroll sideways -> it is removed.
+   overflow-y stays intact. */
 .cz-lora-weight { overflow-x: hidden !important; }
-/* Preview de style au survol */
+/* Style preview on hover */
 .cz-style-preview { position: fixed; z-index: 10000; pointer-events: none;
   border: 1px solid #2a3346; border-radius: 8px; overflow: hidden;
   box-shadow: 0 6px 24px rgba(0,0,0,.6); background: #0b1018; }
 .cz-style-preview img { display: block; width: 110px; height: auto; }
-/* Galerie avancee: flou NSFW optionnel */
+/* Advanced gallery: an optional NSFW blur */
 #cz_gallery.cz-blur img { filter: blur(18px); transition: filter .15s; }
 #cz_gallery.cz-blur img:hover { filter: none; }
-/* Lightbox plein ecran */
+/* Fullscreen lightbox */
 .cz-lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.93); z-index: 10001;
   display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
 .cz-lightbox img { max-width: 95vw; max-height: 95vh; object-fit: contain; }
@@ -717,8 +717,8 @@ TAG_AC_JS = r"""
 # (quotes protected).
 XYZ_AC_JS = r"""
 (() => {
-  const ROWS = __ROWS__;      // [[id dropdown axe, id textbox valeurs], ...]
-  const SRC = __SOURCES__;    // {ckpt: [...], lora: [...], wc: ["__nom__", ...]}
+  const ROWS = __ROWS__;      // [[axis dropdown id, values textbox id], ...]
+  const SRC = __SOURCES__;    // {ckpt: [...], lora: [...], wc: ["__name__", ...]}
   const MIN = 3, MAXR = 8;
   const AXMAP = {"Checkpoint": "ckpt", "LoRA": "lora", "LoRA + weight": "lora_w",
                  "Prompt": "wc", "Prompt S/R": "wc"};
@@ -773,7 +773,7 @@ XYZ_AC_JS = r"""
     el.value = next;
     const np = from + insert.length;
     el.setSelectionRange(np, np);
-    el.dispatchEvent(new Event('input', {bubbles: true}));   // sync l etat Gradio
+    el.dispatchEvent(new Event('input', {bubbles: true}));   // sync Gradio's state
     hide();
   }
 
