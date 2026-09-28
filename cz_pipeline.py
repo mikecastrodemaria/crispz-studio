@@ -328,11 +328,64 @@ def _apply_sampler(pipe):
             pass
 
 
+# Changing the scheduler is NOT a local change: it lives on the SHARED pipe. A denoise
+# loop already running keeps its own `timesteps` list but steps whatever `pipe.scheduler`
+# points at by then. A fresh scheduler knows nothing of those timesteps and has no
+# begin_index, so diffusers looks the current timestep up and finds nothing:
+#   IndexError: index 0 is out of bounds for dimension 0 with size 0
+#   (scheduling_flow_match_euler_discrete._init_step_index -> index_for_timestep)
+# Met on crispz-krea2 on 2026-09-28: checkpoint switched, then "Apply CivitAI recommended
+# settings" (which sets the sampler AND the schedule), then Generate. Gradio does not
+# serialise the events of DIFFERENT listeners -- the very hole _GPU_LOCK exists for, except
+# that these two setters were never put under it.
+# So the swap never lands under a running generation: free lock -> applied at once; held
+# lock -> only recorded, and the next get_pipe() applies it. Every generation path goes
+# through get_pipe() with the lock held.
+_SAMPLER_DIRTY = False
+
+
 def _reapply_sampler_all():
-    """Re-applies the current scheduler to every cached pipe (base + derived)."""
+    """Re-applies the current scheduler to every cached pipe (base + derived). Returns
+    False when a generation holds the GPU: the change is recorded, not applied."""
+    global _SAMPLER_DIRTY
+    # A try-acquire, not a wait: blocking here would freeze the dropdown handler for the
+    # whole render (up to a 30-image batch). RLock -> a call from a thread that ALREADY
+    # holds the lock (the job queue restoring a snapshot between two jobs) goes through and
+    # applies at once, which is correct: that thread is between two generations.
+    if not _GPU_LOCK.acquire(blocking=False):
+        _SAMPLER_DIRTY = True
+        _log(f"sampler/schedule {SAMPLER}/{SCHEDULE}: applied on the NEXT run "
+             f"(a generation is running; swapping it now would crash that render)")
+        return False
+    try:
+        _SAMPLER_DIRTY = False
+        for p in [_BASE_PIPE] + list(_DERIVED.values()):
+            if p is not None:
+                _apply_sampler(p)
+    finally:
+        _GPU_LOCK.release()
+    return True
+
+
+def _apply_sampler_if_dirty():
+    """Applies a sampler/schedule change that arrived while a generation was running.
+    Called by get_pipe(), i.e. by every generation path, with _GPU_LOCK held."""
+    global _SAMPLER_DIRTY
+    if not _SAMPLER_DIRTY:
+        return
+    _SAMPLER_DIRTY = False
+    _dbg(f"applying the deferred sampler/schedule {SAMPLER}/{SCHEDULE}")
     for p in [_BASE_PIPE] + list(_DERIVED.values()):
         if p is not None:
             _apply_sampler(p)
+
+
+def _sampler_status():
+    """The label shown next to the two dropdowns. Says so when the change is only
+    recorded: telling the user it is active while the render still uses the old one is
+    exactly the confusion to avoid."""
+    return (f"Sampler: {SAMPLER} / {SCHEDULE}"
+            + (" — on the next run" if _SAMPLER_DIRTY else ""))
 
 
 def set_sampler(name):
@@ -344,9 +397,9 @@ def set_sampler(name):
         name = "euler"
     if name != SAMPLER:
         SAMPLER = name
-        _reapply_sampler_all()
         _log(f"sampler -> {SAMPLER}")
-    return f"Sampler: {SAMPLER} / {SCHEDULE}"
+        _reapply_sampler_all()
+    return _sampler_status()
 
 
 def set_schedule(name):
@@ -356,9 +409,9 @@ def set_schedule(name):
     name = _norm_schedule(name)
     if name != SCHEDULE:
         SCHEDULE = name
-        _reapply_sampler_all()
         _log(f"schedule -> {SCHEDULE}")
-    return f"Sampler: {SAMPLER} / {SCHEDULE}"
+        _reapply_sampler_all()
+    return _sampler_status()
 
 
 def _progress(frac, desc=""):
@@ -2435,6 +2488,10 @@ def get_pipe(kind="img2img"):
     from_pipe (shared weights). Omni needs extra components (SigLIP) -> loaded separately
     from a dedicated Omni model (CONFIG['zimage_omni_model'])."""
     base = _ensure_base()
+    # A sampler/schedule change asked for DURING a render was only recorded
+    # (see _reapply_sampler_all): this is where it lands, between two
+    # generations, with _GPU_LOCK held by the caller.
+    _apply_sampler_if_dirty()
     if kind in _DERIVED:
         _dbg(f"get_pipe('{kind}'): reuse derived")
         return _DERIVED[kind]
