@@ -1,21 +1,20 @@
-# NE PAS reinstaller torch : garder ton build PyTorch 2.7 / CUDA 12.8 existant.
-# Z-Image n'est dans diffusers que depuis la source, d'ou le git+ ci-dessous.
+# DO NOT reinstall torch: keep your existing PyTorch 2.7 / CUDA 12.8 build.
+# Z-Image is only in diffusers from source, hence the git+ below.
 
-# ATTENTION : le commit est EPINGLE volontairement.
-# Un `git+.../diffusers` sans commit prend le HEAD du jour, ce qui n'est pas une
-# borne mais une bombe a retardement : diffusers main est passe a
-# huggingface-hub>=1.23 alors que transformers<5 exige huggingface-hub<1.0
-# -> ResolutionImpossible a l'installation, pour tout le monde, du jour au
-# lendemain. Ce commit est celui sur lequel CE repo a ete valide (il differe
-# d'un fork a l'autre, cf. requirements-lock.txt).
-# Pour tenter une version plus recente : remplacer le hash ci-dessous, relancer
-# install.bat, et verifier que `transformers` s'installe encore.
+# CAREFUL: the commit is PINNED on purpose.
+# A `git+.../diffusers` with no commit takes the HEAD of the day, which is not a
+# bound but a time bomb: diffusers main moved to huggingface-hub>=1.23 while
+# transformers<5 requires huggingface-hub<1.0 -> ResolutionImpossible at install
+# time, for everyone, overnight. This commit is the one THIS repo was validated
+# on (it differs from one fork to the next, see requirements-lock.txt).
+# To try a more recent version: replace the hash below, run install.bat again,
+# and check that `transformers` still installs.
 git+https://github.com/huggingface/diffusers@2c7efb95349296cf6bcce981ea036275a82a94df
 
-# transformers >= 4.51 requis : Z-Image Turbo utilise un encodeur Qwen3 (Qwen3Model),
-# absent avant 4.51 (echec "module transformers has no attribute Qwen3Model").
-# Borne <5 : la ligne 5.x a des changements d'API qui peuvent casser le diffusers
-# source. Rester sur 4.51+ (teste OK en 4.57).
+# transformers >= 4.51 required: Z-Image Turbo uses a Qwen3 encoder (Qwen3Model),
+# absent before 4.51 (it fails with "module transformers has no attribute Qwen3Model").
+# The <5 bound: the 5.x line has API changes that can break the diffusers
+# source. Stay on 4.51+ (tested OK on 4.57).
 transformers>=4.51,<5
 accelerate
 sentencepiece
@@ -25,24 +24,24 @@ spandrel
 # Without it: "PEFT backend is required for this method" -> LoRA silently skipped.
 peft
 
-# Checkpoints Z-Image .gguf (quantifies Q3..Q8, restent quantifies en VRAM):
-# lecteur GGUF utilise par diffusers (GGUFQuantizationConfig) + garde de layout.
+# Z-Image .gguf checkpoints (Q3..Q8 quantised, they stay quantised in VRAM):
+# the GGUF reader diffusers uses (GGUFQuantizationConfig) + a layout guard.
 gguf
 
-# Comparateur avant/apres = composant HTML+JS interne (voir _make_compare_html dans app.py).
-# Pas de dep externe -> stack stable.
-# Borne <6: Gradio 6 a un middleware Brotli buggé avec h11 ("Too little data for
-# declared Content-Length") qui spamme la console quand une reponse est interrompue.
+# The before/after comparer = an internal HTML+JS component (see _make_compare_html in app.py).
+# No external dep -> a stable stack.
+# The <6 bound: Gradio 6 has a Brotli middleware buggy with h11 ("Too little data for
+# declared Content-Length") that spams the console when a response is interrupted.
 gradio>=4.44,<6
 
 pillow
 numpy
 
-# Optionnel: seulement pour le mode serveur persistant (--serve, palier 3).
+# Optional: only for the persistent server mode (--serve, stage 3).
 fastapi
 uvicorn
 
-# Note xformers: si une version est deja installee mais buildee pour une autre version
-# de torch que la tienne (ex xformers pour torch 2.9 alors que tu as 2.8), diffusers
-# echoue avec "DLL load failed while importing _C" au chargement du VAE. Solution la
-# plus simple: pip uninstall xformers. Torch 2.7+ a SDPA natif qui suffit.
+# A note on xformers: when a version is already installed but built for another torch
+# version than yours (xformers for torch 2.9 while you have 2.8, say), diffusers
+# fails with "DLL load failed while importing _C" when loading the VAE. The simplest
+# solution: pip uninstall xformers. Torch 2.7+ has a native SDPA, which is enough.

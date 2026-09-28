@@ -1,41 +1,41 @@
-# crispz-studio — environnement verrouille, venv ISOLE.
+# crispz-studio — a locked environment, an ISOLATED venv.
 #
-# POURQUOI CE FICHIER
-# requirements.txt donne les bornes ("ce qui doit marcher"). Ce fichier donne
-# les versions exactes d'un environnement reellement valide sur RTX 5090 /
-# CUDA 12.8, pour reinstaller a l'identique.
+# WHY THIS FILE
+# requirements.txt gives the bounds ("what has to work"). This file gives the
+# exact versions of an environment really validated on an RTX 5090 / CUDA 12.8,
+# to reinstall it identically.
 #
-# UTILISATION (venv ISOLE, sans --system-site-packages)
+# HOW TO USE IT (an ISOLATED venv, without --system-site-packages)
 #   py -3.10 -m venv .venv
 #   .venv\Scripts\python -m pip install --upgrade pip setuptools wheel
 #   .venv\Scripts\python -m pip install -r requirements-lock.txt
 #
-# ATTENTION: install.bat / install.sh creent le venv avec --system-site-packages
-# (heritage du torch global). Ce mode fait aussi hériter diffusers, accelerate,
-# numpy et pillow du global, donc des versions non choisies et partagees avec
-# les autres forks. Pour un venv reproductible, creer le venv a la main comme
-# ci-dessus plutot que via install.bat.
+# CAREFUL: install.bat / install.sh create the venv with --system-site-packages
+# (it inherits the global torch). That mode also inherits diffusers, accelerate,
+# numpy and pillow from the global one, so versions nobody chose and shared with
+# the other forks. For a reproducible venv, create it by hand as above rather
+# than through install.bat.
 #
-# NE PAS regenerer ce fichier depuis `pip freeze` d'un venv --system-site-packages:
-# on y capture tout le site-packages global (comfy-cli, yt-dlp...), un ensemble
-# non resoluble par pip (comfy-cli exige click<=8.1.8 face a click 8.4.1).
-# Regenerer plutot en relevant les versions des deps DIRECTES ci-dessous.
+# DO NOT regenerate this file from a `pip freeze` of a --system-site-packages venv:
+# it captures the whole global site-packages (comfy-cli, yt-dlp...), a set pip
+# cannot resolve (comfy-cli requires click<=8.1.8 against click 8.4.1).
+# Regenerate it by noting the versions of the DIRECT deps below instead.
 #
-# Le commit diffusers epingle ici (2c7efb95) est celui de crispz-studio et
-# DIFFERE de celui des forks krea / qwen-edit (de6b0495). C'est voulu: chaque
-# repo epingle le commit sur lequel il a ete valide.
+# The diffusers commit pinned here (2c7efb95) is the one THIS repo was validated on.
+# It differs from one fork to the next (studio 2c7efb95, klein/krea/qwen-edit
+# de6b0495, krea2 ed58810c), and that is deliberate.
 
 --extra-index-url https://download.pytorch.org/whl/cu128
 
-# diffusers: absent de PyPI en 0.39.0.dev0 -> epingle sur le commit valide
+# diffusers: absent from PyPI in 0.39.0.dev0 -> pinned on the validated commit
 diffusers @ git+https://github.com/huggingface/diffusers@2c7efb95349296cf6bcce981ea036275a82a94df
 
-# socle torch (volontairement hors requirements.txt, indispensable ici)
+# the torch base (deliberately outside requirements.txt, indispensable here)
 torch==2.8.0+cu128
 torchvision==0.23.0+cu128
 torchaudio==2.8.0+cu128
 
-# pile diffusion
+# the diffusion stack
 transformers==4.57.6
 accelerate==1.14.0
 safetensors==0.8.0
@@ -43,24 +43,24 @@ huggingface-hub==0.36.2
 peft==0.19.1
 sentencepiece==0.2.2
 spandrel==0.4.1
-# pas de 'gguf' ici: crispz-studio n'a pas de chemin de chargement GGUF
-# (contrairement aux forks krea / qwen-edit).
+# no 'gguf' here: crispz-studio has no GGUF loading path
+# (unlike the krea / qwen-edit forks).
 
 # UI / service
 gradio==5.50.0
 fastapi==0.136.3
 uvicorn==0.35.0
 
-# imagerie / utilitaires
-# NOTE pillow: la version ci-dessous est la VRAIE version voulue (et celle que
-# Dependabot doit voir), mais install.bat/.sh la FILTRENT de ce fichier au moment
-# du pip install, puis l'installent a part en --no-deps.
-# Raison: les 18 CVE Pillow (dont celles atteignables via les images que
-# l'utilisateur ouvre) ne sont corrigees qu'en 12.x, alors que gradio 5.50 declare
-# pillow<12.0 -> resoudre les deux ensemble donne ResolutionImpossible. La borne de
-# gradio est conservatrice: verifie sur cette base de code (build_ui, sauvegarde +
-# metadonnees, miniatures, RankFilter, crop, WebP), Pillow 12 fonctionne. Le pin
-# gradio <6 reste volontaire (bug Brotli/h11, cf. requirements.txt).
+# imaging / utilities
+# A NOTE on pillow: the version below is the REAL one wanted (and the one
+# Dependabot must see), but install.bat/.sh FILTER it out of this file at
+# pip install time, then install it apart with --no-deps.
+# The reason: the 18 Pillow CVEs (including the ones reachable through the images the
+# user opens) are only fixed in 12.x, while gradio 5.50 declares
+# pillow<12.0 -> resolving both together gives ResolutionImpossible. Gradio's bound
+# is conservative: checked against this code base (build_ui, saving +
+# metadata, thumbnails, RankFilter, crop, WebP), Pillow 12 works. The
+# gradio <6 pin stays deliberate (the Brotli/h11 bug, see requirements.txt).
 pillow==12.3.0
 pillow-avif-plugin==1.5.5
 numpy==1.26.4
@@ -73,7 +73,7 @@ requests==2.34.2
 tqdm==4.68.3
 psutil==7.2.2
 
-# onglets optionnels (Remove BG, Face Swap)
+# the optional tabs (Remove BG, Face Swap)
 rembg==2.0.57
 insightface==1.0.1
 onnxruntime==1.18.1
