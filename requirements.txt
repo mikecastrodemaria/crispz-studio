@@ -37,6 +37,14 @@ gradio>=4.44,<6
 pillow
 numpy
 
+# scipy: required by the `beta` sigma schedule offered in the Schedule dropdown.
+# FlowMatchEulerDiscreteScheduler raises ImportError on use_beta_sigmas without it, and
+# _apply_sampler then falls back to Euler/sgm_uniform -- so choosing beta silently gave
+# something else, with one line in the console. karras and exponential are pure numpy and
+# were never affected. requirements-lock.txt already pinned scipy==1.14.0, so an ISOLATED
+# install had it and an install.bat one did not; that is the gap this line closes.
+scipy
+
 # Optional: only for the persistent server mode (--serve, stage 3).
 fastapi
 uvicorn
