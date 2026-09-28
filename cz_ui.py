@@ -1085,6 +1085,20 @@ def _ui_set_force_ratio(mode, aspect_name):
     cz_pipeline.set_force_ratio_mode("extend" if m.startswith("extend") else "crop")
 
 
+def _ui_set_detailer_denoise(v):
+    """Sets the face detailer's denoise. cz_detailer's setter returns a status --
+    useful to the CLI, of no use here: the slider already shows the value, and its bounds
+    (0.1-0.7) are the clamp's, so there is nothing to announce. Without this airlock,
+    Gradio warns on EVERY slider move ("returned too many output values"), and that noise
+    ends up hiding a real warning."""
+    cz_detailer.set_denoise(v)
+
+
+def _ui_set_hand_denoise(v):
+    """The same for the hand detailer."""
+    cz_detailer.set_hand_denoise(v)
+
+
 def _set_performance(name):
     """UI: applique un preset Performance -> (gen_steps, guidance)."""
     steps, g = PERFORMANCE.get(name, (8, 0.0))
@@ -4946,8 +4960,8 @@ def build_ui():
         save_pre_upscale_cb.change(cz_pipeline.set_save_pre_upscale, [save_pre_upscale_cb], None)
         detail_faces_cb.change(cz_detailer.set_enabled, [detail_faces_cb], None)
         detail_hands_cb.change(cz_detailer.set_hands_enabled, [detail_hands_cb], None)
-        detailer_denoise_sl.change(cz_detailer.set_denoise, [detailer_denoise_sl], None)
-        hand_denoise_sl.change(cz_detailer.set_hand_denoise, [hand_denoise_sl], None)
+        detailer_denoise_sl.change(_ui_set_detailer_denoise, [detailer_denoise_sl], None)
+        hand_denoise_sl.change(_ui_set_hand_denoise, [hand_denoise_sl], None)
         lora_slots_num.change(_ui_set_lora_slots, [lora_slots_num], lora_rows)
         refresh_btn.click(_refresh_models, [esrgan_dir_tb], [esrgan, paths_status])
         save_paths_btn.click(_save_paths_to_prefs,
