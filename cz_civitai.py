@@ -484,7 +484,7 @@ def has_preview(safepath):
 
 
 def load_civitai_sidecar(safepath):
-    """Renvoie le dict '<stem>.civitai.json' (trainedWords + examples) ou {}."""
+    """The '<stem>.civitai.json' dict (trainedWords + examples), or {}."""
     p = os.path.splitext(safepath)[0] + ".civitai.json"
     try:
         if os.path.isfile(p):

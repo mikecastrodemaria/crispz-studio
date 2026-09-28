@@ -74,7 +74,7 @@ def test_the_cache_key_changes_only_for_prescaled_files():
             f.write(b"x")
         P._dequant_cache_store(pre, {"x": torch.zeros(1)})
         assert os.path.isfile(P._dequant_cache_path(pre))
-        assert not os.path.exists(stale), "cache faux laisse sur le disque"
+        assert not os.path.exists(stale), "a wrong cache left on the disk"
     finally:
         P._DQ_CACHE_CFG = old
     print("OK test_the_cache_key_changes_only_for_prescaled_files")

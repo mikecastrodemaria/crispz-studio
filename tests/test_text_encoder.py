@@ -193,8 +193,8 @@ def test_changing_the_encoder_frees_the_pipe():
         P.set_text_encoder(r"D:\enc\qwen3-abl")
         assert P.TEXT_ENCODER == r"D:\enc\qwen3-abl"
         assert P._BASE_PIPE is None and P._DERIVED == {} and P._LOADED_KEY is None, \
-            "le pipeline (et ses derives) doit etre libere"
-        assert P._TEXT_ENCODER_ACTIVE == "", "free_vram doit oublier l'encodeur charge"
+            "the pipeline (and its derived ones) must be released"
+        assert P._TEXT_ENCODER_ACTIVE == "", "free_vram must forget the loaded encoder"
         # the same value: nothing moves, no pointless reload
         sentinel = P._BASE_PIPE = object()
         P.set_text_encoder(r"  D:\enc\qwen3-abl ")
@@ -301,8 +301,8 @@ def test_derived_pipes_share_the_base_encoder():
                               ("inpaint", "ZImageInpaintPipeline")):
                 d = P.get_pipe(kind)
                 assert type(d).__name__ == cls, type(d)
-                assert d.text_encoder is enc, f"{kind}: encodeur non partage avec le base"
-            assert P._BASE_PIPE is base, "deriver ne doit pas recharger le base"
+                assert d.text_encoder is enc, f"{kind}: the encoder is not shared with the base"
+            assert P._BASE_PIPE is base, "deriving must not reload the base"
         finally:
             P.free_vram()
     print("OK test_derived_pipes_share_the_base_encoder")
@@ -314,7 +314,7 @@ def test_metadata_names_the_encoder_that_ran_and_never_its_path():
         P.TEXT_ENCODER = P._TEXT_ENCODER_ACTIVE = path
         m = P._gen_meta("txt2img", "p")
         assert m["text_encoder"] == "qwen3-4b-abliterated", m
-        assert "someone" not in json.dumps(m), "chemin local dans les metadonnees"
+        assert "someone" not in json.dumps(m), "a local path in the metadata"
         # Omni has its own encoder: nothing to declare
         m = P._gen_meta("omni", "p")
         assert "text_encoder" not in m and "text_encoder_not_applied" not in m, m
@@ -409,7 +409,7 @@ def test_config_sample_documents_the_keys():
         cfg = json.load(f)
     for k in ("text_encoder", "text_encoders_dir"):
         assert k in cfg and f"_{k}_help" in cfg, k
-        assert cfg[k] == "", f"{k}: vide par defaut (l'encodeur du repo de base)"
+        assert cfg[k] == "", f"{k}: empty by default (the base repo's encoder)"
     print("OK test_config_sample_documents_the_keys")
 
 

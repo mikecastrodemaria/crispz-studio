@@ -89,7 +89,7 @@ def test_retry_on_oom_frees_again_when_the_retry_fails():
         except RuntimeError as e:
             assert cz_pipeline.is_oom(e), e
         else:
-            raise AssertionError("le second echec doit remonter")
+            raise AssertionError("the second failure must propagate")
     assert len(tries) == 2, tries                  # a single retry, not a loop
     assert rel.calls == [True, True], rel.calls    # emptied again before the error is raised
 
@@ -107,7 +107,7 @@ def test_retry_on_oom_leaves_other_errors_alone():
         except ValueError:
             pass
         else:
-            raise AssertionError("la ValueError doit passer")
+            raise AssertionError("the ValueError must pass through")
     assert tries == [1] and rel.calls == [], (tries, rel.calls)
 
 

@@ -70,7 +70,7 @@ class TestImprove(unittest.TestCase):
         self.assertEqual(out, 'a lone red fox, snowy pine forest, soft dawn light')
         body = FakeOllama.last_generate
         self.assertIn('PROMPT: a fox', body['prompt'])
-        self.assertNotIn('think', body, 'rejoue sans think apres le 400')
+        self.assertNotIn('think', body, 'replayed without think after the 400')
 
     def test_negative_uses_the_negative_instruction(self):
         I.improve('blurry', kind='negative', model='llama3.1:8b', base=self.base)

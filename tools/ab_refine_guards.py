@@ -76,14 +76,14 @@ def _crops_for(path, out_dir):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", help="image DEJA agrandie (4K+) a raffiner; requis sauf --recrop")
-    ap.add_argument("--ckpt", help="checkpoint a utiliser (defaut: celui deja configure)")
+    ap.add_argument("--src", help="the ALREADY upscaled image (4K+) to refine; required unless --recrop")
+    ap.add_argument("--ckpt", help="the checkpoint to use (default: the one already configured)")
     ap.add_argument("--denoise", type=float, default=0.60,
-                    help="pour B/C: au-dessus du plafond, sinon il ne s'engage pas")
+                    help="for B/C: above the cap, otherwise it never engages")
     ap.add_argument("--only", action="append", choices=["A", "B", "C"],
-                    help="ne rendre que ces variantes (repetable)")
+                    help="render only these variants (repeatable)")
     ap.add_argument("--recrop", action="store_true",
-                    help="ne rien diffuser: recouper les PNG deja rendus")
+                    help="diffuse nothing: re-crop the PNGs already rendered")
     ap.add_argument("--prompt", default=PROMPT)
     ap.add_argument("--seed", type=int, default=SEED)
     ap.add_argument("--steps", type=int, default=STEPS)
@@ -97,26 +97,26 @@ def main():
         n = 0
         for p in sorted(glob.glob(os.path.join(a.out, "[ABC]_*.png"))):
             n += _crops_for(p, a.out)
-            print(f"recoupe {os.path.basename(p)}")
-        print(f"{n} crop(s) regeneres dans {os.path.join(a.out, 'crops')}")
+            print(f"re-cropped {os.path.basename(p)}")
+        print(f"{n} crop(s) regenerated in {os.path.join(a.out, 'crops')}")
         return
 
-    assert a.src, "--src est requis (l'image 4K a raffiner)"
+    assert a.src, "--src is required (the 4K image to refine)"
     want = set(a.only or ["A", "B", "C"])
     if want & {"B", "C"}:
         assert a.denoise > P._TILE_DENOISE_CAP, (
-            f"--denoise {a.denoise} <= plafond {P._TILE_DENOISE_CAP}: le garde-fou ne "
-            "s'engagerait pas et l'A/B ne montrerait rien")
+            f"--denoise {a.denoise} <= the cap {P._TILE_DENOISE_CAP}: the guard rail "
+            "would not engage and the A/B would show nothing")
 
     img = Image.open(a.src).convert("RGB")
-    print(f"source {img.size} | denoise {a.denoise} | plafond {P._TILE_DENOISE_CAP} "
-          f"| prompt par tuile = {P._TILE_PROMPT!r} | variantes {sorted(want)}")
+    print(f"source {img.size} | denoise {a.denoise} | cap {P._TILE_DENOISE_CAP} "
+          f"| per-tile prompt = {P._TILE_PROMPT!r} | variants {sorted(want)}")
 
     if a.ckpt:
         P.set_zimage_transformer(a.ckpt)
     pipe = P.load_pipe()
     tile = P._pick_refine_tile(img.width, img.height, a.overlap)
-    print(f"tuile choisie par l'auto: {tile}")
+    print(f"tile picked by the auto-tiling: {tile}")
 
     runs = []
     if "A" in want:
@@ -134,7 +134,7 @@ def main():
         try:
             out = fn()
         except torch.cuda.OutOfMemoryError:
-            print(f"{name}: OOM -- c'est exactement pourquoi l'auto-tuilage existe")
+            print(f"{name}: OOM -- which is exactly why the auto-tiling exists")
             torch.cuda.empty_cache()
             continue
         dt = time.time() - t0
@@ -143,8 +143,8 @@ def main():
         _crops_for(path, a.out)
         print(f"{name}: {dt:.1f}s -> {os.path.basename(path)}")
 
-    print(f"\nImages dans {a.out} -- comparer le crop 'bg': si le sujet y reapparait, "
-          "les garde-fous font bien leur travail.")
+    print(f"\nImages in {a.out} -- compare the 'bg' crop: if the subject reappears "
+          "there, the guard rails are doing their job.")
 
 
 def _tiled_unguarded(pipe, image, denoise, steps, prompt, seed, tile, overlap):

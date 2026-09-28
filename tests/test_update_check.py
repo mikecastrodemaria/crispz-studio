@@ -184,7 +184,7 @@ def test_the_switch_turns_the_boot_check_off_but_not_the_guard():
         os.environ["CRISPZ_NO_UPDATE_CHECK"] = "1"
         try:
             assert U.main([]) == 0
-            assert U.main(["--guard"]) == 11, "la garde d'update.bat doit rester active"
+            assert U.main(["--guard"]) == 11, "update.bat's guard must stay active"
         finally:
             del os.environ["CRISPZ_NO_UPDATE_CHECK"]
     finally:
