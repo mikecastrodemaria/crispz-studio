@@ -23,6 +23,8 @@ jobs:
           python -c "import json, glob; [json.load(open(f, encoding='utf-8')) for f in glob.glob('styles/*.json')]; print('styles/*.json OK')"
       - name: config-sample covers every CONFIG key read by the code
         run: python tools/check_config_keys.py
+      - name: requirements-lock covers every declared dependency
+        run: python tools/check_lock.py
 
   # Etage 2: la vraie suite. Torch CPU (pas de GPU sur les runners), diffusers epingle
   # comme en local. Les tests qui exigent un GPU se sautent d'eux-memes.
