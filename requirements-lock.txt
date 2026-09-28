@@ -43,8 +43,13 @@ huggingface-hub==0.36.2
 peft==0.19.1
 sentencepiece==0.2.2
 spandrel==0.4.1
-# no 'gguf' here: crispz-studio has no GGUF loading path
-# (unlike the krea / qwen-edit forks).
+# gguf: crispz-studio DOES have a GGUF path -- a .gguf transformer override loads through
+# from_single_file + diffusers' GGUFQuantizationConfig (which imports this package), and
+# list_checkpoints() filters the files on their 'general.architecture' ('lumina2' here).
+# The comment that stood here claimed the opposite and the package was missing from the
+# lock: an ISOLATED install therefore produced a venv with no gguf, where selecting a
+# .gguf dies inside diffusers. Same fix as crispz-klein on 2026-09-05.
+gguf==0.19.0
 
 # UI / service
 gradio==5.50.0
