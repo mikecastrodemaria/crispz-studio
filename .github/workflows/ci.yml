@@ -5,8 +5,8 @@ on:
   pull_request:
 
 jobs:
-  # Etage 1: rapide, sans dependance lourde. Attrape les fautes de frappe et les
-  # JSON casses en ~20 s, meme si l'etage tests plus bas est en echec d'install.
+  # Stage 1: fast, no heavy dependency. Catches the typos and the broken JSON in
+  # ~20 s, even on a day when the tests stage below fails to install.
   check:
     runs-on: ubuntu-latest
     steps:
@@ -26,8 +26,8 @@ jobs:
       - name: requirements-lock covers every declared dependency
         run: python tools/check_lock.py
 
-  # Etage 2: la vraie suite. Torch CPU (pas de GPU sur les runners), diffusers epingle
-  # comme en local. Les tests qui exigent un GPU se sautent d'eux-memes.
+  # Stage 2: the real suite. CPU torch (no GPU on the runners), diffusers pinned as it
+  # is locally. The tests that need a GPU skip themselves.
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 30

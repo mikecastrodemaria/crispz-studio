@@ -1,23 +1,23 @@
-# --- Claude Code / outils locaux ---
+# --- Claude Code / local tools ---
 .claude/
 CLAUDE.local.md
 *.local.json
 settings.local.json
 
-# --- Preferences locales (contiennent des chemins specifiques a la machine) ---
+# --- Local preferences (they hold machine-specific paths) ---
 preferences.json
 
-# --- Config locale (chemins modeles, reglages perso). On versionne UNIQUEMENT
-#     config-sample.txt ; config.txt reste local (copie/edite par l'utilisateur). ---
+# --- Local config (model paths, personal settings). ONLY config-sample.txt is
+#     versioned; config.txt stays local (copied and edited by the user). ---
 config.txt
 
-# --- Cloudflare perso (nom de tunnel / domaine). On versionne UNIQUEMENT
-#     cloudflare.local.bat.example ; le .bat reel reste local. ---
+# --- Personal Cloudflare settings (tunnel name / domain). ONLY
+#     cloudflare.local.bat.example is versioned; the real .bat stays local. ---
 cloudflare.local.bat
 
-# --- Docs internes / perso (gardes hors du repo, non transmis a GitHub) ---
-# Les fichiers vivent un niveau au-dessus (../). Ces patterns evitent une
-# re-inclusion accidentelle si un .md interne est recree dans le repo.
+# --- Internal / personal docs (kept out of the repo, never sent to GitHub) ---
+# The files live one level up (../). These patterns prevent an accidental
+# re-inclusion if an internal .md is recreated inside the repo.
 PROJECT_BRIEF.md
 BRIEF_*.md
 PLAN_*.md
@@ -35,7 +35,7 @@ venv/
 env/
 .env
 
-# --- Modeles ESRGAN (lourds, a deposer localement) ---
+# --- ESRGAN models (heavy, dropped in locally) ---
 upscale_models/*
 !upscale_models/.gitkeep
 checkpoints/
@@ -49,27 +49,27 @@ faceswap/
 *.onnx
 *.bin
 
-# --- Wildcards locaux (set Fooocus, ~218 fichiers). On versionne UNIQUEMENT
-#     wildcards/example.txt ; le reste reste local. ---
+# --- Local wildcards (the Fooocus set, ~218 files). ONLY wildcards/example.txt
+#     is versioned; the rest stays local. ---
 wildcards/*.txt
 !wildcards/example.txt
 
-# --- Presets locaux (referencent tes modeles). On versionne juste l'exemple. ---
+# --- Local presets (they reference your models). Only the example is versioned. ---
 presets/*.json
 !presets/example.json
 
-# --- Sorties + logs ---
+# --- Outputs + logs ---
 out/
 output/
 *.tsv
 
-# --- Images de test locales (essais, non versionnees) ---
+# --- Local test images (experiments, not versioned) ---
 tests/
 
-# --- Vignettes de styles (samples Fooocus, locales, ~8 Mo, non versionnees) ---
+# --- Style thumbnails (Fooocus samples, local, ~8 MB, not versioned) ---
 styles/samples/
 
-# --- OS / editeurs ---
+# --- OS / editors ---
 .DS_Store
 Thumbs.db
 desktop.ini
@@ -78,7 +78,7 @@ desktop.ini
 *.swp
 tags/
 
-# --- Cache local de miniatures Asset Browser (reconstructible) ---
+# --- Local Asset Browser thumbnail cache (rebuildable) ---
 cache/
 
 # Comic projects (your own books: pages, panels, exports)

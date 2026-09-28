@@ -68,17 +68,17 @@ default_model_profile   {steps, guidance} used when no model_profiles key matche
 default_width/height    txt2img size (multiples of 16).
 default_gen_steps       txt2img steps.
 default_guidance        CFG. 0 = Z-Image Turbo. Z-Image Base: ~3.5-5.
-default_sampler         Sampler par defaut: euler (natif flow-matching), unipc (UniPC
-                        multistep), ou lcm (LCM flow-matching: peu de steps, guidance
-                        ~0-1 -> modeles distilles/Turbo). Z-Image impose des sigmas
-                        custom -> DPM++ 2M / DPM2a / dpmpp_sde incompatibles (non
-                        exposes). Choix aussi dans l'UI (a cote du CFG).
-default_schedule        Schedule de sigmas (facon ComfyUI): sgm_uniform (natif Z-Image),
-                        beta, karras, exponential. 'simple' est accepte comme alias de
-                        sgm_uniform: c'est la MEME courbe (les sigmas imposes par Z-Image
-                        sont linspace(1, 1/steps, steps), ce que ComfyUI nomme 'simple') --
-                        de quoi recopier une recette CivitAI sans traduire. Choix aussi
-                        dans l'UI (a cote du sampler).
+default_sampler         Default sampler: euler (native flow-matching), unipc (UniPC
+                        multistep), or lcm (LCM flow-matching: few steps, guidance
+                        ~0-1 -> distilled/Turbo models). Z-Image imposes custom sigmas
+                        -> DPM++ 2M / DPM2a / dpmpp_sde are incompatible (not
+                        exposed). Also settable in the UI (next to the CFG).
+default_schedule        Sigma schedule (ComfyUI's "scheduler"): sgm_uniform (Z-Image's
+                        native one), beta, karras, exponential. 'simple' is accepted as an
+                        alias of sgm_uniform: it is the SAME curve (the sigmas Z-Image
+                        imposes are linspace(1, 1/steps, steps), which is what ComfyUI calls
+                        'simple') -- enough to copy a CivitAI recipe over without translating
+                        it. Also settable in the UI (next to the sampler).
 default_image_number    Batch size at startup (1-30).
 default_seed            -1 = random.
 
@@ -91,37 +91,38 @@ default_refine_first    Default state of "Refine before upscale (faster)" (true/
 default_refine_steps    Z-Image refine steps.
 default_tile/overlap    ESRGAN tiling (0 = off) to cap VRAM.
 default_refine_tile/overlap   Z-Image diffusion tiling for 4K+ (0 = whole image).
-attention_slice_above   Cote (px) au-dela duquel on active l'attention slicing (whole-image
-                        2K+ -> evite le spill VRAM). En-dessous (tuiles 1024, txt2img) le
-                        slicing est OFF = attention SDPA rapide. 1664 par defaut. Sur grosse
-                        carte tu peux monter (ex. 2048) pour ne jamais slicer.
-auto_refine_tile_above  Cote (px) au-dela duquel un refine "whole image" (refine_tile=0) est
-                        auto-tuile (cf. auto_refine_tile). Defaut = attention_slice_above (1664): au-dela
-                        un whole-image serait slice (lent ~120s en 2K) et risque le spill 4K.
-auto_refine_tile        Taille de la tuile de cet auto-tuilage. "auto" (defaut) = choisie
-                        pour MINIMISER la surface tuilee (n tuiles x tuile^2), qui est le
-                        vrai cout de la passe. Mesure 4096x4096 : 896 -> 36.7s contre 46.9s
-                        a 1024, a nombre de tuiles et de coutures identique (a 1024 la
-                        grille deborde et couvre 1.56x la surface de l'image). Un entier
-                        fige la taille (ex. 1024 = comportement d'avant). Bornes reglables
-                        via auto_refine_tile_min / auto_refine_tile_max (768 / 1024).
-refine_tile_denoise_cap Plafond de denoise pour le refine TUILE (4K+). En tuiles, chaque tuile
-                        est rediffusee avec le prompt global -> a fort denoise (Creative) la
-                        diffusion RECREE le sujet (ex: la tasse) DANS chaque tuile = duplications.
-                        On plafonne donc le denoise par tuile (defaut 0.40) pour que le contenu
-                        existant guide la diffusion (facon Ultimate SD Upscale). 0 = pas de
-                        plafond. Le refine "whole image" (image entiere) garde le denoise demande
-                        (une seule passe -> aucune duplication possible). Baisse a 0.30 si tu vois
-                        encore le sujet se repeter dans les tuiles.
-refine_tile_prompt      Prompt utilise PAR TUILE pour le refine tuile. Le prompt global decrit
-                        TOUTE la composition (pas la tuile) -> le passer a chaque tuile pousse la
-                        diffusion a recreer le sujet (ex: la tasse) dans des tuiles de fond.
-                        Defaut "" = prompt VIDE par tuile (chaque tuile affine juste le detail
-                        local = pas de duplication). "global" ou "scene" = reutilise le prompt de
-                        la scene (ancien comportement). Tout autre texte = prompt generique
-                        applique a chaque tuile, ex: "high detail, sharp focus, fine texture".
-                        Avec un prompt vide tu peux remonter refine_tile_denoise_cap sans
-                        reintroduire de duplication.
+attention_slice_above   Side (px) above which attention slicing is turned on (whole-image
+                        2K+ -> avoids the VRAM spill). Below it (1024 tiles, txt2img) slicing
+                        is OFF = fast SDPA attention. 1664 by default. On a big card you can
+                        raise it (e.g. 2048) so it never slices.
+auto_refine_tile_above  Side (px) above which a "whole image" refine (refine_tile=0) is
+                        auto-tiled (see auto_refine_tile). Default = attention_slice_above
+                        (1664): above that a whole-image pass would be sliced (slow, ~120s at
+                        2K) and risks the 4K spill.
+auto_refine_tile        Tile size for that auto-tiling. "auto" (default) = picked to MINIMISE
+                        the tiled area (n tiles x tile^2), which is the real cost of the pass.
+                        Measured at 4096x4096: 896 -> 36.7s against 46.9s at 1024, for the same
+                        number of tiles and seams (at 1024 the grid overflows and covers 1.56x
+                        the area of the image). An integer freezes the size (e.g. 1024 = the
+                        old behaviour). Bounds tunable through auto_refine_tile_min /
+                        auto_refine_tile_max (768 / 1024).
+refine_tile_denoise_cap Denoise ceiling for the TILED refine (4K+). In tiles, every tile is
+                        re-diffused with the global prompt -> at a high denoise (Creative) the
+                        diffusion RECREATES the subject (say, the cup) IN each tile =
+                        duplications. So the per-tile denoise is capped (0.40 by default) to
+                        let the existing content guide the diffusion (the Ultimate SD Upscale
+                        way). 0 = no ceiling. The "whole image" refine keeps the denoise you
+                        asked for (a single pass -> no duplication is possible). Lower it to
+                        0.30 if you still see the subject repeat across the tiles.
+refine_tile_prompt      Prompt used PER TILE for the tiled refine. The global prompt describes
+                        the WHOLE composition (not the tile) -> handing it to every tile pushes
+                        the diffusion to recreate the subject (say, the cup) inside background
+                        tiles. Default "" = an EMPTY prompt per tile (each tile just sharpens
+                        its local detail = no duplication). "global" or "scene" = reuse the
+                        scene prompt (the old behaviour). Any other text = a generic prompt
+                        applied to every tile, e.g. "high detail, sharp focus, fine texture".
+                        With an empty prompt you can raise refine_tile_denoise_cap again
+                        without reintroducing duplication.
 default_cpu_offload     "none" | "model" (~half VRAM) | "sequential" (~9GB, slower).
 
 checkpoints_dir         Folder of single-file Z-Image models (.safetensors). Scanned

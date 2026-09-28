@@ -1,13 +1,13 @@
-# Normalisation des fins de ligne, cross-platform
+# Line-ending normalisation, cross-platform
 * text=auto eol=lf
 
-# Scripts Windows: CRLF obligatoire
+# Windows scripts: CRLF required
 *.bat text eol=crlf
 
-# Scripts Unix: LF obligatoire (sinon ne s'executent pas)
+# Unix scripts: LF required (they do not run otherwise)
 *.sh text eol=lf
 
-# Binaires: ne jamais convertir
+# Binaries: never convert
 *.png binary
 *.jpg binary
 *.jpeg binary

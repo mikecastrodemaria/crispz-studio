@@ -30,7 +30,7 @@ overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 border-top-color:transparent;border-radius:50%;margin-right:6px;
 animation:sp 1s linear infinite;vertical-align:-1px}
 @keyframes sp{to{transform:rotate(360deg)}}
-/* ---------- vue livre ---------- */
+/* ---------- book view ---------- */
 #book{padding:16px;display:none}
 #book.on{display:block}
 #book .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px}
@@ -49,7 +49,7 @@ background:#000a;color:#fff;text-transform:uppercase;letter-spacing:.4px}
 .badge.back{background:#555c;}.badge.story{display:none}
 .folio{position:absolute;top:6px;right:6px;font-size:11px;padding:1px 7px;
 border-radius:10px;background:#000a;color:#ffd27a}
-/* ---------- vue planche ---------- */
+/* ---------- page view ---------- */
 #page{display:none;padding:12px;gap:14px}
 #page.on{display:flex}
 #stagewrap{flex:1;min-width:0;display:flex;justify-content:center;align-items:flex-start}
@@ -141,9 +141,9 @@ font-size:11px}
 <script>
 'use strict';
 const DIR = __CZ_DIR__;
-let STATE = null;          // reponse de l'op 'state'
-let CUR = -1;              // index dans STATE.book
-let SEL = null;            // panel id selectionne
+let STATE = null;          // the 'state' op's response
+let CUR = -1;              // index into STATE.book
+let SEL = null;            // selected panel id
 let BUSY = false;
 
 const $ = id => document.getElementById(id);
@@ -156,8 +156,8 @@ function status(msg, cls, spin){
   s.innerHTML = (spin ? '<span class="spin"></span>' : '') + esc(msg || '');
 }
 
-/* Appel d'un endpoint Gradio (POST event_id -> GET stream -> 1re sortie),
-   meme mecanique que l'Asset Browser. */
+/* Call a Gradio endpoint (POST event_id -> GET stream -> first output),
+   the same mechanism as the Asset Browser. */
 async function gcall(name, data){
   const r = await fetch('/gradio_api/call/' + name, {method:'POST',
     headers:{'Content-Type':'application/json'}, body:JSON.stringify({data:data})});
@@ -187,7 +187,7 @@ async function api(op, payload, busyMsg){
   }
 }
 
-/* ---------- chargement ---------- */
+/* ---------- loading ---------- */
 async function load(keepView){
   const res = await api('state', {}, 'Loading project…');
   if(!res) return;
@@ -199,7 +199,7 @@ async function load(keepView){
   status(STATE.book.length + ' page(s) loaded', 'ok');
 }
 
-/* ---------- vue livre ---------- */
+/* ---------- book view ---------- */
 function showBook(){
   CUR = -1; SEL = null;
   $('book').classList.add('on'); $('page').classList.remove('on');
@@ -223,7 +223,7 @@ function showBook(){
   });
 }
 
-/* ---------- vue planche ---------- */
+/* ---------- page view ---------- */
 function pageOf(i){ return STATE.book[i]; }
 
 function showPage(i){
@@ -259,7 +259,7 @@ function renderStage(){
     img.src = encodeURI(p.url) + '?t=' + p.mtime;
     st.appendChild(img);
   }
-  // cases cliquables (rects du layout, en fractions de page)
+  // clickable panels (the layout rects, in page fractions)
   p.panels.forEach(pn => {
     if(!pn.rect) return;
     const d = document.createElement('div');
@@ -276,8 +276,8 @@ function renderStage(){
     d.onclick = () => { SEL = pn.id; renderStage(); renderEditor(); };
     st.appendChild(d);
   });
-  // bulles (placements du dernier compose) — seulement sur la planche composee,
-  // sinon elles ne correspondraient a rien
+  // balloons (placements from the last compose) — only on a composed page,
+  // otherwise they would line up with nothing
   if(composed && p.placements){
     p.placements.forEach(pl => {
       const pn = p.panels.find(x => x.id === pl.panel);
@@ -310,8 +310,8 @@ function place(el, r, sw, sh){
   el.style.height = (r[3] * sh) + 'px';
 }
 
-/* drag d'une bulle (mode 'pos': coin haut-gauche) ou de la pointe de queue
-   (mode 'anchor': un point). Les deux s'ecrivent en FRACTIONS DE CASE. */
+/* Drag a balloon (mode 'pos': its top-left corner) or the tip of its tail
+   (mode 'anchor': a single point). Both are written in PANEL FRACTIONS. */
 function makeDraggable(el, pl, mode){
   el.addEventListener('pointerdown', ev => {
     if(BUSY) return;
@@ -347,7 +347,7 @@ function makeDraggable(el, pl, mode){
       api('set_bubble', payload, 'Recomposing page…').then(res => {
         if(res){ STATE.book[CUR] = res.page; renderStage();
                  status('Bubble ' + (mode === 'pos' ? 'pinned' : 're-aimed'), 'ok'); }
-        else renderStage();               // echec: on remet l'etat connu
+        else renderStage();               // failed: restore the known state
       });
     };
     el.addEventListener('pointermove', mv);
@@ -363,7 +363,7 @@ function resetBubble(pl){
                             status('Bubble back to auto placement', 'ok'); } });
 }
 
-/* ---------- editeur de panneau ---------- */
+/* ---------- panel editor ---------- */
 function renderEditor(){
   const p = pageOf(CUR);
   const pn = p.panels.find(x => x.id === SEL);
