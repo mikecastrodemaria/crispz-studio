@@ -138,6 +138,35 @@ ASPECT_RATIOS = {
 # Cost: 1.0 to 1.6 Mpix. Beyond ~1.3 Mpix it is slower, and a model trained around a million
 # pixels can drift in composition there (a duplicated subject) -- to be chosen when the
 # recipe you follow asks for it, not by default.
+# Bounds of the numeric controls, declared ONCE: the sliders are built from this table and
+# every path that WRITES into them (PNG Info, a preset file) clamps through _clamp_ui.
+#
+# Gradio validates a slider on PREPROCESS, i.e. on the NEXT submit -- so an out-of-range
+# value injected here does not fail where it came from, it makes the next Generate die on
+# "Value 12 is greater than maximum value 8.0" with nothing pointing back at the import.
+# An A1111/Civitai image carries CFG 7-12, 50 steps or a 2560px side as a matter of course.
+_UI_BOUNDS = {
+    "width": (256, 2048),
+    "height": (256, 2048),
+    "gen_steps": (2, 40),
+    "guidance": (0.0, 20.0),      # a Base checkpoint at CFG 12 is an ordinary recipe
+    "image_number": (1, 30),
+}
+
+
+def _clamp_ui(key, v):
+    """Clamps `v` to the control's range. Returns (value, note): note is '' when the value
+    passed through untouched, otherwise 'CFG 12 -> 8' for the UI to say so instead of
+    silently changing what was asked."""
+    lo, hi = _UI_BOUNDS.get(key, (None, None))
+    if lo is None or v is None:
+        return v, ""
+    out = min(max(v, lo), hi)
+    if out == v:
+        return v, ""
+    return (type(v)(out) if isinstance(v, (int, float)) else out), f"{v} -> {out}"
+
+
 # Fooocus-style Performance -> (gen_steps, guidance) for the loaded model.
 PERFORMANCE = {
     "Turbo (8 steps)":    (8, 0.0),
@@ -600,6 +629,17 @@ def _performance_label_for(steps, guidance):
     return None
 
 
+def _bounded_update(key, v):
+    """gr.update for a bounded control, clamped (see _UI_BOUNDS / _clamp_ui).
+
+    The steps/CFG writers are all driven by data from OUTSIDE the app -- config.txt's
+    model_profiles and performance_presets, and the CivitAI community median, where a CFG
+    of 7-12 is the norm. Out of range, the write itself succeeds and the NEXT Generate dies
+    in gradio's preprocess, pointing at nothing.
+"""
+    return gr.update(value=_clamp_ui(key, v)[0])
+
+
 def _perf_update(steps, guidance):
     """A gr.update for the Performance radio matching (steps, guidance), otherwise a no-op
     (leaves the current choice when no preset matches exactly)."""
@@ -632,7 +672,7 @@ def _apply_checkpoint(name):
             perf_upd = _perf_update(st, g)
         return (f"Z-Image base: {name} -> {perf or 'auto'} (steps={st}, CFG={g}, "
                 f"reload on next run).{warn}",
-                gr.update(value=st), gr.update(value=g), perf_upd)
+                _bounded_update("gen_steps", st), _bounded_update("guidance", g), perf_upd)
     path = resolve_checkpoint(name)
     set_zimage_transformer(path)
     st, g = profile_for_model(os.path.basename(path))
@@ -641,7 +681,7 @@ def _apply_checkpoint(name):
             + (f" [{badge}]" if badge else "")
             + f" -> auto steps={st}, CFG={g} "
               f"(transformer swap on next run — VAE + text encoder stay loaded).{warn}",
-            gr.update(value=st), gr.update(value=g), _perf_update(st, g))
+            _bounded_update("gen_steps", st), _bounded_update("guidance", g), _perf_update(st, g))
 
 
 def _ui_civitai_reco(name, progress=gr.Progress()):
@@ -709,7 +749,7 @@ def _apply_transformer_repo(repo):
     st, g = profile_for_model(repo)
     return (f"Transformer override: {repo} -> auto steps={st}, CFG={g} "
             f"(keeps base VAE/encoder loaded; transformer swap on next run).",
-            gr.update(value=st), gr.update(value=g), _perf_update(st, g))
+            _bounded_update("gen_steps", st), _bounded_update("guidance", g), _perf_update(st, g))
 
 
 def _te_choices():
@@ -3126,7 +3166,7 @@ def _ui_meta_apply_all(m):
     m = m or {}
     applied = []
 
-    def _upd(key, cast, label=None):
+    def _upd(key, cast, label=None, bound=None):
         v = m.get(key)
         if v in (None, ""):
             return gr.update()
@@ -3134,22 +3174,30 @@ def _ui_meta_apply_all(m):
             v = cast(v)
         except (TypeError, ValueError):
             return gr.update()
-        applied.append(f"{label or key}={v}" if not isinstance(v, str) or len(v) < 40
-                       else f"{label or key}=…")
+        # An A1111/Civitai image carries CFG 12 or 50 steps as a matter of course. Writing
+        # that into a slider does not fail here: gradio validates on preprocess, so the
+        # NEXT Generate dies on "Value 12 is greater than maximum value 8.0" with nothing
+        # pointing back at this import. Clamp, and say so.
+        v, note = _clamp_ui(bound or key, v)
+        txt = (f"{label or key}={v}" if not isinstance(v, str) or len(v) < 40
+               else f"{label or key}=…")
+        applied.append(txt + (f" (clamped: {note})" if note else ""))
         return gr.update(value=v)
 
     p_u = _upd("prompt", str)
     n_u = _upd("negative", str)
     sd_u = _upd("seed", int)
-    st_u = _upd("steps", int)
+    st_u = _upd("steps", int, bound="gen_steps")
     g_u = _upd("guidance", float, "CFG")
     w_u = h_u = gr.update()
     sz = str(m.get("size") or "")
     if "x" in sz:
         try:
             w, h = (int(x) for x in sz.lower().split("x")[:2])
+            w, nw = _clamp_ui("width", w)
+            h, nh = _clamp_ui("height", h)
             w_u, h_u = gr.update(value=w), gr.update(value=h)
-            applied.append(f"size={w}x{h}")
+            applied.append(f"size={w}x{h}" + (" (clamped)" if nw or nh else ""))
         except (TypeError, ValueError):
             pass
     samp_u = sched_u = gr.update()
@@ -3276,7 +3324,12 @@ def _ui_preset_save(name, *vals):
 def _ui_preset_load(name):
     """Returns the gr.update for every component (the scalars + 10 LoRA dds + 10 weights)."""
     data = _load_preset_file(name)
-    scal = [gr.update(value=data[k]) if k in data else gr.update() for k in _PRESET_KEYS]
+    # Same trap as PNG Info: a preset written by hand, or saved by a build whose slider had
+    # another range, would only blow up on the next Generate (gradio validates a slider on
+    # preprocess, not on write). _PRESET_KEYS names 'steps' what the UI calls gen_steps.
+    _bound = {"steps": "gen_steps"}
+    scal = [gr.update(value=_clamp_ui(_bound.get(k, k), data[k])[0]) if k in data
+            else gr.update() for k in _PRESET_KEYS]
     loras = data.get("loras", []) or []
     dd_up = [gr.update(value=(loras[i][0] if i < len(loras) else "None")) for i in range(MAX_LORA_SLOTS)]
     w_up = [gr.update(value=(float(loras[i][1]) if i < len(loras) else float(cz_pipeline.LORA_WEIGHT)))
@@ -4542,16 +4595,21 @@ def build_ui():
                                  "missing bands are outpainted by Z-Image (nothing is lost). "
                                  "Off = keep the input's native ratio.")
                         with gr.Row():
-                            width = gr.Slider(256, 2048, value=int(CONFIG.get("default_width", 1024)),
+                            width = gr.Slider(*_UI_BOUNDS["width"],
+                                              value=int(CONFIG.get("default_width", 1024)),
                                               step=16, label="Width")
-                            height = gr.Slider(256, 2048, value=int(CONFIG.get("default_height", 1024)),
+                            height = gr.Slider(*_UI_BOUNDS["height"],
+                                               value=int(CONFIG.get("default_height", 1024)),
                                                step=16, label="Height")
-                        gen_steps = gr.Slider(2, 40, value=int(CONFIG.get("default_gen_steps", 8)),
+                        gen_steps = gr.Slider(*_UI_BOUNDS["gen_steps"],
+                                              value=int(CONFIG.get("default_gen_steps", 8)),
                                               step=1, label="Generation steps (txt2img)")
                         with gr.Row():
-                            guidance = gr.Slider(0.0, 8.0, value=float(CONFIG.get("default_guidance", 0.0)),
+                            guidance = gr.Slider(*_UI_BOUNDS["guidance"],
+                                                 value=float(CONFIG.get("default_guidance", 0.0)),
                                                  step=0.5, label="CFG guidance", scale=2,
-                                                 info="0 = Z-Image Turbo. Z-Image Base: ~3.5-5.")
+                                                 info="0 = Z-Image Turbo. Z-Image Base: ~3.5-5. "
+                                                      "Higher = for a recipe that asks for it.")
                             sampler_dd = gr.Dropdown(
                                 list(SAMPLER_CHOICES),
                                 value=(CONFIG.get("default_sampler") or "euler").strip().lower()
@@ -4572,7 +4630,8 @@ def build_ui():
                         # output values").
                         sampler_status = gr.Markdown(
                             f"Sampler: {cz_pipeline.SAMPLER} / {cz_pipeline.SCHEDULE}")
-                        image_number = gr.Slider(1, 30, value=int(CONFIG.get("default_image_number", 1)),
+                        image_number = gr.Slider(*_UI_BOUNDS["image_number"],
+                                                 value=int(CONFIG.get("default_image_number", 1)),
                                                  step=1, label="Image number (batch)")
                         seed = gr.Number(value=int(CONFIG.get("default_seed", -1)),
                                          label="Seed (-1 = random)", precision=0)

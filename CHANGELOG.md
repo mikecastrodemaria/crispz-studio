@@ -5,6 +5,27 @@ The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browse
 
 
 
+## Unreleased — The sliders can no longer be fed a value they refuse
+
+**The crash.** `gradio.exceptions.Error: 'Value 12 is greater than maximum value 8.0.'` on
+**Generate**, from `components/slider.py`, with nothing in the traceback pointing at where
+the 12 came from. gradio validates a slider on **preprocess** — that is, on the next
+submit — so writing an out-of-range value into one succeeds and the bill arrives later, on
+an unrelated action.
+
+Four paths write into those sliders from data the app does not control: **PNG Info**
+(an A1111/Civitai image carries CFG 7–12, 50 steps or a 2560 px side as a matter of
+course), a **preset file** (hand-edited, or saved by a build with another range), the
+**model profiles** of `config.txt`, and the **CivitAI community settings** button, whose
+CFG is the median of the example images — which is exactly how a 12 lands in a slider that
+stopped at 8.
+
+**The fix.** One `_UI_BOUNDS` table: the sliders are built from it and every writer clamps
+through `_clamp_ui`, so the two cannot drift apart. PNG Info says so in its report
+(`CFG=8 (clamped: 99 -> 8)`) instead of silently changing what was asked. The **CFG ceiling
+moves from 8 to 20**: 12 is an ordinary recipe, it should not have been out of range in the
+first place.
+
 ## Unreleased — UI: no more spell-check popup over the dropdowns
 
 A Gradio dropdown is an `<input role="listbox">` holding the current value — here a file
