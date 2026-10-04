@@ -4,6 +4,41 @@ All notable changes to crispz-studio. One versioned entry per feature.
 The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browser tab title.
 
 
+
+## Unreleased — LoRA: the external Z-Image trainers load, and really apply
+
+**The bug, in three links.** A LoRA from an external trainer (fused `attention.qkv`, bare
+`attention.out`, `lora_A`/`lora_B` + `.alpha`) died on
+`ValueError: state_dict should be empty at this point but has ...layers.N.attention.to_out.0.alpha`.
+Cause: diffusers' `normalize_out_key` rewrites `.attention.out` → `.attention.to_out.0`
+only when the suffix is `lora_down`/`lora_up`/`alpha`, so on a `lora_A`/`lora_B` file the
+**alpha was renamed while its weights kept the old name** — nothing consumed it any more.
+The hot-swap then fell back to a full reload, which re-applied the LoRA on a fresh pipe and
+walked into `pipe.to(DEVICE)` with parameters still on `meta`:
+`NotImplementedError: Cannot copy out of meta tensor; no data!`.
+
+**The trap under the fix.** Folding the alphas alone clears the `ValueError` and produces a
+**silently inert** LoRA: `attention.qkv` and `attention.out` match no module in the
+diffusers model, so only `feed_forward` and `adaLN` land and the whole attention keeps
+nothing. So the repair also maps the attention onto the model's names, with diffusers' own
+mapping for the base checkpoint (`single_file_utils`): `out` → `to_out.0`, and `qkv` →
+`torch.chunk(..., 3, dim=0)` for `to_q`/`to_k`/`to_v` (the down projection is shared, the up
+one is sliced — exact, Z-Image has `n_kv_heads == n_heads`). Verified on the real file: 180
+alphas folded, 60 `out` renamed, 60 `qkv` split, and the attention carries the LoRA.
+A file diffusers already handles keeps the untouched folder + `weight_name` route.
+
+**Guard rails.** A `meta` parameter cannot be repaired in place (`.to()` raises, and peft
+builds each adapter on the device of the layer it wraps, so every later LoRA inherits it and
+loops on *"copying from a non-meta parameter ... which is a no-op"*). `_meta_params` now
+checks the transformer **before** any `.to(DEVICE)`: on a cached pipe it forces a reload
+from disk, and on a fresh one it reloads the base without any adapter — the render runs
+LoRA-free rather than not at all, and says so. The hot-swap fallback also wipes the
+half-injected adapters before reloading, instead of leaving them for the next load to reuse
+under the same `cz_lora_i` names.
+
+`low_cpu_mem_usage=False` was already passed on every load (`aef8372`) and is this
+diffusers build's default anyway: the `meta` parameters did not come from there.
+
 ## Unreleased — The app's own messages are in English
 
 Part of what the app printed was still French, inside an otherwise English interface:

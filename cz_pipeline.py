@@ -1599,6 +1599,124 @@ def release_vram(offload=False, why=""):
         _dbg(f"release_vram: {e}")
 
 
+# ----------------------------------------------------------------------------
+# Repairing the LoRA state_dict of the external Z-Image trainers.
+#
+# diffusers 0.39.dev's converter (lora_conversion_utils) has two blind spots on the files
+# those trainers produce ('diffusion_model.' prefix, lora_A/lora_B suffixes, a FUSED
+# attention.qkv and a bare attention.out):
+#   1. normalize_out_key rewrites '.attention.out' -> '.attention.to_out.0' only when the
+#      suffix is lora_down/lora_up/alpha. On a lora_A/lora_B file the ALPHA is renamed while
+#      its WEIGHTS keep the old name: nothing consumes that alpha any more and the load dies
+#      on "`state_dict` should be empty at this point but has ...to_out.0.alpha".
+#   2. Nothing maps the fused 'attention.qkv' onto the model's to_q/to_k/to_v, nor the bare
+#      'attention.out' onto to_out.0 for that suffix form. Those keys reach peft untouched,
+#      match no module, and the WHOLE attention silently ends up without any LoRA (only
+#      feed_forward and adaLN land) -- worse than the loud failure above.
+# Both mappings are diffusers' own, lifted from the BASE checkpoint conversion
+# (single_file_utils.convert_z_image_transformer_checkpoint_to_diffusers): out -> to_out.0,
+# and qkv -> torch.chunk(fused, 3, dim=0) for q/k/v (Z-Image has n_kv_heads == n_heads, so
+# the three parts are equal).
+# ----------------------------------------------------------------------------
+_LORA_DOWN_SUFFIXES = (".lora_A.weight", ".lora_down.weight", ".lora.down.weight")
+_LORA_UP_SUFFIXES = (".lora_B.weight", ".lora_up.weight", ".lora.up.weight")
+
+
+def fold_lora_alpha(sd):
+    """Folds every '.alpha' into the matching up weight (x alpha/rank) and drops the key.
+
+    Returns (state_dict, number folded). PEFT scales a LoRA by alpha/rank at runtime, from
+    the LoraConfig; with no '.alpha' left in the dict diffusers sets lora_alpha = rank
+    (get_peft_kwargs), i.e. a scale of 1.0 -- which is exactly why its own converter bakes
+    that factor into the weights. Doing it here, once, on the up weight only (bf16/fp16 has
+    the range for a factor of this size) lets the alphas be removed entirely, and the
+    converter no longer has an orphan key to choke on. rank = down.shape[0].
+"""
+    sd = dict(sd)
+    folded = 0
+    for ak in [k for k in sd if k.endswith(".alpha")]:
+        base = ak[: -len(".alpha")]
+        down = next((sd[base + s] for s in _LORA_DOWN_SUFFIXES if base + s in sd), None)
+        up_key = next((base + s for s in _LORA_UP_SUFFIXES if base + s in sd), None)
+        if down is None or up_key is None:
+            # An alpha without its pair: dropping it is what the converter would have done.
+            sd.pop(ak)
+            _dbg(f"LoRA alpha without weights, dropped: {ak}")
+            continue
+        rank = int(down.shape[0]) or 1
+        scale = float(sd[ak].item()) / rank
+        up = sd[up_key]
+        sd[up_key] = (up.float() * scale).to(up.dtype)
+        sd.pop(ak)
+        folded += 1
+    return sd, folded
+
+
+def _remap_fused_attention(sd):
+    """Maps the trainers' attention onto the diffusers module names.
+
+    '<...>.attention.out.lora_{A,B}.weight' -> '<...>.attention.to_out.0.lora_{A,B}.weight'
+    '<...>.attention.qkv.lora_A.weight'     -> the same A for to_q / to_k / to_v (the down
+                                               projection is shared)
+    '<...>.attention.qkv.lora_B.weight'     -> chunked in 3 along dim 0 -> to_q/to_k/to_v
+    Returns (state_dict, n_out, n_qkv). Must run AFTER fold_lora_alpha: an '.alpha' left on
+    a key being renamed would lose track of its weights.
+"""
+    import re
+    out = {}
+    n_out = n_qkv = 0
+    for k, v in sd.items():
+        m = re.search(r"\.attention\.qkv(\.lora[._](?:A|B|down|up)[._]weight)$", k)
+        if m:
+            head, suffix = k[: m.start()], m.group(1)
+            is_down = suffix in _LORA_DOWN_SUFFIXES
+            parts = (v, v, v) if is_down else torch.chunk(v, 3, dim=0)
+            for name, part in zip(("to_q", "to_k", "to_v"), parts):
+                out[f"{head}.attention.{name}{suffix}"] = part
+            n_qkv += 1
+            continue
+        k2 = re.sub(r"\.attention\.out(?=\.lora[._](?:A|B|down|up)[._]weight$)",
+                    ".attention.to_out.0", k)
+        if k2 != k:
+            n_out += 1
+        out[k2] = v
+    return out, n_out, n_qkv
+
+
+def _lora_needs_repair(sd):
+    """True when the file carries the key shapes diffusers' Z-Image converter mishandles:
+    a fused attention.qkv, or a bare attention.out in the lora_A/lora_B form."""
+    import re
+    for k in sd:
+        if re.search(r"\.attention\.qkv\.lora[._](?:A|B|down|up)[._]weight$", k):
+            return True
+        if re.search(r"\.attention\.out\.lora_(?:A|B)\.weight$", k):
+            return True
+    return False
+
+
+def _lora_source(path):
+    """What to hand load_lora_weights for `path`: (source, extra kwargs).
+
+    By default the FOLDER + weight_name -- diffusers refuses a full path offline
+    (HF_HUB_OFFLINE: "must specify a weight_name"), and that route is the tested one. A file
+    whose keys the converter mishandles is repaired in memory first and passed as a dict.
+"""
+    try:
+        from safetensors.torch import load_file
+        sd = load_file(path)
+    except Exception as e:                      # not a safetensors, unreadable: as before
+        _dbg(f"LoRA pre-read skipped for {os.path.basename(path)}: {e}")
+        return (os.path.dirname(path) or "."), {"weight_name": os.path.basename(path)}
+    if not _lora_needs_repair(sd):
+        return (os.path.dirname(path) or "."), {"weight_name": os.path.basename(path)}
+    sd, folded = fold_lora_alpha(sd)
+    sd, n_out, n_qkv = _remap_fused_attention(sd)
+    _log(f"LoRA {os.path.basename(path)} repaired for diffusers: {folded} alpha folded, "
+         f"{n_out} attention.out -> to_out.0, {n_qkv} fused qkv split into to_q/to_k/to_v")
+    return sd, {}
+
+
 def _load_lora(pipe, *args, **kwargs):
     """pipe.load_lora_weights with REAL tensors (low_cpu_mem_usage=False).
 
@@ -1798,6 +1916,31 @@ def _lora_names(loras):
     return [f"cz_lora_{i}" for i in range(len(loras))]
 
 
+def _meta_params(model, limit=8):
+    """Names of `model`'s parameters/buffers left on the 'meta' device (declared, no data).
+    Capped at `limit`: we only need to know THAT some exist, plus a few names for the log.
+
+    One meta parameter is terminal. pipe.to(DEVICE) raises "Cannot copy out of meta tensor;
+    no data!", and peft builds an adapter on the device of the layer it wraps, so every
+    later LoRA load inherits meta and loops on "copying from a non-meta parameter in the
+    checkpoint to a meta parameter in the current model, which is a no-op". Nothing can
+    repair it in place: the model has to be reloaded from disk.
+"""
+    if model is None:
+        return []
+    found = []
+    try:
+        for gen in (model.named_parameters(), model.named_buffers()):
+            for name, t in gen:
+                if getattr(getattr(t, "device", None), "type", "") == "meta":
+                    found.append(name)
+                    if len(found) >= limit:
+                        return found
+    except Exception as e:
+        _dbg(f"_meta_params: {e}")
+    return found
+
+
 def _clear_loras(pipe):
     """Removes EVERY LoRA adapter from the pipe to start from a clean state.
 
@@ -1858,11 +2001,12 @@ def _apply_loras(pipe, force=False):
             if os.path.isfile(p):
                 an = f"cz_lora_{i}"
                 _log(f"applying LoRA: {os.path.basename(p)} (weight {w})")
-                # Pass the folder + weight_name (not the full path): otherwise
-                # diffusers in offline mode (HF_HUB_OFFLINE) refuses with "must specify a
-                # weight_name". Works online too, and with a direct local file.
-                _load_lora(pipe, os.path.dirname(p) or ".",
-                           weight_name=os.path.basename(p), adapter_name=an)
+                # _lora_source gives the folder + weight_name (diffusers offline
+                # refuses a full path: "must specify a weight_name"), or a repaired
+                # state_dict when the file uses key shapes its Z-Image converter
+                # mishandles (fused qkv / bare attention.out).
+                src, src_kw = _lora_source(p)
+                _load_lora(pipe, src, adapter_name=an, **src_kw)
                 names.append(an)
                 weights.append(float(w))
             else:
@@ -1875,6 +2019,10 @@ def _apply_loras(pipe, force=False):
         return True
     except Exception as e:
         _log(f"LoRA hot-swap failed ({e}); falling back to a full reload")
+        # The adapters are left half-injected: reusing that state would apply the wrong
+        # LoRA (the cz_lora_i names are reused) or copy from a 'meta' parameter. Wipe it
+        # BEFORE restoring the offload, while diffusers still has its hooks off.
+        _clear_loras(pipe)
         # diffusers removed the offload hooks before loading and did not get to put
         # them back: without this, the pipe stays on the CPU and EVERY later render fails,
         # including the ones that have nothing to do with this LoRA.
@@ -2414,10 +2562,19 @@ def _ensure_base():
         # type cuda", and every later one too.
         restore_offload(_BASE_PIPE, "an earlier failure")
         if _apply_loras(_BASE_PIPE):
-            _dbg("base pipeline: reusing cached (no reload)")
-            return _BASE_PIPE
-        _dbg("base pipeline: LoRA hot-swap failed -> free + reload")
-        free_vram()
+            # A LoRA load can report success and still have left parameters on 'meta'
+            # (see _meta_params). Reusing the pipe would fail on the first .to() and
+            # contaminate every later adapter -> reload from disk instead.
+            _meta = _meta_params(getattr(_BASE_PIPE, "transformer", None))
+            if not _meta:
+                _dbg("base pipeline: reusing cached (no reload)")
+                return _BASE_PIPE
+            _log(f"meta parameters on the cached transformer ({len(_meta)}, e.g. "
+                 f"{_meta[0]}) -> forced reload from disk")
+            free_vram()
+        else:
+            _dbg("base pipeline: LoRA hot-swap failed -> free + reload")
+            free_vram()
     elif _BASE_PIPE is not None:
         # Only the transformer changes (same base repo + same offload)? -> reload the
         # transformer ONLY and keep VAE + Qwen3 encoder + tokenizer in VRAM.
@@ -2467,8 +2624,19 @@ def _ensure_base():
     _off_label = (f"auto->{_resolve_auto()}" if OFFLOAD_MODE == "auto" else OFFLOAD_MODE)
     _log(f"loading Z-Image base: {BASE_REPO} (offload={_off_label}, dtype=bf16) ... "
          "first time downloads from HF, then cached")
-    pipe = _load_monitor(f"Z-Image base {BASE_REPO}",
-                         lambda: ZImagePipeline.from_pretrained(BASE_REPO, torch_dtype=DTYPE, **kwargs))
+
+    def _fresh_base(fresh_transformer=False):
+        """Builds the base pipe. fresh_transformer=True also reloads the transformer
+        OVERRIDE: a 'meta' parameter lives in that module, so handing the same instance
+        back to from_pretrained would carry the problem over. Dropping it from kwargs
+        first lets the broken one be collected."""
+        if fresh_transformer and ZIMAGE_TRANSFORMER:
+            kwargs.pop("transformer", None)
+            gc.collect()
+            kwargs["transformer"] = _load_transformer()
+        return ZImagePipeline.from_pretrained(BASE_REPO, torch_dtype=DTYPE, **kwargs)
+
+    pipe = _load_monitor(f"Z-Image base {BASE_REPO}", _fresh_base)
     # Capture the scheduler's native (flow-matching) config -> the base for building
     # the other samplers (euler/dpm2a/dpmpp2m) without losing shift/flow params.
     try:
@@ -2480,6 +2648,22 @@ def _ensure_base():
     _APPLIED_LORAS = []
     if _effective_loras():
         _apply_loras(pipe, force=True)
+        # The return value used to be ignored: a half-injected adapter went straight to the
+        # .to(DEVICE) / enable_*_cpu_offload below and raised "Cannot copy out of meta
+        # tensor; no data!". A meta parameter cannot be repaired in place -> the model is
+        # reloaded from disk, without any adapter (the render then runs LoRA-free rather
+        # than not at all, and the log says so).
+        _meta = _meta_params(getattr(pipe, "transformer", None))
+        if _meta:
+            _log(f"meta parameters left after the LoRA load ({len(_meta)}, e.g. "
+                 f"{_meta[0]}) -> reloading {BASE_REPO} from disk WITHOUT any adapter")
+            del pipe
+            gc.collect()
+            if DEVICE == "cuda":
+                torch.cuda.empty_cache()
+            _APPLIED_LORAS = []
+            pipe = _load_monitor(f"Z-Image base {BASE_REPO} (reload, no LoRA)",
+                                 lambda: _fresh_base(fresh_transformer=True))
     # Attention slicing: SET PER CALL through _set_slicing (according to the
     # resolution processed), NOT at load time. In tiles/at 1024 -> slicing OFF = native SDPA
     # attention, fast (like ComfyUI). Whole-image 2K+ -> slicing ON to avoid the 32 GB VRAM

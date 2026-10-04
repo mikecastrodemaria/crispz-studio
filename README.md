@@ -72,6 +72,14 @@ SwarmUI. On top of crispz's upscaler it adds:
   Juggernaut-Z), and **multi-LoRA** (configurable **1–10 slots** + trigger words, or
   **`<lora:name:weight>` right in the prompt** — a missing file blocks the run with a
   clear message and a **CivitAI search/download** panel, see below).
+  LoRAs from the external Z-Image trainers (a fused `attention.qkv`, a bare
+  `attention.out`, `lora_A`/`lora_B` + `.alpha`) are **repaired in memory before the
+  load**: diffusers' own converter either refused them outright (`state_dict should be
+  empty at this point but has ...to_out.0.alpha`) or loaded them with **no LoRA at all on
+  the attention**. The alphas are folded into the up weights and the attention is mapped
+  onto the model's names (`to_out.0`, `to_q/to_k/to_v`), using diffusers' own mapping for
+  the base checkpoint. Files it already handles keep the untouched path. A console line
+  says what was repaired.
   Picking a model also auto-syncs the Performance preset. Supported formats: BF16/FP16,
   **GGUF quants** (Q3..Q8, stay quantized in VRAM), and ComfyUI **FP8 / FP8-scaled /
   INT8-scaled** builds (dequantized to bf16 at load — bf16 memory footprint, the saving
