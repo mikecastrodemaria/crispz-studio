@@ -448,6 +448,14 @@ CZ_JS = """
     (root || document).querySelectorAll('input[role="listbox"]:not([spellcheck])')
       .forEach((i) => {
         i.setAttribute('spellcheck', 'false');
+        // writingsuggestions is a SEPARATE feature from spellcheck: spellcheck only governs
+        // the red underline and the right-click list, while this one is the floating bar of
+        // word candidates Chrome/Edge pop over the caret -- which is what sat on top of the
+        // open LoRA list. Measured on the running app: with spellcheck already false, the
+        // input still reported writingSuggestions === 'true'. Set per field, not on <body>:
+        // it inherits, and the prompt textareas keep both features, which is what you want
+        // on prose.
+        i.setAttribute('writingsuggestions', 'false');
         i.setAttribute('autocorrect', 'off');     // Safari / iOS
         i.setAttribute('autocapitalize', 'off');
         i.setAttribute('autocomplete', 'off');    // and the browser's own autofill popup

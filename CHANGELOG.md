@@ -5,6 +5,20 @@ The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browse
 
 
 
+## Unreleased — The dropdown popup: `spellcheck` was only half of it
+
+`spellcheck="false"` went in and the bar of word candidates ("Latin / latine / latins")
+kept appearing over the open LoRA list. Measured on the running app, the field reported
+`spellcheck === false` **and** `writingSuggestions === "true"`: they are two separate
+browser features. The underline and the right-click list are spellcheck; the floating
+candidate bar is **`writingsuggestions`**, a newer attribute Chrome and Edge honour on
+their own. Both are now set on the dropdown inputs.
+
+Set per field rather than on `<body>` — the attribute inherits, and the prompt
+`<textarea>`s keep both features, which is what you want on prose. Verified live: 11/11
+dropdowns off on both, 18/18 textareas untouched, and a dropdown Gradio remounts gets both
+within a tick.
+
 ## Unreleased — A long load no longer kills the progress bar for good
 
 **The symptom.** Loading a new Krea 2 checkpoint (a 13 GB single file, ~400 s for the
