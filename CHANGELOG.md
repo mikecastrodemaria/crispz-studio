@@ -5,6 +5,19 @@ The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browse
 
 
 
+## Unreleased — UI: no more spell-check popup over the dropdowns
+
+A Gradio dropdown is an `<input role="listbox">` holding the current value — here a file
+name (`fatf-turbo-v1_000001500.safetensors`). The browser spell-checked it and dropped its
+suggestion bar (*ligne*, *light*) straight over the open LoRA list. The injected JS now
+sets `spellcheck="false"` (plus `autocorrect`, `autocapitalize` and `autocomplete` off) on
+those inputs, on load and through a `MutationObserver` for the ones Gradio mounts later or
+rebuilds when their choices change.
+
+`role="listbox"` matches the closed lists and nothing else in this UI: the **prompts are
+`<textarea>`s and keep their spell-check**, which is what you want on prose. Verified live
+on the running app: 11/11 dropdowns silenced, 18/18 textareas untouched, and a remounted
+dropdown protected within a tick.
 ## Unreleased — LoRA: the external Z-Image trainers load, and really apply
 
 **The bug, in three links.** A LoRA from an external trainer (fused `attention.qkv`, bare

@@ -430,6 +430,39 @@ CZ_JS = """
     if (lbl && tip) tip.style.display = 'none';
   });
 
+  // --- The browser's spell-check off on the dropdown fields ---
+  // A Gradio dropdown is an <input role="listbox"> carrying the CURRENT VALUE, which here
+  // is a file name ('fatf-turbo-v1_000001500.safetensors'): the browser underlines it and
+  // drops its suggestion bar ('ligne', 'light') right over the open list. role="listbox"
+  // matches the closed lists and NOTHING else in this UI -- the prompts are <textarea>s
+  // and keep their spell-check, which is what you want on prose.
+  const noCorrect = (root) => {
+    (root || document).querySelectorAll('input[role="listbox"]:not([spellcheck])')
+      .forEach((i) => {
+        i.setAttribute('spellcheck', 'false');
+        i.setAttribute('autocorrect', 'off');     // Safari / iOS
+        i.setAttribute('autocapitalize', 'off');
+        i.setAttribute('autocomplete', 'off');    // and the browser's own autofill popup
+      });
+  };
+  noCorrect();
+  // Gradio mounts the dropdowns of a closed accordion late, and rebuilds one every time its
+  // choices change (a LoRA/model refresh) -> the attributes have to be put back. Coalesced
+  // to one pass per tick, and the :not([spellcheck]) filter keeps it to the new fields.
+  // setTimeout and not requestAnimationFrame: rAF is paused while the tab is hidden, and
+  // the fields would then stay unprotected until it came back to the foreground.
+  let ncPending = false;
+  new MutationObserver((muts) => {
+    if (ncPending) return;
+    for (const m of muts) {
+      if (m.addedNodes.length) {
+        ncPending = true;
+        setTimeout(() => { ncPending = false; noCorrect(); }, 0);
+        return;
+      }
+    }
+  }).observe(document.body, {childList: true, subtree: true});
+
   // Fullscreen and the arrows are handled natively by the Gradio gallery
   // (preview / fullscreen). No custom lightbox (it would double up on click).
 }
