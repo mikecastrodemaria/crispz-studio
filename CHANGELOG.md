@@ -5,6 +5,29 @@ The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browse
 
 
 
+## Unreleased — A long load no longer kills the progress bar for good
+
+**The symptom.** Loading a new Krea 2 checkpoint (a 13 GB single file, ~400 s for the
+one-off conversion) ended in a wall of Gradio/Starlette traceback — `404` on the SSE
+stream, `RuntimeError: Caught handled exception, but response already started.`, and
+`KeyError` in `Queue.start_progress_updates` — while the render itself carried on and
+finished.
+
+**What actually breaks.** `gradio.queueing.Queue.send_message` reads
+`pending_messages_per_session[event.session_hash]` with no guard, and `routes.py` deletes
+that entry the moment a session's SSE stream ends. A blocking event easily outlives the tab
+that started it: a reload, a dropped stream, seven minutes of patience. The push then
+raises `KeyError` inside `start_progress_updates` — and that coroutine is a **single
+long-lived asyncio task**. It dies for good: no progress is sent again, for *any* session,
+until the app is restarted. The event keeps running, which is why the image lands in the
+output folder while the UI sits frozen.
+
+**The fix.** `send_message` is patched to drop an update whose session is gone instead of
+raising, so the task survives and the bar works again as soon as the browser reconnects.
+Same approach as the existing `_disable_brotli` patch — the symbol is replaced, the
+behaviour is otherwise untouched, and it is idempotent. A test fails loudly if upstream
+changes that function, so the patch does not quietly become dead weight.
+
 ## Unreleased — Asset Browser: delete really deletes
 
 **The bug.** `delete_asset(rel)` resolved the file against `DEFAULT_OUTPUT_DIR` — the

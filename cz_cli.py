@@ -35,6 +35,39 @@ from cz_ui import (  # noqa: F401
 )
 
 
+def _keep_progress_task_alive():
+    """Keeps Gradio's progress task alive when a browser session has gone away.
+
+    gradio.queueing.Queue.send_message does pending_messages_per_session[session_hash]
+    with no guard, and routes.py deletes that entry the moment a session's SSE stream
+    ends. A long blocking event outlives the tab that started it often enough -- a 13 GB
+    Krea 2 checkpoint converts in ~400s, and a reload or a dropped stream is all it takes.
+    The push then raises KeyError inside start_progress_updates, which is a SINGLE
+    long-lived asyncio task: it dies for good, and NO progress is sent again, for any
+    session, until the app is restarted. The event itself keeps running and finishes,
+    which is why the render lands in the folder while the UI stays frozen.
+
+    Same approach as _disable_brotli: patch the symbol, keep the behaviour otherwise.
+"""
+    try:
+        from gradio import queueing
+    except Exception as e:
+        print(f"[crispz] progress-task guard not applied: {e}", file=sys.stderr)
+        return
+    q = getattr(queueing, "Queue", None)
+    original = getattr(q, "send_message", None)
+    if q is None or original is None or getattr(original, "_cz_guarded", False):
+        return
+
+    def send_message(self, event, event_message):
+        if event.session_hash not in self.pending_messages_per_session:
+            return                       # the tab is gone: drop the update, keep the task
+        return original(self, event, event_message)
+
+    send_message._cz_guarded = True
+    q.send_message = send_message
+
+
 def _disable_brotli():
     """Neutralises Gradio's brotli_middleware (an h11 'Content-Length' bug when sending
     big results). Patched on the symbol gradio.routes imports."""
@@ -1053,6 +1086,7 @@ def cli_main(argv=None):
     # No --cli and no input -> the UI
     if not args.cli and not args.input and not args.input_folder:
         _disable_brotli()  # avoids the h11 'Content-Length' bug when sending the results
+        _keep_progress_task_alive()   # a dead tab must not kill the progress bar
         # + the model folders (LoRAs/checkpoints) to serve their previews in the Asset Browser
         _model_dirs = [p for p in (getattr(cz_pipeline, "LORAS_DIR", ""),
                                    getattr(cz_pipeline, "CHECKPOINTS_DIR", ""),
