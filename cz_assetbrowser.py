@@ -47,9 +47,29 @@ def _render_spa():
     return ASSET_BROWSER_HTML.replace("__CZ_BATCH__", "1" if _batch_enabled() else "")
 
 
+# Output folders the app itself has opened the Asset Browser for. The SPA lives INSIDE the
+# folder it shows (<output>/index.html) and sends it back with a delete; an unchecked value
+# coming from the page would let the public endpoint remove anything on disk, so only a
+# folder the app registered here is accepted.
+ALLOWED_OUTPUT_DIRS = set()
+
+
+def register_output_dir(output_dir):
+    """Records an output folder as one the app opened the Asset Browser for."""
+    try:
+        ALLOWED_OUTPUT_DIRS.add(os.path.abspath(_ab_resolve_dir(output_dir)))
+    except Exception as e:
+        _dbg(f"register_output_dir: {e}")
+
+
 def _ab_resolve_dir(output_dir):
     d = output_dir or DEFAULT_OUTPUT_DIR
     return d if os.path.isabs(d) else os.path.join(HERE, d)
+
+
+# The configured folder is legal from the start: the SPA now ALWAYS sends the folder it is
+# showing, so without this the default one would be refused too.
+register_output_dir(DEFAULT_OUTPUT_DIR)
 
 
 def _thumbs_root(d):
@@ -691,9 +711,20 @@ def ab_build_catalog(output_dir, loras_dir, checkpoints_dir):
 
 def delete_asset(rel, output_dir=None):
     """Deletes an image from the output folder (+ the sidecar + the thumbnail). 'rel' is
-    the relative path supplied by the Asset Browser. Checks that it stays INSIDE the
-    folder."""
+    the relative path supplied by the Asset Browser, 'output_dir' the folder that browser
+    is showing. Checks that the target stays INSIDE that folder.
+
+    output_dir matters: the Asset Browser opens on the folder the UI points at, which is
+    not necessarily the one from config.txt. Resolving 'rel' against DEFAULT_OUTPUT_DIR
+    made every delete answer "not found" as soon as the output folder had been changed in
+    the UI -- while the SPA removed the card anyway, so the image looked deleted and was
+    still there on the next refresh.
+"""
     d = os.path.abspath(_ab_resolve_dir(output_dir or DEFAULT_OUTPUT_DIR))
+    if output_dir and d not in ALLOWED_OUTPUT_DIRS:
+        # Not a folder this app opened the browser for -> the value did not come from us.
+        _log(f"asset delete refused, unknown output folder: {d}")
+        return "folder not allowed"
     target = os.path.abspath(os.path.join(d, rel or ""))
     if not target.startswith(d + os.sep) or not os.path.isfile(target):
         return "not found"

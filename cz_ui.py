@@ -1522,7 +1522,8 @@ def _gallery_delete(path, output_dir, sort="Newest", filt=""):
 # ----------------------------------------------------------------------------
 # Asset Browser (SPA + reindex + thumbnails + delete) -> cz_assetbrowser.py.
 from cz_assetbrowser import (_ab_get, _ab_resolve_dir, ab_reindex, ab_open_fast,  # noqa: E402,F401
-                             ab_build_catalog, delete_asset, rebuild_thumbs)
+                             ab_build_catalog, delete_asset, rebuild_thumbs,
+                             register_output_dir)
 
 
 # Static assets (the Asset Browser SPA, the interface JS, the CSS) -> cz_assets.py
@@ -1542,6 +1543,7 @@ def _allow_runtime_path(output_dir):
     after launch. No effect when the Blocks is not launched yet."""
     try:
         d = os.path.abspath(_ab_resolve_dir(output_dir))
+        register_output_dir(output_dir)   # ... and a legal target for delete_asset
         paths = getattr(_DEMO, "allowed_paths", None)
         if paths is not None and d not in paths:
             paths.append(d)
@@ -3947,9 +3949,12 @@ def build_ui():
         gallery_url = gr.Textbox(visible=False)
         # An API endpoint (called by the Asset Browser to delete an image)
         del_in = gr.Textbox(visible=False)
+        # The folder the SPA is showing: it is served from inside that folder, so it reads
+        # it off its own URL. Without it the delete resolved against the STARTUP folder.
+        del_dir = gr.Textbox(visible=False)
         del_out = gr.Textbox(visible=False)
         del_btn = gr.Button(visible=False)
-        del_btn.click(delete_asset, del_in, del_out, api_name="delete_asset")
+        del_btn.click(delete_asset, [del_in, del_dir], del_out, api_name="delete_asset")
         # The CivitAI API endpoint (Asset Browser -> a model's preview/trigger words/examples)
         cf_rel = gr.Textbox(visible=False)
         cf_kind = gr.Textbox(visible=False)

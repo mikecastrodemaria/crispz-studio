@@ -5,6 +5,24 @@ The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browse
 
 
 
+## Unreleased — Asset Browser: delete really deletes
+
+**The bug.** `delete_asset(rel)` resolved the file against `DEFAULT_OUTPUT_DIR` — the
+folder from `config.txt` — while the Asset Browser opens on the folder the **UI** currently
+points at. As soon as those differed the endpoint answered `not found`… and the SPA removed
+the card anyway, without ever reading the answer. The image looked deleted and was back on
+the next refresh.
+
+**The fix.** The SPA is served from *inside* the folder it shows
+(`/gradio_api/file=<output folder>/index.html`), so it reads that folder off its own URL
+and sends it with the delete; `delete_asset` resolves against it. And it now **checks the
+answer**: a failure raises an alert instead of quietly dropping the card.
+
+Because that folder comes from the page, only one the app itself opened the browser for is
+accepted (`register_output_dir`, called where the runtime path is already allow-listed);
+the configured folder is registered at import so the common case needs nothing. A path
+climbing out of the folder was already refused and still is.
+
 ## Unreleased — The sliders can no longer be fed a value they refuse
 
 **The crash.** `gradio.exceptions.Error: 'Value 12 is greater than maximum value 8.0.'` on

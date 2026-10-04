@@ -184,10 +184,18 @@ EX.map(function(x,ix){return '<img loading="lazy" src="'+encodeURI(x.url)+'" onc
 side.innerHTML=h;lb.classList.add('open');}
 function cp(what){const e=VIEW[cur];let t=e.prompt||'';if(what==='all')t=JSON.stringify(e,null,2);
 navigator.clipboard.writeText(t).catch(()=>{});}
+// The folder this browser is showing, read off its own URL: the page is served at
+// /gradio_api/file=<output folder>/index.html. delete_asset resolves the file against the
+// folder it is GIVEN and falls back to the one from config.txt -- the wrong folder as soon
+// as the output folder is changed in the UI, which answered 'not found' while the card
+// disappeared anyway, so the image came back on the next refresh.
+function abRoot(){const m=decodeURIComponent(location.pathname).match(/file=(.*)\/[^\/]*$/);
+return m?m[1]:'';}
 async function delAsset(){const e=VIEW[cur];if(!e||!confirm('Delete '+e.file+' ?'))return;
-try{const r=await fetch('/gradio_api/call/delete_asset',{method:'POST',headers:{'Content-Type':'application/json'},
-body:JSON.stringify({data:[e.file]})});const j=await r.json();const eid=j.event_id||j.hash;
-if(eid){await fetch('/gradio_api/call/delete_asset/'+eid);}
+try{const res=await gcall('delete_asset',[e.file,abRoot()]);
+// The answer is checked: silently dropping the card on a failure is what made this look
+// like it worked.
+if(res!=='deleted'){alert('Delete failed: '+(res||'no answer from the app'));return;}
 DATA=DATA.filter(x=>x.file!==e.file);close();filter();}catch(err){alert('Delete failed: '+err);}}
 // Generic call to a Gradio endpoint (POST event_id -> GET stream -> first output)
 async function gcall(name,data){
