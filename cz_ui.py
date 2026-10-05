@@ -271,7 +271,7 @@ def _dl_path(pil, path):
 import json  # noqa: F811 (utilise par _load_styles ci-dessous)
 
 
-# _load_styles / STYLES -> cz_prompt.py (importes en tete).
+# _load_styles / STYLES -> cz_prompt.py (imported at the top).
 
 
 # CONFIG + the defaults driven by config.txt -> cz_core.py (imported at the top).
@@ -283,10 +283,10 @@ if isinstance(CONFIG.get("performance_presets"), dict) and CONFIG["performance_p
     except Exception:
         pass
 
-# MODEL_PROFILES / profile_for_model -> cz_core.py (importes en tete).
+# MODEL_PROFILES / profile_for_model -> cz_core.py (imported at the top).
 
 
-# DESCRIBE/IMPROVE/COMPOSE_INSTRUCTION -> cz_core.py (importes en tete).
+# DESCRIBE/IMPROVE/COMPOSE_INSTRUCTION -> cz_core.py (imported at the top).
 
 
 # _load_prefs_raw / _save_prefs_keys / _is_single_file / _prefs -> cz_core.py.
@@ -314,7 +314,7 @@ from cz_pipeline import (  # noqa: E402,F401
 # (__getattr__) for the smoke test; here we always read cz_pipeline.NAME / cz_face.NAME.
 
 
-# Logging (LOG_LEVEL / _log / _dbg / set_log_level) -> cz_core.py (importes en tete).
+# Logging (LOG_LEVEL / _log / _dbg / set_log_level) -> cz_core.py (imported at the top).
 # Note: direct reads of LOG_LEVEL outside cz_core use cz_core.LOG_LEVEL.
 
 
@@ -387,7 +387,7 @@ def _crop_input(label, height=280):
 
 
 # outpaint / _make_generator / _refine_whole / _feather_mask_np / _refine_tiled /
-# process_one / txt2img_run -> cz_pipeline.py (importes en tete).
+# process_one / txt2img_run -> cz_pipeline.py (imported at the top).
 
 
 # I/O image (noms, sauvegarde, metadonnees) -> cz_imageio.py (_gen_meta -> cz_pipeline).
