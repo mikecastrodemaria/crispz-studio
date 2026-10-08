@@ -5,6 +5,44 @@ The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browse
 
 
 
+## Unreleased — The live preview forms in the result gallery
+
+The image forming during the denoise had its own box above the result. It appeared and
+vanished at every render — 360 px of layout jumping twice a job — and the two boxes showed
+the same picture one after the other.
+
+It now forms IN the result gallery: the Generate handler is a generator that yields the
+denoise's frames before the finished images. One component, and ONE event writing it, so
+the race the separate box existed to avoid cannot happen — frames and result come out of
+the same generator, in order. The handler itself is untouched, fifteen exits and all: the
+wrapper runs it in a thread and copies the gradio context into it, without which the
+progress bar would go silent.
+
+The progress animation is pointed at the report below rather than the gallery
+(`show_progress_on`). Gradio's spinner covers an event's output components, and with one
+frame per denoise step the gallery strobed, image and spinner replacing each other all
+the way through.
+
+Advanced > Generation now carries a **Live preview while rendering** switch, applied live;
+config `live_preview.enabled` still sets the value at startup.
+
+Tests in `tests/test_live_preview.py`.
+
+## Unreleased — A card that refuses an offload mode no longer ends in a traceback
+
+In offload `none` the whole model is copied onto the card at once. With a big model that
+can fail in the DRIVER rather than in torch's allocator — `CUDA error: out of memory`, or
+the opaque `CUDA error: unknown error` — and the answer was a raw traceback with nothing
+to act on.
+
+The placement now walks DOWN the offload ladder, each mode needing less VRAM than the one
+before: `none` → `model` (one model at a time on the card) → `sequential` (one layer at a
+time). The log says which mode worked and which setting to change to go straight there
+next time. When every mode fails, the FIRST error is re-raised — the one describing the
+mode that was actually asked for, not the fallback's.
+
+Tests in `tests/test_offload_fallback.py`.
+
 ## Unreleased — CivitAI finds the checkpoints kept outside the app folder
 
 🔎 Fetch from CivitAI answered `model file not found` for every checkpoint of the

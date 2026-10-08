@@ -33,8 +33,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import cz_pipeline as P  # noqa: E402
 
-GRACE = 0.5      # laisse le thread appelant atteindre le verrou avant de conclure
-TIMEOUT = 10.0   # une attente qui depasse ca est un blocage, pas une lenteur
+GRACE = 0.5      # lets the calling thread reach the lock before concluding
+TIMEOUT = 10.0   # a wait longer than this is a deadlock, not slowness
 
 
 class _State:

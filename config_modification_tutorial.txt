@@ -66,6 +66,11 @@ model_profiles          Per-model auto-tuning: a substring of the model name ->
                         Turbo-style; >0 = Base/CFG models.
 default_model_profile   {steps, guidance} used when no model_profiles key matches.
 default_width/height    txt2img size (multiples of 16).
+live_preview            Live preview during the denoise: {"enabled": true,
+                        "every_n_steps": 1, "max_side": 512}. The image appears in its
+                        own box above the result while it forms. Cheap (a 16x3 matmul on
+                        the latent grid, ~1.5 ms a step) and approximate: composition and
+                        broad colours, not fine detail. enabled=false removes it entirely.
 default_gen_steps       txt2img steps.
 default_guidance        CFG. 0 = Z-Image Turbo. Z-Image Base: ~3.5-5.
 default_sampler         Default sampler: euler (native flow-matching), unipc (UniPC

@@ -24,6 +24,8 @@
     "_xyz_grid_help": "X/Y/Z comparison grid (needs job_queue). Each combo becomes a queued job; an annotated contact sheet is assembled per Z value. max_jobs caps the combo count; thumb = cell size in px; suggest = contextual value suggestions (placeholder + fill button) per axis.",
     "load_progress": {"enabled": true, "target_vram_gb": 14.0, "heartbeat_s": 2.0},
     "_load_progress_help": "Live feedback while a model loads (first run downloads from HF = minutes of silence otherwise). Terminal shows a rewritten '[crispz][load] ... 45s | 3.2 GB in VRAM' line every heartbeat_s; the UI progress bar advances (VRAM allocated / target_vram_gb). enabled=false loads directly with no monitor thread (zero cost).",
+    "live_preview": {"enabled": true, "every_n_steps": 1, "max_side": 512},
+    "_live_preview_help": "Show the image as it forms, during the denoise (Fooocus-style), in the Result gallery itself, where the finished image then replaces it. The latents are projected to RGB through a 16x3 matrix fitted against this VAE's own decoder -- 1.5 ms a step, where a real VAE decode would cost 0.2-0.5 s and nearly double an 8-step Turbo render. It is an approximation (R2 0.85): the composition and the broad colours are right, the fine detail is not. every_n_steps=2 or 3 refreshes less often, max_side caps the image sent to the browser. enabled=false removes the whole thing: no callback on the denoise, no frames, zero cost. Advanced > Generation has the same switch, applied live.",
     "caption_model": "blip-large",
     "_caption_model_help": "Auto-describe model: blip-large (default, local) | blip-base | ollama:<vision model> (listed in Prompt AI once Ollama is detected; blip-large takes over if Ollama fails)",
 
