@@ -2276,51 +2276,120 @@ def _q_restore_model_state(ms):
 
 
 def _q_label(vals, ms):
-    """A readable label for a job (its key parameters) from the snapshot."""
+    """A readable label for a job (its key parameters) from the snapshot.
+
+    The PROMPT comes first and the fields are pipe-separated: in a clickable list each row
+    is read left to right, and what tells two jobs apart is almost always the prompt, not
+    the mode. The rest keeps the same fields in the same words, so a label stays greppable.
+    """
     mode = "img2img" if vals[_Q_IDX["use_input"]] else "txt2img"
     model = os.path.basename(str(ms.get("transformer") or ms.get("base_repo") or "?"))
     n = max(1, int(vals[_Q_IDX["image_number"]] or 1))
     seed = int(vals[_Q_IDX["seed"]] if vals[_Q_IDX["seed"]] is not None else -1)
     p = str(vals[_Q_IDX["prompt"]] or "").strip().replace("\n", " ")
-    lbl = (f"{mode} · {model} · {int(vals[_Q_IDX['width']])}x{int(vals[_Q_IDX['height']])} · "
-           f"{int(vals[_Q_IDX['gen_steps']])} steps · seed {seed} · x{n}")
+    parts = []
     if p:
-        lbl += f" · “{p[:40]}{'…' if len(p) > 40 else ''}”"
-    return lbl
+        parts.append(f"{p[:48]}{'…' if len(p) > 48 else ''}")
+    parts += [mode, model,
+              f"{int(vals[_Q_IDX['width']])}x{int(vals[_Q_IDX['height']])}",
+              f"{int(vals[_Q_IDX['gen_steps']])} steps", f"seed {seed}", f"x{n}"]
+    return " | ".join(parts)
 
 
-def _q_move(items, sel, delta):
-    """Moves item `sel` by `delta`. Mutates the shared state object IN PLACE (see
-    _ui_queue_run). Returns (items, the new selection)."""
+def _q_choices(items):
+    """The job list as (label, index) pairs, for the tickable list.
+
+    Shared with build_ui on purpose. The components used to be built EMPTY while the
+    accordion title and the + Queue button were computed from the restored queue, so a
+    restart showed "Job queue (2 restored)", "+ Queue (2)" and an empty list -- nothing
+    renders the queue at page load, only an interaction does. Going through one function
+    is what stops the two sides drifting again.
+
+    '▶' marks the job that runs NEXT: the head of the queue, nothing to do with the
+    selection -- you can move or remove a job other than the one about to run.
+    """
+    return [(f"#{i + 1} {'▶ ' if i == 0 else ''}{it['label']}", i)
+            for i, it in enumerate(items)]
+
+
+def _q_summary(items):
+    """The one-line summary under the list (it used to repeat the list itself)."""
+    return (f"*{len(items)} job(s) queued — ▶ #1 runs next.*" if items
+            else "*Queue empty.*")
+
+
+def _q_picked(items, sel):
+    """`sel` -> a sorted list of valid indices. The panel sends a list (a CheckboxGroup),
+    the callers that touch one job send a bare index, and a fresh page sends None."""
+    if sel is None:
+        picked = []
+    elif isinstance(sel, (list, tuple, set)):
+        picked = [int(s) for s in sel]
+    else:
+        picked = [int(sel)]
+    return sorted({i for i in picked if 0 <= i < len(items)})
+
+
+def _q_move_many(items, sels, delta):
+    """Moves EVERY checked job one step (-1 up, +1 down), relative order kept.
+
+    A job blocked by the edge -- or by another CHECKED job that is itself blocked -- stays
+    where it is, so a selected block pressed against the top does not scramble when Up is
+    pressed again: it simply stops. Going up, the topmost selected job is handled first
+    (and the other way for down), otherwise they would swap with each other instead of
+    moving past the unselected ones.
+
+    Mutates the list IN PLACE (see _ui_queue_run) and returns (items, the new selection) --
+    the selection follows the jobs, which is the whole point of pressing Up twice.
+    """
     if not isinstance(items, list):
         items = []
-    if sel is None or not (0 <= int(sel) < len(items)):
-        return items, None
-    i, j = int(sel), int(sel) + int(delta)
-    if not (0 <= j < len(items)):
-        return items, i
-    items[i], items[j] = items[j], items[i]
-    return items, j
+    idx = _q_picked(items, sels)
+    if not idx:
+        return items, []
+    step = -1 if int(delta) < 0 else 1
+    here = set(idx)                       # where the checked jobs are, as we move them
+    for i in (idx if step < 0 else reversed(idx)):
+        j = i + step
+        if not (0 <= j < len(items)) or j in here:
+            continue                      # the edge, or another checked job
+        items[i], items[j] = items[j], items[i]
+        here.discard(i)
+        here.add(j)
+    return items, sorted(here)
 
 
-def _q_remove(items, sel):
-    """Removes item `sel`. Mutates the shared state object IN PLACE.
-    Returns (items, the adjusted selection)."""
+def _q_remove_many(items, sels):
+    """Removes every checked job. Mutates IN PLACE; the selection comes back EMPTY rather
+    than landing on a neighbour: a second Remove on a selection you did not choose would
+    delete a job you never ticked."""
     if not isinstance(items, list):
         items = []
-    if sel is None or not (0 <= int(sel) < len(items)):
-        return items, None
-    items.pop(int(sel))
-    return items, (min(int(sel), len(items) - 1) if items else None)
+    for i in reversed(_q_picked(items, sels)):     # from the end: the indices stay valid
+        items.pop(i)
+    return items, []
 
 
 def _q_render(items, sel=None):
-    """UI updates from the queue: (dropdown selection, markdown list, button label)."""
-    choices = [(f"#{i + 1} {it['label']}", i) for i, it in enumerate(items)]
-    val = int(sel) if (sel is not None and 0 <= int(sel) < len(items)) else None
-    md = "\n".join(f"{i + 1}. {it['label']}" for i, it in enumerate(items)) or "*Queue empty.*"
-    return (gr.update(choices=choices, value=val), md,
-            gr.update(value=f"+ Queue ({len(items)})"))
+    """UI updates from the queue: (the job list, a one-line summary, the button label).
+
+    The first element drives a gr.CheckboxGroup -- one tickable row per job -- and NOT a
+    dropdown any more: reading the queue in one widget and selecting in another was two
+    places for one thing, and ticking several is what makes removing five of eight jobs one
+    Remove instead of ten clicks. It takes the same update shape as a dropdown, so this
+    function keeps its arity and its eleven callers are untouched.
+
+    `sel` is normalised through _q_picked, so a caller may pass a list, a bare index or
+    None: the ones that act on a single job did not have to change.
+
+    '▶' marks the job that runs NEXT, which is the head of the queue and has nothing to do
+    with the selection: you can move or remove a job other than the one about to run.
+
+    The Markdown stopped being a list for the same reason -- it duplicated the rows -- and
+    is now a one-line summary.
+    """
+    return (gr.update(choices=_q_choices(items), value=_q_picked(items, sel)),
+            _q_summary(items), gr.update(value=f"+ Queue ({len(items)})"))
 
 
 # --- Queue persistence (survives a restart / a crash) ---------------
@@ -2426,13 +2495,15 @@ def _ui_queue_add(*args):
 
 
 def _ui_queue_move(items, sel, delta):
-    items, sel = _q_move(items, sel, delta)
+    """Up / Down: every TICKED job moves one step, relative order kept."""
+    items, sel = _q_move_many(items, sel, delta)
     _q_persist(items)
     return (items, *_q_render(items, sel))
 
 
 def _ui_queue_remove(items, sel):
-    items, sel = _q_remove(items, sel)
+    """Remove: every TICKED job goes, in one click."""
+    items, sel = _q_remove_many(items, sel)
     _q_persist(items)
     return (items, *_q_render(items, sel))
 
@@ -2445,6 +2516,21 @@ def _ui_queue_clear(items):
     else:
         items = []
     _q_persist(items)
+    return (items, *_q_render(items))
+
+
+def _ui_queue_reload():
+    """Re-seeds the queue panel from DISK on every page load.
+
+    _q_restored is read once, when build_ui runs, and gr.State hands each session a copy
+    of it. So the module-level snapshot never changes: clear the queue, reload the page,
+    and the cleared jobs came back while queue.json said 0. Building the panel from that
+    snapshot fixed the empty list but inherited the staleness.
+
+    Reading the file here is what makes a page load agree with what is persisted -- and
+    _q_persist writes on every mutation, so the file is the live truth.
+    """
+    items = _q_load()
     return (items, *_q_render(items))
 
 
@@ -4116,13 +4202,23 @@ def build_ui():
                                                       scale=1, min_width=140)
                             queue_pause_btn = gr.Button("⏸ Pause", size="sm",
                                                         scale=1, min_width=100)
-                        queue_md = gr.Markdown("*Queue empty.*")
+                        # One clickable row per job (Fooocus-style) instead of a
+                        # Markdown list plus a separate "Selected job" dropdown: the list
+                        # you read and the thing you pick are the same widget.
+                        # Built FROM the restored queue, through the same two helpers
+                        # _q_render uses: empty components next to a "(2 restored)" title
+                        # and a "+ Queue (2)" button is what a restart used to show.
+                        # Tickable, not a radio: Up/Down move everything ticked one step,
+                        # and Remove clears the lot in one click instead of ten.
+                        queue_sel = gr.CheckboxGroup(_q_choices(_q_restored),
+                                                     label="Pending jobs", value=[],
+                                                     container=True)
+                        queue_md = gr.Markdown(_q_summary(_q_restored))
                         with gr.Row():
-                            queue_sel = gr.Dropdown([], label="Selected job", scale=4)
-                            queue_up_btn = gr.Button("Up", size="sm", scale=0, min_width=60)
-                            queue_down_btn = gr.Button("Down", size="sm", scale=0, min_width=70)
-                            queue_rm_btn = gr.Button("Remove", size="sm", scale=0, min_width=90)
-                            queue_clear_btn = gr.Button("Clear", size="sm", scale=0, min_width=70)
+                            queue_up_btn = gr.Button("🔼 Up", size="sm", scale=1, min_width=80)
+                            queue_down_btn = gr.Button("🔽 Down", size="sm", scale=1, min_width=90)
+                            queue_rm_btn = gr.Button("❌ Remove", size="sm", scale=1, min_width=100)
+                            queue_clear_btn = gr.Button("🗑 Clear", size="sm", scale=1, min_width=90)
 
                 if XYZ_ENABLED:
                     with gr.Accordion("X/Y/Z grid", open=False):
@@ -5210,6 +5306,10 @@ def build_ui():
         # On page load: detects Ollama and picks the remembered vision model back up.
         demo.load(_ui_detect_ollama, [ollama_url], [ollama_model, ollama_status, caption_model_dd])
         demo.load(_ui_detect_improve_models, [ollama_url], [improve_model])
+        if JOB_QUEUE_ENABLED:
+            # ... and re-seeds the queue from disk: the module-level snapshot taken when
+            # build_ui ran goes stale on the first mutation (see _ui_queue_reload).
+            demo.load(_ui_queue_reload, None, _q_panel)
     global _DEMO
     _DEMO = demo  # to authorise on the fly the output folders changed in the UI
     return demo
