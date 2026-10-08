@@ -66,7 +66,7 @@ def resolve_dirs(loras_dir=None, checkpoints_dir=None):
         if isinstance(arg, (list, tuple)):
             return list(arg)
         if arg:
-            return [arg]                      # un dossier demande = ce dossier, rien d'autre
+            return [arg]                      # one folder asked = that one, nothing else
         main = (os.environ.get(env) or _prefs.get(pref) or CONFIG.get(cfg)
                 or os.path.join(HERE, default))
         extra = (os.environ[env_extra] if env_extra in os.environ

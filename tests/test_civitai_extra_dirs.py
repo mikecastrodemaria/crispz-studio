@@ -1,11 +1,11 @@
-"""Fiche CivitAI d'un modele range dans un dossier SUPPLEMENTAIRE.
+"""The CivitAI sheet of a model kept in an EXTRA folder.
 
-Le catalogue de l'explorateur liste le dossier principal ET le(s) dossier(s)
-supplementaire(s), mais le bouton "Fetch from CivitAI" joignait le chemin relatif au seul
-dossier principal : tout modele d'une bibliotheque rangee hors du dossier de l'app -- le
-cas normal -- repondait "model file not found". Trouve sur crispz-klein.
+The Asset Browser catalogue lists the main folder AND the extra one(s), but the "Fetch
+from CivitAI" button joined the relative path to the main folder ALONE: any model of a
+library kept outside the app folder -- the normal case -- answered "model file not found".
+Found on crispz-klein.
 
-Ni reseau ni modele : on verifie seulement la resolution du chemin.
+Neither network nor model: only the path resolution is checked.
 
 Run:  .venv/Scripts/python tests/test_civitai_extra_dirs.py
 """
@@ -21,7 +21,7 @@ import cz_ui  # noqa: E402
 
 
 class _Dirs:
-    """Un dossier principal vide + un dossier supplementaire qui contient tout."""
+    """An empty main folder + an extra folder that holds everything."""
 
     def __init__(self):
         self.main = tempfile.mkdtemp()
@@ -49,7 +49,7 @@ class _Dirs:
         return p
 
     def _enter_loras(self):
-        pass        # ce fork n'a qu'un seul dossier de LoRA
+        pass        # this fork has a single LoRA folder
 
     def _exit_loras(self):
         pass
@@ -71,8 +71,8 @@ def test_a_checkpoint_of_the_extra_folder_is_found():
 
 
 def test_a_model_missing_everywhere_falls_back_to_the_main_folder():
-    """Pas de fichier -> le chemin du dossier principal, et le message reste clair
-    ("model file not found") au lieu d'une exception."""
+    """No file -> the main folder's path, so the message stays clear ("model file not
+    found") instead of an exception."""
     with _Dirs() as d:
         got = cz_ui._civitai_model_path("ghost.safetensors", "loras")
         assert os.path.normcase(got) == os.path.normcase(

@@ -96,7 +96,7 @@ def test_resolve_dirs_arg_priority():
 
 
 def _env(**kw):
-    """Poser/retirer des variables d'environnement, et rendre l'etat precedent."""
+    """Sets/removes environment variables, and hands back the previous state."""
     old = {k: os.environ.get(k) for k in kw}
     for k, v in kw.items():
         if v is None:
@@ -107,8 +107,16 @@ def _env(**kw):
 
 
 def test_resolve_dirs_includes_the_extra_lora_folders():
-    """Le defaut qui rendait le lot muet: une bibliotheque hors du dossier de l'app."""
-    old = _env(LORAS_DIR="X:/L", LORAS_EXTRA_DIRS="Y:/Lib/Lora;Z:/autre")
+    """The defect that made the batch silent: a library outside the app folder.
+
+    The spec is built from os.pathsep BECAUSE _split_dirs splits on it, and it is ';' on
+    Windows but ':' on Linux. A Windows spec ("Y:/Lib/Lora;Z:/autre") therefore shatters on
+    a runner -- each drive letter becomes a folder of its own, 5 instead of 3 -- which is
+    how this test passed on the machine it was written on and failed on the five CIs.
+    """
+    main, extra = (("X:/L", ["Y:/Lib/Lora", "Z:/autre"]) if os.name == "nt"
+                   else ("/L", ["/Lib/Lora", "/autre"]))
+    old = _env(LORAS_DIR=main, LORAS_EXTRA_DIRS=os.pathsep.join(extra))
     try:
         loras, _ = B.resolve_dirs()
         assert len(loras) == 3, loras
@@ -119,7 +127,7 @@ def test_resolve_dirs_includes_the_extra_lora_folders():
 
 
 def test_collect_files_scans_every_lora_folder():
-    """La forme que passe l'explorateur: la liste vivante de ses dossiers."""
+    """The shape the Asset Browser passes: its live list of folders."""
     d1, d2 = tempfile.mkdtemp(), tempfile.mkdtemp()
     os.makedirs(os.path.join(d2, "Style"), exist_ok=True)
     open(os.path.join(d1, "a.safetensors"), "wb").write(b"x")
