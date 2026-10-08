@@ -5,6 +5,24 @@ The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browse
 
 
 
+## Unreleased — CivitAI finds the checkpoints kept outside the app folder
+
+🔎 Fetch from CivitAI answered `model file not found` for every checkpoint of the
+extra folder, while the Asset Browser listed it perfectly well. Found on crispz-klein,
+ported here.
+
+The catalogue scans the main folder **and** the extra one (`checkpoints_extra_dir`), but
+the per-model button joined the relative path to `CHECKPOINTS_DIR` alone. It now goes
+through `resolve_checkpoint`, the same resolution the rest of the app uses, and
+🔄 Fetch all missing is given the live folder list rather than the main folder.
+
+`resolve_dirs` is aligned with crispz-klein at the same time: it returns a LIST of LoRA
+folders and reads `loras_extra_dirs`, so the setting would be honoured the day this fork
+gains it (it has none today — one LoRA folder, period). `--loras-dir` /
+`--checkpoints-dir` now scan that folder only.
+
+Tests in `tests/test_civitai_extra_dirs.py`, plus two in `tests/test_civitai_batch.py`.
+
 ## Unreleased — The dropdown popup: `spellcheck` was only half of it
 
 `spellcheck="false"` went in and the bar of word candidates ("Latin / latine / latins")

@@ -35,20 +35,50 @@ DEFAULT_SLEEP = float(_BATCH_CFG.get("sleep", 0.5))
 DEFAULT_CHECK_UPDATES = bool(_BATCH_CFG.get("check_updates", True))
 
 
+def _split_dirs(spec):
+    """Folder list from a JSON list or from an 'a;b' string (os.pathsep or ';'), without
+    duplicates. Same rule as cz_pipeline._split_dirs, repeated here on purpose: importing
+    cz_pipeline would pull torch in and cost seconds at every launch of this script."""
+    if not spec:
+        return []
+    parts = ([p for chunk in spec.split(os.pathsep) for p in chunk.split(";")]
+             if isinstance(spec, str) else list(spec))
+    out = []
+    for p in parts:
+        p = str(p or "").strip()
+        if p and p not in out:
+            out.append(p)
+    return out
+
+
 def resolve_dirs(loras_dir=None, checkpoints_dir=None):
-    """Resolves (loras_dir, [checkpoints_dirs...]) without importing cz_pipeline (so
+    """Resolves ([loras_dirs...], [checkpoints_dirs...]) without importing cz_pipeline (so
     without loading torch). The same order of priority as cz_pipeline: the arg > the env >
-    the prefs > the config > the default <HERE>/loras|checkpoints. The 'extra' checkpoints
-    folder is included when it exists."""
-    loras = (loras_dir or os.environ.get("LORAS_DIR") or _prefs.get("loras_dir")
-             or CONFIG.get("loras_dir") or os.path.join(HERE, "loras"))
-    main_ck = (checkpoints_dir or os.environ.get("CHECKPOINTS_DIR")
-               or _prefs.get("checkpoints_dir") or CONFIG.get("checkpoints_dir")
-               or os.path.join(HERE, "checkpoints"))
-    extra_ck = (os.environ.get("CHECKPOINTS_EXTRA_DIR") or _prefs.get("checkpoints_extra_dir")
-                or CONFIG.get("checkpoints_extra_dir") or "").strip()
-    cks = [main_ck] + ([extra_ck] if extra_ck else [])
-    return os.path.abspath(loras), [os.path.abspath(c) for c in cks]
+    the prefs > the config > the default <HERE>/loras|checkpoints.
+
+    With NO argument, the EXTRA folders count too ('loras_extra_dirs',
+    'checkpoints_extra_dir'). Most libraries keep their models outside the app folder (a
+    Civitai library shared with other tools): scanning the main folder alone found nothing
+    at all and the batch exited with "no models found". An explicit argument names exactly
+    what to scan -- one folder, or a LIST of folders (what the Asset Browser passes: its
+    live list)."""
+    def _folders(arg, env, pref, cfg, env_extra, pref_extra, default):
+        if isinstance(arg, (list, tuple)):
+            return list(arg)
+        if arg:
+            return [arg]                      # un dossier demande = ce dossier, rien d'autre
+        main = (os.environ.get(env) or _prefs.get(pref) or CONFIG.get(cfg)
+                or os.path.join(HERE, default))
+        extra = (os.environ[env_extra] if env_extra in os.environ
+                 else (_prefs.get(pref_extra) or CONFIG.get(pref_extra)))
+        return [main] + _split_dirs(extra)
+
+    loras = _folders(loras_dir, "LORAS_DIR", "loras_dir", "loras_dir",
+                     "LORAS_EXTRA_DIRS", "loras_extra_dirs", "loras")
+    cks = _folders(checkpoints_dir, "CHECKPOINTS_DIR", "checkpoints_dir", "checkpoints_dir",
+                   "CHECKPOINTS_EXTRA_DIR", "checkpoints_extra_dir", "checkpoints")
+    return ([os.path.abspath(d) for d in _split_dirs(loras)],
+            [os.path.abspath(c) for c in _split_dirs(cks)])
 
 
 def _list_safetensors(dirs):
@@ -86,7 +116,7 @@ def collect_files(kind, loras_dir=None, checkpoints_dir=None, shard=None):
     loras, cks = resolve_dirs(loras_dir, checkpoints_dir)
     files = []
     if kind in ("loras", "all"):
-        files += _list_safetensors([loras])
+        files += _list_safetensors(loras)
     if kind in ("models", "all"):
         files += _list_safetensors(cks)
     return _apply_shard(files, shard)
@@ -191,8 +221,12 @@ def main(argv=None):
                          "ones missing info. Previews are NOT overwritten unless --force.")
     ap.add_argument("--shard", default=None, metavar="i/m",
                     help="Process only shard i of m (1-based) — run several in parallel.")
-    ap.add_argument("--loras-dir", default=None)
-    ap.add_argument("--checkpoints-dir", default=None)
+    ap.add_argument("--loras-dir", default=None,
+                    help="Scan THIS folder only (default: the configured folder AND its "
+                         "extras, 'loras_extra_dirs').")
+    ap.add_argument("--checkpoints-dir", default=None,
+                    help="Scan THIS folder only (default: the configured folder AND its "
+                         "extra, 'checkpoints_extra_dir').")
     ap.add_argument("--api-key", default=None, help="CivitAI API key (else config/prefs).")
     ap.add_argument("--sleep", type=float, default=DEFAULT_SLEEP,
                     help="Seconds to wait between requests (rate-limit friendly).")

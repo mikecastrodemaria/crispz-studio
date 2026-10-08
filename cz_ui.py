@@ -26,6 +26,7 @@ import base64
 import csv
 import glob
 import time
+import functools
 import uuid
 import datetime
 import numpy as np
@@ -138,6 +139,11 @@ ASPECT_RATIOS = {
 # Cost: 1.0 to 1.6 Mpix. Beyond ~1.3 Mpix it is slower, and a model trained around a million
 # pixels can drift in composition there (a duplicated subject) -- to be chosen when the
 # recipe you follow asks for it, not by default.
+# Live-preview stream: how often the UI polls the denoise's slot, and the hard ceiling
+# that stops the generator if a flag is ever left raised (a crash between begin and end).
+_LIVE_PREVIEW_POLL = 0.25
+_LIVE_PREVIEW_TIMEOUT = 3600
+
 # Bounds of the numeric controls, declared ONCE: the sliders are built from this table and
 # every path that WRITES into them (PNG Info, a preset file) clamps through _clamp_ui.
 #
@@ -987,22 +993,52 @@ def _missing_lora_report(missing):
             f"pre-filled — Search, pick a candidate (Z-Image base first) and Download.")
 
 
-def _ui_civitai_lora_search(query, z_only):
-    """Searches CivitAI for a LoRA by name. An empty field -> picks up the last name not
-    found in a prompt (<lora:...>). Returns (the field, the candidates, the state, the
-    status): the state carries the candidate dicts (label -> candidate) for the Download
-    button."""
+# ----- A CivitAI search (Models > LoRA), to download a LoRA by name -----
+# CivitAI does NOT spell the base model the way this app names it: the LoRAs that load here
+# come back labelled 'ZImageTurbo', 'ZImageBase', 'Z-Image'. Those labels are read from the API and from the
+# sidecars of a real LoRA folder, not guessed -- and that is why the comparison below is a
+# normalised PREFIX. An equality match against the app's own name for the base finds
+# NOTHING, which is what the "only" filter used to do in crispz-studio: ticked by default,
+# it silently emptied every search.
+_CIV_FAMILY = "ZImage"           # what loads here
+_CIV_PREFERRED = ""          # ranked first inside the family ("" = no sub-tier)
+_CIV_FILTER_LABEL = "Z-Image only"
+
+
+def _civitai_base_prefixes():
+    """(the family prefix, the preferred sub-base), normalised, for ranking the candidates."""
+    return (cz_civitai._norm_base(_CIV_FAMILY), cz_civitai._norm_base(_CIV_PREFERRED))
+
+
+def _ui_civitai_lora_search(query, family_only):
+    """Searches CivitAI for a LoRA by name. Returns (the field, the candidates, the state,
+    the status): the state carries the candidate dicts (label -> candidate) for the Download
+    button. The candidates of the preferred base come first, then the rest of the family,
+    then the foreign bases -- which are shown, not hidden, because the base is in the label
+    and a foreign one is sometimes what you were looking for.
+
+    An empty field picks up the last name a prompt asked for and did not find
+    (<lora:...>), which is the whole reason this panel is reachable from that failure."""
     q = (query or "").strip() or (_LAST_MISSING_LORAS[0] if _LAST_MISSING_LORAS else "")
     if not q:
         return (gr.update(), gr.update(choices=[], value=None), {},
                 "Type a LoRA name to search (or use a `<lora:...>` tag in the prompt first).")
-    cands = cz_civitai.search_loras(q, limit=10, base_model="Z-Image")
-    if z_only:
-        _zi = cz_civitai._norm_base("Z-Image")
-        cands = [c for c in cands if cz_civitai._norm_base(c["baseModel"]) == _zi]
+    cands = cz_civitai.search_loras(q, limit=10)
+    fam, pref = _civitai_base_prefixes()
+
+    def _rank(c):
+        b = cz_civitai._norm_base(c.get("baseModel"))
+        if pref and b.startswith(pref):
+            return 0
+        return 1 if b.startswith(fam) else 2
+
+    cands.sort(key=_rank)                        # stable: CivitAI's own order is kept
+    if family_only:
+        cands = [c for c in cands
+                 if cz_civitai._norm_base(c.get("baseModel")).startswith(fam)]
     if not cands:
-        hint = (" with a Z-Image base — untick 'Z-Image only' to see other bases (they "
-                "won't run on Z-Image)." if z_only else
+        hint = (f" with a {_CIV_FAMILY} base — untick '{_CIV_FILTER_LABEL}' to see the "
+                f"other bases (they will not load here)." if family_only else
                 ". Check the spelling, or the model may not be on CivitAI.")
         return (gr.update(value=q), gr.update(choices=[], value=None), {},
                 f"No CivitAI result for **{q}**{hint}")
@@ -1017,8 +1053,14 @@ def _ui_civitai_lora_search(query, z_only):
             label += f" (v{c['versionId']})"
         state[label] = c
         labels.append(label)
+    note = ""
+    if pref:
+        n_pref = sum(1 for c in cands
+                     if cz_civitai._norm_base(c.get("baseModel")).startswith(pref))
+        note = (f" {n_pref} with a {_CIV_PREFERRED} base." if n_pref
+                else f" None with a {_CIV_PREFERRED} base — check the base in brackets.")
     return (gr.update(value=q), gr.update(choices=labels, value=labels[0]), state,
-            f"{len(labels)} candidate(s) for **{q}** — pick one, then Download. "
+            f"{len(labels)} candidate(s) for **{q}** — pick one, then Download.{note} "
             f"[Open on CivitAI]({cands[0]['url']})")
 
 
@@ -1035,11 +1077,10 @@ def _ui_civitai_lora_download(label, state, progress=gr.Progress()):
 
     res = cz_civitai.download_model_file(cand, cz_pipeline.LORAS_DIR, progress=_prog)
     if not res.get("success"):
-        return tuple(gr.update() for _ in range(MAX_LORA_SLOTS)) + ("❌ " + res.get("message", "download failed"),)
+        return tuple(gr.update() for _ in range(MAX_LORA_SLOTS)) \
+            + ("❌ " + res.get("message", "download failed"),)
     rel = os.path.relpath(res["path"], cz_pipeline.LORAS_DIR).replace(os.sep, "/")
-    stem = os.path.splitext(os.path.basename(rel))[0]
-    msg = (f"✅ {res['message']}  \nSelect **{rel}** in a LoRA slot, or call it from the "
-           f"prompt with `<lora:{stem}>` (weight: `<lora:{stem}:0.8>`).")
+    msg = f"✅ {res['message']}  \nSelect **{rel}** in a LoRA slot."
     lr = ["None"] + list_loras()
     return tuple(gr.update(choices=lr) for _ in range(MAX_LORA_SLOTS)) + (msg,)
 
@@ -1658,6 +1699,20 @@ def _ui_set_ab_cache(path):
             "launch), then Rebuild ALL thumbnails.")
 
 
+def _civitai_model_path(rel, kind):
+    """Absolute path of an Asset Browser entry, from its path RELATIVE to its own folder.
+
+    The catalogue lists the extra checkpoints folder too (_checkpoint_dirs). Joining that
+    relative path to the MAIN folder alone answered "model file not found" for every
+    checkpoint stored elsewhere. LoRAs have a single folder in this fork (no
+    'loras_extra_dirs'), so for them the main folder IS the whole list."""
+    rel = str(rel or "").strip()
+    if not rel:
+        return ""
+    return (os.path.join(cz_pipeline.LORAS_DIR, rel) if kind == "loras"
+            else cz_pipeline.resolve_checkpoint(rel))
+
+
 def _api_civitai_fetch(rel, kind):
     """API (Asset Browser): starts a model's CivitAI enrichment IN THE BACKGROUND and
     returns the job's key immediately. The client then polls civitai_progress.
@@ -1665,8 +1720,7 @@ def _api_civitai_fetch(rel, kind):
     phase, then rebuilds the LoRAs/Models catalogue."""
     try:
         import cz_civitai
-        mdir = cz_pipeline.LORAS_DIR if kind == "loras" else cz_pipeline.CHECKPOINTS_DIR
-        path = os.path.join(mdir, rel or "")
+        path = _civitai_model_path(rel, kind)
         key = os.path.abspath(path)
         _bg_job_set(key, phase="start", frac=None, text="Starting…",
                          done=False, ok=False, message="")
@@ -1761,8 +1815,11 @@ def _api_civitai_fetch_all(kind):
                 api_key = getattr(cz_civitai, "API_KEY", None)
                 summary = cz_civitai_batch.run(
                     kind=kind, api_key=api_key, progress=_progress,
-                    loras_dir=cz_pipeline.LORAS_DIR,           # the LIVE folders (changeable in the UI)
-                    checkpoints_dir=cz_pipeline.CHECKPOINTS_DIR)
+                    # the LIVE folders (changeable in the UI), the EXTRA checkpoints
+                    # folder included: the catalogue shows it, so "fetch all missing" must
+                    # cover it. One LoRA folder in this fork -> it is the whole list.
+                    loras_dir=cz_pipeline.LORAS_DIR,
+                    checkpoints_dir=cz_pipeline._checkpoint_dirs())
                 try:
                     ab_build_catalog(DEFAULT_OUTPUT_DIR, cz_pipeline.LORAS_DIR,
                                      cz_pipeline._checkpoint_dirs())
@@ -1857,6 +1914,54 @@ def _vram_hint(e):
     return ("  \n**VRAM full**, even after clearing the cache: close the other GPU apps "
             "(ComfyUI...), lower Image number, the upscale factor or the number of "
             "references. If the next render fails too, restart crispz-studio.")
+
+
+def _ui_preview_stream():
+    """Streams the denoise's latent preview into its component, while the render runs.
+
+    A SECOND event on the Generate button: turning _ui_generate itself into a generator
+    would mean rewriting its fifteen exits. It needs concurrency_limit=None, otherwise
+    gradio's default limit of 1 serialises the two and the preview would only show once
+    the render is over.
+"""
+    if not cz_pipeline.LIVE_PREVIEW_ENABLED:
+        yield gr.update()
+        return
+    last, t0 = -1, time.time()
+    started = False
+    while True:
+        p = cz_pipeline.preview_snapshot()
+        started = started or p["busy"]
+        if p["img"] is not None and p["seq"] != last:
+            last = p["seq"]
+            lbl = (f"Preview — step {p['step']}/{p['total']}" if p["total"]
+                   else f"Preview — step {p['step']}")
+            yield gr.update(value=p["img"], visible=True, label=lbl)
+        if started and not p["busy"]:
+            break
+        if not started and time.time() - t0 > 10:
+            break          # the render never armed it (an early error, preview off)
+        if time.time() - t0 > _LIVE_PREVIEW_TIMEOUT:
+            break          # never loop forever on a flag someone failed to clear
+        time.sleep(_LIVE_PREVIEW_POLL)
+    yield gr.update(value=None, visible=False)
+
+
+def _with_live_preview(fn):
+    """Arms the preview around a whole Generate click and disarms it whatever happens.
+
+    Wrapping is what keeps _ui_generate untouched: one click chains txt2img, upscale and
+    refine, and every exit -- including an exception -- has to clear the flag, or the
+    stream above would spin until its timeout.
+"""
+    @functools.wraps(fn)
+    def _wrapped(*a, **kw):
+        cz_pipeline.preview_begin()
+        try:
+            return fn(*a, **kw)
+        finally:
+            cz_pipeline.preview_end()
+    return _wrapped
 
 
 def _ui_generate(prompt, negative, styles, style_random, use_input, input_image,
@@ -4104,6 +4209,12 @@ def build_ui():
         with gr.Row():
             # ===== Colonne principale (apercu en haut, prompt + Generate, negative, input) =====
             with gr.Column(scale=3):
+                # Live preview: its own component rather than the result gallery. Two
+                # concurrent events writing the same output race, and the loser would be
+                # the finished image if a last preview frame landed after it.
+                live_preview = gr.Image(label="Preview (rendering)", visible=False,
+                                        interactive=False, show_download_button=False,
+                                        elem_id="cz_live_preview", height=360)
                 out = gr.Gallery(label="Result", elem_id="cz_result", columns=2,
                                  object_fit="contain", preview=True, allow_preview=True,
                                  show_fullscreen_button=True, show_download_button=True)
@@ -4928,7 +5039,7 @@ def build_ui():
                                     civ_lora_q = gr.Textbox(
                                         show_label=False, scale=3, container=False,
                                         placeholder="LoRA name (empty = last missing <lora:...> tag)")
-                                    civ_lora_zonly = gr.Checkbox(value=True, label="Z-Image only",
+                                    civ_lora_zonly = gr.Checkbox(value=True, label=_CIV_FILTER_LABEL,
                                                                  scale=1)
                                     civ_lora_search_btn = gr.Button("Search", size="sm",
                                                                     variant="primary", scale=1,
@@ -5270,7 +5381,10 @@ def build_ui():
                        tile, overlap, refine_tile, refine_overlap, save_mode, output_dir, output_format,
                        history, auto_upscale_cb]
         _gen_outputs = [out, report, history, history_gallery]
-        btn.click(_ui_generate, inputs=_gen_inputs, outputs=_gen_outputs)
+        btn.click(_with_live_preview(_ui_generate), inputs=_gen_inputs,
+                  outputs=_gen_outputs)
+        # concurrency_limit=None: must run ALONGSIDE the render, not after it.
+        btn.click(_ui_preview_stream, None, [live_preview], concurrency_limit=None)
         if JOB_QUEUE_ENABLED:
             _q_panel = [queue_state, queue_sel, queue_md, queue_add_btn]
             queue_add_btn.click(_ui_queue_add, [*_gen_inputs, queue_state], _q_panel)
