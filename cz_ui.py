@@ -900,15 +900,19 @@ def _ui_set_lora_slots(n):
     return [gr.update(visible=(i < n)) for i in range(MAX_LORA_SLOTS)]
 
 
-def _refresh_loras(new_dir):
-    """Changes the loras folder + refreshes ALL the slots (N is configurable) + persists."""
+def _refresh_loras(new_dir, extra_dirs=""):
+    """Changes the loras folder (+ the 'a;b' extras) + refreshes ALL the slots (N is
+    configurable) + persists."""
     set_loras_dir(new_dir)
+    cz_pipeline.set_loras_extra_dirs(extra_dirs)
     try:
-        _save_prefs_keys({"loras_dir": cz_pipeline.LORAS_DIR})   # persiste -> survit au reboot
+        _save_prefs_keys({"loras_dir": cz_pipeline.LORAS_DIR,    # persists -> survives a reboot
+                          "loras_extra_dirs": list(cz_pipeline.LORAS_EXTRA_DIRS)})
     except Exception:
         pass
     lr = ["None"] + list_loras()
-    status = f"{len(lr) - 1} LoRA(s) in {cz_pipeline.LORAS_DIR} (saved)."
+    locs = " + ".join(cz_pipeline._lora_dirs())
+    status = f"{len(lr) - 1} LoRA(s) in {locs} (saved)."
     return tuple(gr.update(choices=lr) for _ in range(MAX_LORA_SLOTS)) + (status,)
 
 
@@ -926,7 +930,7 @@ def _apply_loras(*vals):
 def _path_for_lora(name):
     if not name or name in ("None", "none", ""):
         return None
-    return name if os.path.isabs(name) else os.path.join(cz_pipeline.LORAS_DIR, name)
+    return cz_pipeline.resolve_lora_path(name)
 
 
 def _lora_keywords_for(names):
@@ -1133,6 +1137,7 @@ def _save_paths_to_prefs(esrgan_dir, checkpoints_dir=None, checkpoints_extra_dir
                       "checkpoints_dir": cz_pipeline.CHECKPOINTS_DIR,
                       "checkpoints_extra_dir": cz_pipeline.CHECKPOINTS_EXTRA_DIR,
                       "loras_dir": cz_pipeline.LORAS_DIR,
+                      "loras_extra_dirs": list(cz_pipeline.LORAS_EXTRA_DIRS),
                       "wildcards_dir": cz_prompt.WILDCARDS_DIR})
     return (f"Saved to {PREFS_PATH}: esrgan_dir, zimage_model, checkpoints_dir, "
             f"checkpoints_extra_dir, loras_dir, wildcards_dir={cz_prompt.WILDCARDS_DIR}")
@@ -1621,7 +1626,7 @@ def _ui_gallery_open(output_dir):
     # The LoRAs / Models catalogue (Asset Browser tabs), built in the background.
     try:
         threading.Thread(target=ab_build_catalog,
-                         args=(output_dir, cz_pipeline.LORAS_DIR, cz_pipeline._checkpoint_dirs()),
+                         args=(output_dir, cz_pipeline._lora_dirs(), cz_pipeline._checkpoint_dirs()),
                          daemon=True).start()
     except Exception as e:
         _dbg(f"catalog build spawn failed: {e}")
@@ -1645,7 +1650,7 @@ def _asset_focus_url(kind, name):
     # The catalogue is built SYNCHRONOUSLY here (it is fast: no hashing) so that the
     # target is present in loras.json/models.json by the time the SPA focuses on it.
     try:
-        ab_build_catalog(out_dir, cz_pipeline.LORAS_DIR, cz_pipeline._checkpoint_dirs())
+        ab_build_catalog(out_dir, cz_pipeline._lora_dirs(), cz_pipeline._checkpoint_dirs())
     except Exception as e:
         _dbg(f"catalog build (focus) failed: {e}")
     focus = ""
@@ -1709,7 +1714,7 @@ def _civitai_model_path(rel, kind):
     rel = str(rel or "").strip()
     if not rel:
         return ""
-    return (os.path.join(cz_pipeline.LORAS_DIR, rel) if kind == "loras"
+    return (cz_pipeline.resolve_lora_path(rel) if kind == "loras"
             else cz_pipeline.resolve_checkpoint(rel))
 
 
@@ -1732,7 +1737,7 @@ def _api_civitai_fetch(rel, kind):
             try:
                 res = cz_civitai.fetch_civitai_for_model(path, progress=_progress)
                 try:
-                    ab_build_catalog(DEFAULT_OUTPUT_DIR, cz_pipeline.LORAS_DIR,
+                    ab_build_catalog(DEFAULT_OUTPUT_DIR, cz_pipeline._lora_dirs(),
                                      cz_pipeline._checkpoint_dirs())
                 except Exception as e:
                     _dbg(f"catalog rebuild after civitai fetch failed: {e}")
@@ -1768,7 +1773,7 @@ def _api_thumbs_rebuild(kind):
             try:
                 _allow_runtime_path(DEFAULT_OUTPUT_DIR)
                 res = rebuild_thumbs(kind, DEFAULT_OUTPUT_DIR,
-                                     loras_dir=cz_pipeline.LORAS_DIR,
+                                     loras_dir=cz_pipeline._lora_dirs(),
                                      checkpoints_dir=cz_pipeline._checkpoint_dirs(),
                                      force=True, progress=_progress)
                 _bg_job_set(key, phase="done", done=True, ok=True, summary=res,
@@ -1818,10 +1823,10 @@ def _api_civitai_fetch_all(kind):
                     # the LIVE folders (changeable in the UI), the EXTRA checkpoints
                     # folder included: the catalogue shows it, so "fetch all missing" must
                     # cover it. One LoRA folder in this fork -> it is the whole list.
-                    loras_dir=cz_pipeline.LORAS_DIR,
+                    loras_dir=cz_pipeline._lora_dirs(),
                     checkpoints_dir=cz_pipeline._checkpoint_dirs())
                 try:
-                    ab_build_catalog(DEFAULT_OUTPUT_DIR, cz_pipeline.LORAS_DIR,
+                    ab_build_catalog(DEFAULT_OUTPUT_DIR, cz_pipeline._lora_dirs(),
                                      cz_pipeline._checkpoint_dirs())
                 except Exception as e:
                     _dbg(f"catalog rebuild after batch failed: {e}")
@@ -5009,6 +5014,13 @@ def build_ui():
 
                         with gr.Accordion("\U0001F9E9 LoRA (combinable)", open=False):
                             lora_dir_tb = gr.Textbox(value=cz_pipeline.LORAS_DIR, label="LoRA folder")
+                            lora_extra_dirs_tb = gr.Textbox(
+                                value=";".join(cz_pipeline.LORAS_EXTRA_DIRS),
+                                label="Extra LoRA folders (optional, ';' separated)",
+                                placeholder="e.g. F:\\sdlibs\\models\\Lora\\_shared",
+                                info="Merged into the LoRA lists (slots, Asset Browser, "
+                                     "CivitAI enrichment). Same file name: the main folder "
+                                     "wins. Config `loras_extra_dirs`.")
                             gr.Markdown(
                                 "*Number of slots is set in Advanced > Generation "
                                 "(LoRA slots), or config `lora_slots`. Weight range is "
@@ -5280,7 +5292,8 @@ def build_ui():
                                     [ckpt_status, gen_steps, guidance, performance])
         te_dd.change(_ui_set_text_encoder, [te_dd], [te_status])
         te_refresh_btn.click(_ui_refresh_text_encoders, None, [te_dd, te_status])
-        lora_refresh_btn.click(_refresh_loras, [lora_dir_tb], lora_dds + [lora_status])
+        lora_refresh_btn.click(_refresh_loras, [lora_dir_tb, lora_extra_dirs_tb],
+                               lora_dds + [lora_status])
         # slots entrelaces: dd1, lw1, dd2, lw2, ... (attendu par _apply_loras/_ui_loras_apply)
         _lora_slots = [c for _pair in zip(lora_dds, lora_lws) for c in _pair]
         for _c in lora_dds:

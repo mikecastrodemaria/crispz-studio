@@ -125,6 +125,8 @@
     "_gpu_busy_warn_gb_help": "Warn when another process (a second crispz instance, ComfyUI, a game) already holds this many GB of VRAM: sharing the GPU pushes renders into shared RAM and turns seconds into minutes per step, with no error message. 0 = no warning.",
     "gpu_busy_warn_gb": 2.0,
     "loras_dir": "",
+    "_loras_extra_dirs_help": "Extra LoRA folders merged with loras_dir (list, or 'a;b'). Same file name: loras_dir wins. The LoRA slots, the Asset Browser and the CivitAI enrichment all read the merged list.",
+    "loras_extra_dirs": [],
     "wildcards_dir": "",
     "default_lora_weight": 1.0,
     "_default_lora_weight_help": "Weight a LoRA slot starts at. Must sit inside lora_weight_min..lora_weight_max (it is clamped into the range otherwise).",
