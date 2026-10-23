@@ -66,7 +66,7 @@ uvicorn==0.35.0
 # is conservative: checked against this code base (build_ui, saving +
 # metadata, thumbnails, RankFilter, crop, WebP), Pillow 12 works. The
 # gradio <6 pin stays deliberate (the Brotli/h11 bug, see requirements.txt).
-pillow==12.3.0
+pillow==13.0.0
 pillow-avif-plugin==1.5.5
 numpy==1.26.4
 scipy==1.14.0
