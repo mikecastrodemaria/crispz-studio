@@ -1658,7 +1658,9 @@ def _asset_focus_url(kind, name):
         focus = name if name and name != "None" else ""            # list_loras -> a relative path
     else:  # models: the HF base repo = no local file -> no focus (the tab alone)
         if name and name not in ZIMAGE_BASE_REPOS:
-            focus = os.path.basename(name)                          # the models catalogue indexed by file name
+            # the models catalogue is indexed by the path relative to its folder
+            # ('ZIB/model.safetensors'), the same entry list_checkpoints shows.
+            focus = cz_pipeline.checkpoint_relname(name)
     url = "/gradio_api/file=" + os.path.abspath(idx).replace("\\", "/") + "?src=" + kind
     if focus:
         url += "&focus=" + urllib.parse.quote(focus)
@@ -3480,13 +3482,16 @@ def _ensure_model_presets(checkpoints):
     except Exception:
         existing = set()
     for f in checkpoints or []:
-        # Ignores the HF base repos (Tongyi-MAI/...): those are not local files.
-        if not isinstance(f, str) or f in ZIMAGE_BASE_REPOS or "/" in f or "\\" in f:
+        # Ignores the HF base repos (Tongyi-MAI/...): those are not local files. A model
+        # filed in a subfolder ('ZIB/model.safetensors') gets a preset named after the
+        # file alone.
+        if (not isinstance(f, str) or f in ZIMAGE_BASE_REPOS
+                or not f.lower().endswith(cz_pipeline._CHECKPOINT_EXTS)):
             continue
-        name = _preset_sanitize(os.path.splitext(f)[0])
+        name = _preset_sanitize(os.path.splitext(os.path.basename(f))[0])
         if name in existing:
             continue
-        steps, g = profile_for_model(f)
+        steps, g = profile_for_model(os.path.basename(f))
         data = {
             "prompt": "",
             "negative": CONFIG.get("default_negative_prompt", "") or "",

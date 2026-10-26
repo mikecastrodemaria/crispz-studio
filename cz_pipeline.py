@@ -134,8 +134,9 @@ def resolve_lora_path(name):
     name = str(name or "")
     if os.path.isabs(name):
         return name
+    rel = name.replace("\\", "/").strip("/")
     for d in _lora_dirs():
-        p = os.path.join(d, name)
+        p = os.path.join(d, *rel.split("/")) if rel else d
         if os.path.isfile(p):
             return p
     return os.path.join(LORAS_DIR, name)
@@ -1109,76 +1110,133 @@ def _checkpoint_dirs():
     return dirs
 
 
+# Folders never scanned for checkpoints (and LoRAs): tool caches and the Asset Browser's
+# own index. Mirrors _scan_catalog in cz_assetbrowser.
+_SKIP_MODEL_SUBDIRS = ("_index", ".cache", "recipes")
+_CHECKPOINT_EXTS = (".safetensors", ".ckpt", ".pt", ".sft", ".gguf")
+
+
+def _walk_model_files(d, exts):
+    """Yields (relative path with '/', absolute path) of every file under `d` whose name
+    ends with `exts`, RECURSIVELY, skipping _SKIP_MODEL_SUBDIRS and hidden folders. The
+    relative path is what the dropdowns show ('ZIB/model.safetensors')."""
+    if not d or not os.path.isdir(d):
+        return
+    for root, dirs, files in os.walk(d):
+        dirs[:] = sorted(x for x in dirs
+                         if x not in _SKIP_MODEL_SUBDIRS and not x.startswith("."))
+        for f in sorted(files):
+            if f.lower().endswith(exts):
+                fp = os.path.join(root, f)
+                yield os.path.relpath(fp, d).replace(os.sep, "/"), fp
+
+
 def list_checkpoints():
     """Single-file Z-Image models (.safetensors, .gguf) from the checkpoints folders (main
-    + extra, merged into a single list). ComfyUI 'scaled' FP8/INT8 are listed (dequantized at
-    load time); these stay excluded: stray LoRAs, SVDQuant/Nunchaku (a dedicated runtime is
-    required), GGUFs of another architecture or in the stable-diffusion.cpp layout. On a
-    duplicate file name, the main folder wins.
+    + extra, merged into a single list), SUBFOLDERS INCLUDED: an entry is the path relative
+    to its folder with '/' ('ZIB/model.safetensors'), a root file keeps its bare name.
+    resolve_checkpoint turns an entry back into the absolute path. ComfyUI 'scaled'
+    FP8/INT8 are listed (dequantized at load time); these stay excluded: stray LoRAs,
+    SVDQuant/Nunchaku (a dedicated runtime is required), GGUFs of another architecture or
+    in the stable-diffusion.cpp layout. On a duplicate relative path, the main folder wins.
 """
     out = []
     seen = set()
     for d in _checkpoint_dirs():
-        if not os.path.isdir(d):
-            continue
-        for f in os.listdir(d):
-            if f in seen:
+        for rel, fp in _walk_model_files(d, _CHECKPOINT_EXTS):
+            if rel.lower() in seen:
                 continue
-            if not f.lower().endswith((".safetensors", ".ckpt", ".pt", ".sft", ".gguf")):
-                continue
+            f = os.path.basename(fp)
             if f.lower().endswith(".safetensors"):
-                reason = _safetensors_unsupported(os.path.join(d, f))
+                reason = _safetensors_unsupported(fp)
                 if reason:
-                    _log(f"checkpoint skipped ({reason}): {f}")
+                    _log(f"checkpoint skipped ({reason}): {rel}")
                     continue
             if f.lower().endswith(".gguf"):
-                a = _gguf_arch(os.path.join(d, f))
+                a = _gguf_arch(fp)
                 # a=None -> an unreadable header: let it through (do not discard
                 # wrongly).
                 if a and a != GGUF_ARCH:
                     _log(f"checkpoint skipped (GGUF architecture '{a}', this build only "
                          f"loads '{GGUF_ARCH}' = Z-Image; that model needs its own "
-                         f"pipeline and text encoder/VAE): {f}")
+                         f"pipeline and text encoder/VAE): {rel}")
                     continue
-                lay = _gguf_layout_unsupported(os.path.join(d, f))
+                lay = _gguf_layout_unsupported(fp)
                 if lay:
-                    _log(f"checkpoint skipped ({lay}): {f}")
+                    _log(f"checkpoint skipped ({lay}): {rel}")
                     continue
-            seen.add(f)
-            out.append(f)
+            seen.add(rel.lower())
+            out.append(rel)
     return sorted(out)
 
 
 def resolve_checkpoint(name):
-    """Absolute path of a single-file checkpoint from its file name, looked up in the
-    checkpoints folders (main then extra). Returns name as is when it is already absolute;
-    falls back to the main folder when not found."""
+    """Absolute path of a single-file checkpoint from a list_checkpoints entry (a path
+    relative to its folder, '/' or '\', subfolders included), looked up in the checkpoints
+    folders (main then extra). Returns name as is when it is already absolute. A BARE file
+    name that is not at a root is then searched in the subfolders (a preset or a pref saved
+    before the model was filed away keeps working); falls back to the main folder when
+    not found."""
     if not name or os.path.isabs(name):
         return name
+    rel = str(name).replace("\\", "/").strip("/")
     for d in _checkpoint_dirs():
-        p = os.path.join(d, name)
+        p = os.path.join(d, *rel.split("/"))
         if os.path.isfile(p):
             return p
+    if "/" not in rel:
+        found = checkpoint_by_basename(rel)
+        if found:
+            return found
     return os.path.join(CHECKPOINTS_DIR, name)
 
 
+def checkpoint_by_basename(fname):
+    """Absolute path of the checkpoint file named `fname` (case-insensitive) anywhere under
+    the checkpoints folders, or None. Several matches: the first one in listing order
+    (main folder first), with a log line."""
+    want = str(fname or "").lower()
+    hits = []
+    for d in _checkpoint_dirs():
+        for _rel, fp in _walk_model_files(d, _CHECKPOINT_EXTS):
+            if os.path.basename(fp).lower() == want:
+                hits.append(fp)
+    if len(hits) > 1:
+        _log(f"checkpoint '{fname}': {len(hits)} files share this name, using {hits[0]}")
+    return hits[0] if hits else None
+
+
+def checkpoint_relname(path):
+    """The list_checkpoints entry of an absolute checkpoint path (relative to the
+    checkpoints folder that holds it, '/'), or the bare file name when it lies outside
+    every folder. Used by the UI where a name has to match the catalogue."""
+    path = str(path or "")
+    if not path:
+        return ""
+    if not os.path.isabs(path):
+        path = resolve_checkpoint(path)
+    ap = os.path.normcase(os.path.abspath(path))
+    for d in _checkpoint_dirs():
+        if not d:
+            continue
+        base = os.path.normcase(os.path.abspath(d))
+        if ap.startswith(base.rstrip(os.sep) + os.sep):
+            return os.path.relpath(os.path.abspath(path), os.path.abspath(d)).replace(os.sep, "/")
+    return os.path.basename(path)
+
+
 def list_loras():
-    """LoRAs (.safetensors / .ckpt / .pt) from the loras folder, RECURSIVELY (subfolders
-    included). Returns paths RELATIVE to LORAS_DIR with '/' (e.g.
-    'subfolder/my_lora.safetensors') -> set_loras / resolve resolve them through
-    os.path.join(LORAS_DIR, name)."""
+    """LoRAs (.safetensors / .ckpt / .pt) from the loras folders (main + extras),
+    RECURSIVELY (subfolders included). Returns paths RELATIVE to their folder with '/'
+    (e.g. 'subfolder/my_lora.safetensors') -> set_loras / resolve_lora_path resolve them
+    through os.path.join(<folder>, name)."""
     exts = (".safetensors", ".ckpt", ".pt")
     out, seen = [], set()
     for d in _lora_dirs():          # main then extras: same name -> the main one wins
-        if not os.path.isdir(d):
-            continue
-        for root, _dirs, files in os.walk(d):
-            for f in files:
-                if f.lower().endswith(exts):
-                    rel = os.path.relpath(os.path.join(root, f), d).replace(os.sep, "/")
-                    if rel.lower() not in seen:
-                        seen.add(rel.lower())
-                        out.append(rel)
+        for rel, _fp in _walk_model_files(d, exts):
+            if rel.lower() not in seen:
+                seen.add(rel.lower())
+                out.append(rel)
     return sorted(out)
 
 

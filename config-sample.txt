@@ -93,7 +93,7 @@
     "default_auto_upscale": false,
 
     "checkpoints_dir": "",
-    "_checkpoints_extra_dir_help": "Optional SECOND checkpoints folder, merged into the same model list (e.g. a shared drive alongside your local one). Empty = only checkpoints_dir.",
+    "_checkpoints_extra_dir_help": "Optional SECOND checkpoints folder, merged into the same model list (e.g. a shared drive alongside your local one). Both folders are scanned recursively: a model in a subfolder is listed as 'ZIB/model.safetensors'. Empty = only checkpoints_dir.",
     "checkpoints_extra_dir": "",
     "_text_encoder_help": "Replace the base repo's text encoder: a transformers FOLDER (config.json + .safetensors) or a Hugging Face repo id ('owner/repo', or 'owner/repo/subfolder' when the weights sit in a sub-folder). Empty = the base repo's own. It must match Z-Image's encoder: model type qwen3, hidden size 2560, 36 layers (a Qwen3-4B, e.g. an abliterated or fine-tuned one); anything else is refused with the reason, and so are GGUF and single files (no config.json: give the folder). Only the encoder changes: tokenizer, VAE and transformer stay the base repo's. Used by txt2img / img2img / inpaint; Omni keeps its own encoder. Also in Models > Checkpoints > Text encoder; changing it reloads the model. Env ZIMAGE_TEXT_ENCODER.",
     "text_encoder": "",

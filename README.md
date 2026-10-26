@@ -709,8 +709,12 @@ in one list:
 - the official base repos **`Tongyi-MAI/Z-Image-Turbo`** and **`Tongyi-MAI/Z-Image`**
   (pulled from Hugging Face on first use), then
 - every single-file `.safetensors` **and `.gguf`** found in your **Checkpoints folder**
-  **and** the optional **Extra checkpoints folder** (both merged into the same list) —
-  including FP8/INT8 "scaled" builds (dequantized at load, see above).
+  **and** the optional **Extra checkpoints folder** (both merged into the same list),
+  **subfolders included** — file your models as you like (`ZIB/`, `ZIT/`, …): a model in
+  a subfolder is listed as `ZIB/model.safetensors [BF16 - 11.5 GB]`, a root file keeps
+  its bare name. Caches (`.cache`, hidden folders) are skipped. Includes FP8/INT8
+  "scaled" builds (dequantized at load, see above). The same holds for the **LoRA**
+  folders: `Style/noir.safetensors` in the slots, `<lora:noir>` in the prompt.
 
 What each choice does:
 

@@ -130,11 +130,15 @@ refine_tile_prompt      Prompt used PER TILE for the tiled refine. The global pr
                         without reintroducing duplication.
 default_cpu_offload     "none" | "model" (~half VRAM) | "sequential" (~9GB, slower).
 
-checkpoints_dir         Folder of single-file Z-Image models (.safetensors). Scanned
-                        into the Models > Checkpoints dropdown to switch model (like
-                        ESRGAN). Empty -> ./checkpoints next to app.py.
-loras_dir               Folder of LoRA .safetensors. Scanned into Models > LoRA.
-                        Empty -> ./loras next to app.py.
+checkpoints_dir         Folder of single-file Z-Image models (.safetensors / .gguf).
+                        Scanned RECURSIVELY into the Models > Checkpoints dropdown to
+                        switch model: a model filed in a subfolder (ZIB/, ZIT/...) is
+                        listed as 'ZIB/model.safetensors'. '.cache', hidden folders and
+                        '_index' are skipped. Empty -> ./checkpoints next to app.py.
+loras_dir               Folder of LoRA .safetensors. Scanned RECURSIVELY into Models >
+                        LoRA (subfolders shown as 'Style/noir.safetensors'; <lora:noir>
+                        in the prompt finds it by file name). Empty -> ./loras next to
+                        app.py.
 wildcards_dir           Folder of wildcard .txt files. In the prompt, __name__ is
                         replaced by a random line from <folder>/name.txt (e.g.
                         __color__). Nested wildcards supported, reproducible per
@@ -363,7 +367,8 @@ ollama_improve          {"enabled": true, "endpoint": "", "model": "", "timeout"
                         still honored). default_negative: start of Improve negative
                         on an empty box. format: auto | tags | prose | off.
 checkpoints_extra_dir   Optional second checkpoints folder, merged into the single
-                        "Z-Image checkpoint" dropdown ("" = disabled).
+                        "Z-Image checkpoint" dropdown ("" = disabled). Scanned
+                        recursively like checkpoints_dir.
 
 job_queue               {"enabled": true}
                         Job queue panel: "+ Queue" snapshots ALL current settings
