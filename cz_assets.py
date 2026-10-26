@@ -61,6 +61,9 @@ body.blur .cell img{filter:blur(14px)}body.blur .cell:hover img{filter:none}
 user-select:none;padding:0 14px;opacity:.7}.nav:hover{opacity:1}#prev{left:0}#next{right:344px}
 #close{position:fixed;top:10px;right:352px;font-size:30px;color:#fff;cursor:pointer;z-index:11}
 .ex img{cursor:zoom-in;transition:transform .12s}.ex img:hover{transform:scale(1.05)}
+.ex .exv{position:relative}.ex .exv span{position:absolute;right:4px;bottom:4px;background:#000a;color:#fff;
+font-size:11px;padding:1px 5px;border-radius:3px;pointer-events:none}
+#exvid{max-width:100%;max-height:100%;display:none;background:#000}
 /* CivitAI fetch status (bar + phase) in the side panel */
 .cvstatus{margin:8px 0;padding:10px;border:1px solid var(--line);border-radius:8px;background:#141b29}
 .cvstatus .lbl{display:flex;align-items:center;gap:8px;font-size:12px;color:#cfd8e6}
@@ -112,7 +115,7 @@ grid-template-columns:1fr 360px}#exlb.open{display:grid}
 <span class="nav" id="next">&#10095;</span><div id="lbimg"><img id="big"></div>
 <div id="side"></div></div>
 <div id="exlb"><span id="exclose">&times;</span><span class="nav" id="exprev">&#10094;</span>
-<span class="nav" id="exnext">&#10095;</span><div id="eximg"><img id="exbig"></div>
+<span class="nav" id="exnext">&#10095;</span><div id="eximg"><img id="exbig"><video id="exvid" controls autoplay loop muted playsinline></video></div>
 <div id="exside"></div></div>
 <script>
 let DATA=[],VIEW=[],cur=0,EX=[],excur=0;
@@ -124,7 +127,7 @@ function _bustUrl(u){return _bust?(u+(u.indexOf('?')<0?'?b=':'&b=')+_bust):u;}
 const grid=document.getElementById('grid'),lb=document.getElementById('lb'),big=document.getElementById('big'),
 side=document.getElementById('side'),q=document.getElementById('q'),cnt=document.getElementById('count'),
 folders=document.getElementById('folders'),
-exlb=document.getElementById('exlb'),exbig=document.getElementById('exbig'),exside=document.getElementById('exside');
+exlb=document.getElementById('exlb'),exbig=document.getElementById('exbig'),exvid=document.getElementById('exvid'),exside=document.getElementById('exside');
 function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function render(){grid.innerHTML='';VIEW.forEach((e,i)=>{const c=document.createElement('div');
 const label=e.name||e.file;const hasImg=!!(e.thumb||e.img)||curSource==='outputs';
@@ -180,7 +183,8 @@ h+='<button id="cvbtn" onclick="civitaiFetch()" style="margin-left:6px;backgroun
 if(e.civitai)h+='<a href="'+encodeURI(e.civitai)+'" target="_blank" style="margin-left:6px;color:#9fb3d6">CivitAI page</a>';
 EX=(e.examples||[]).map(function(x){return (typeof x==='string')?{url:x,prompt:''}:x;}).filter(function(x){return x&&x.url;});
 if(EX.length){h+='<h3>Examples <span style="color:var(--mut);font-weight:400">(click to enlarge)</span></h3><div class="ex">'+
-EX.map(function(x,ix){return '<img loading="lazy" src="'+encodeURI(x.url)+'" onclick="exOpen('+ix+')" title="'+esc((x.prompt||'').slice(0,140))+'">';}).join('')+'</div>';}}
+EX.map(function(x,ix){var im='<img loading="lazy" src="'+encodeURI(x.url)+'" onclick="exOpen('+ix+')" title="'+esc((x.prompt||'').slice(0,140))+'">';
+return x.video?'<div class="exv">'+im+'<span>&#9654; video</span></div>':im;}).join('')+'</div>';}}
 side.innerHTML=h;lb.classList.add('open');}
 function cp(what){const e=VIEW[cur];let t=e.prompt||'';if(what==='all')t=JSON.stringify(e,null,2);
 navigator.clipboard.writeText(t).catch(()=>{});}
@@ -270,16 +274,21 @@ _bust=Date.now();loadSource(src);setTimeout(function(){batchStatus('');},7000);
 }catch(err){batchStatus('⚠️ Rebuild failed: '+esc(''+err),'err');}
 finally{if(btn)btn.disabled=false;}}
 // --- Example viewer (full size + prompt + navigation) ---
-function exRender(){var x=EX[excur];if(!x)return;exbig.src=encodeURI(x.url);
+// A video example (the Wan / LTX LoRAs): the grid shows its poster frame, the lightbox
+// plays the mp4.
+function exStop(){exvid.pause();exvid.removeAttribute('src');exvid.load();exvid.style.display='none';}
+function exRender(){var x=EX[excur];if(!x)return;
+if(x.video){exbig.style.display='none';exvid.poster=encodeURI(x.url);exvid.src=encodeURI(x.video);exvid.style.display='block';}
+else{exStop();exbig.style.display='';exbig.src=encodeURI(x.url);}
 var h='<div id="excount">'+(excur+1)+' / '+EX.length+'</div>';
 h+='<h3>Prompt</h3><div class="v">'+(x.prompt?esc(x.prompt):
 '<span style="color:var(--mut)">(the uploader did not publish the generation parameters for this image)</span>')+'</div>';
 if(x.width&&x.height)h+='<h3>Size</h3><div class="v">'+esc(x.width)+' × '+esc(x.height)+'</div>';
 h+='<button onclick="exCopy()">Copy prompt</button>';
-h+='<a href="'+encodeURI(x.url)+'" target="_blank" style="margin-left:6px;color:#9fb3d6">Open image</a>';
+h+='<a href="'+encodeURI(x.video||x.url)+'" target="_blank" style="margin-left:6px;color:#9fb3d6">'+(x.video?'Open video':'Open image')+'</a>';
 exside.innerHTML=h;}
 function exOpen(ix){if(!EX.length)return;excur=(ix+EX.length)%EX.length;exRender();exlb.classList.add('open');}
-function exClose(){exlb.classList.remove('open');}
+function exClose(){exlb.classList.remove('open');exStop();}
 function exNav(d){if(!EX.length)return;excur=(excur+d+EX.length)%EX.length;exRender();}
 function exCopy(){var x=EX[excur];if(x)navigator.clipboard.writeText(x.prompt||'').catch(function(){});}
 document.getElementById('exclose').onclick=exClose;

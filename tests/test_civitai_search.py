@@ -234,6 +234,17 @@ def test_an_existing_file_is_never_overwritten():
             assert f.read() == b"mine", "the existing file was overwritten"
 
 
+def test_a_video_example_gives_a_poster_frame_as_preview():
+    """The video LoRAs (Wan, LTX...) illustrate themselves with .mp4 'images': the search
+    card shows the CDN's first frame (a JPEG), never a URL an <img> cannot render."""
+    vid = ("https://image.civitai.com/sig/uuid/original=true/uuid.mp4")
+    v = _ver(7, "Wan Video 14B t2v")
+    v["images"] = [{"url": vid, "type": "video"}, {"url": "https://img/x.jpg"}]
+    with _Api({"items": [_model(1, "Vid", [v])]}):
+        out = cz_civitai.search_loras("vid")
+    assert out[0]["previewUrl"] == "https://image.civitai.com/sig/uuid/anim=false,transcode=true/uuid.jpeg"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

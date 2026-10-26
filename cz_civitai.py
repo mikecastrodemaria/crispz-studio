@@ -242,18 +242,23 @@ def _examples_from(imgs, limit=8):
     """Normalises CivitAI images into examples {url, prompt, width, height, has_prompt}.
     'meta' can be None (the parameters are not published) -> an empty prompt +
     has_prompt=False, which lets the UI say 'not published' instead of letting one believe
-    in a bug."""
+    in a bug. A video example keeps its poster frame in 'url' (what the <img> tags show)
+    and the video itself in 'video' (what the lightbox plays)."""
     out = []
     for it in imgs[:limit]:
         if not isinstance(it, dict) or not it.get("url"):
             continue
         meta = it.get("meta") or {}
         prompt = str(meta.get("prompt") or "").strip()
-        out.append({
+        ex = {
             "url": it["url"], "prompt": prompt[:2000],
             "width": it.get("width"), "height": it.get("height"),
             "has_prompt": bool(prompt),
-        })
+        }
+        if media_is_video(it):
+            ex["video"] = it["url"]
+            ex["url"] = still_url(it["url"])
+        out.append(ex)
     return out
 
 
@@ -338,6 +343,64 @@ def _download(url, timeout=30):
         return r.read()
 
 
+# CivitAI serves the example "images" of the video models (Wan, LTX, Hunyuan...) as
+# video/mp4. PIL cannot open those, so a preview fetch used to fail silently on them and
+# the Asset Browser showed a broken <img>. The CDN can render the first frame of a video
+# as a JPEG on request: the transform segment of the URL becomes
+# 'anim=false,transcode=true' and the extension '.jpeg'.
+_VIDEO_EXTS = (".mp4", ".webm", ".mov", ".m4v")
+
+
+def is_video_url(url):
+    """True when a CivitAI media URL points at a video."""
+    path = str(url or "").split("?", 1)[0].split("#", 1)[0].lower()
+    return path.endswith(_VIDEO_EXTS)
+
+
+def media_is_video(item):
+    """True for an entry of the API's 'images' list that is a video ('type': 'video',
+    or a video URL when the type is missing)."""
+    if not isinstance(item, dict):
+        return False
+    return str(item.get("type") or "").lower() == "video" or is_video_url(item.get("url"))
+
+
+def still_url(url, width=None):
+    """The poster frame (a JPEG) of a CivitAI video URL:
+        https://image.civitai.com/<sig>/<uuid>/original=true/<name>.mp4
+     -> https://image.civitai.com/<sig>/<uuid>/anim=false,transcode=true/<name>.jpeg
+    A 'width=N' already in the URL (or given) is kept. Anything that is not a video URL,
+    or not shaped like a CivitAI CDN URL, comes back unchanged."""
+    u = str(url or "")
+    if not is_video_url(u):
+        return u
+    u = u.split("?", 1)[0].split("#", 1)[0]
+    base, _, fname = u.rpartition("/")
+    prefix, _, transforms = base.rpartition("/")
+    if not prefix or "=" not in transforms:
+        return url
+    opts = ["anim=false", "transcode=true"]
+    w = width or next((t.split("=", 1)[1] for t in transforms.split(",")
+                       if t.startswith("width=")), None)
+    if w:
+        opts.append(f"width={w}")
+    stem = fname.rsplit(".", 1)[0]
+    return f"{prefix}/{','.join(opts)}/{stem}.jpeg"
+
+
+def preview_candidates(imgs, limit=3):
+    """The URLs to try, in order, for a model's preview image: the API's images with
+    a video rendered as its poster frame (so every candidate is something PIL opens)."""
+    out = []
+    for it in imgs or []:
+        if not isinstance(it, dict) or not it.get("url"):
+            continue
+        out.append(still_url(it["url"]) if media_is_video(it) else it["url"])
+        if len(out) >= limit:
+            break
+    return out
+
+
 def search_loras(query, limit=10, api_key=None, types="LORA", base_model=None):
     """A CivitAI search by NAME: GET /models?query=...&types=LORA. It returns a FLAT list
     of candidates, one entry per model VERSION (the versions of a single CivitAI page often
@@ -373,8 +436,7 @@ def search_loras(query, limit=10, api_key=None, types="LORA", base_model=None):
                 "sizeKB": float(f.get("sizeKB") or 0),
                 "downloadUrl": str(f.get("downloadUrl") or v.get("downloadUrl") or "").strip(),
                 "sha256": str((f.get("hashes") or {}).get("SHA256") or "").strip().lower(),
-                "previewUrl": next((i.get("url") for i in (v.get("images") or [])
-                                    if isinstance(i, dict) and i.get("url")), ""),
+                "previewUrl": next(iter(preview_candidates(v.get("images"), limit=1)), ""),
                 "url": f"https://civitai.com/models/{m.get('id')}",
             })
     if base_model:
@@ -534,16 +596,18 @@ def fetch_civitai_for_model(safepath, api_key=None, overwrite=False, progress=No
         imgs = get_top_images(ver["versionId"], api_key, limit=8)
     saved_preview = False
     if want_preview:
-        url = next((it.get("url") for it in imgs if isinstance(it, dict) and it.get("url")), None)
-        if url:
+        # The first image that PIL can save: a video (mp4) is fetched as its poster frame,
+        # and a candidate the CDN refuses gives way to the next one.
+        for url in preview_candidates(imgs):
             try:
                 from PIL import Image
                 _p("download", None, "Downloading preview…")
                 im = Image.open(io.BytesIO(_download(url))).convert("RGB")
                 im.save(stem + ".preview.png", "PNG", optimize=True)
                 saved_preview = True
+                break
             except Exception as e:
-                _dbg(f"civitai preview save failed: {e}")
+                _dbg(f"civitai preview save failed ({url}): {e}")
     examples = _examples_from(imgs)
     # A merge (and not a replacement): the sidecar also carries our hash cache
     # (sha256/sha256_size) -- overwriting it would trigger a full re-hash on the next run.

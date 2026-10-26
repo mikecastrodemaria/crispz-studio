@@ -207,7 +207,10 @@ SwarmUI. On top of crispz's upscaler it adds:
   (median steps/CFG, majority sampler — shown on the model card, and appliable in one click
   via **📊 Apply CivitAI recommended settings** in Models > Checkpoints). The fetch shows **live progress** (spinner +
   bar: real `Hashing… %` when the file must be hashed, then Querying / Downloading) with an
-  inline ✅/⚠️ result. **Example images are clickable** → a full-screen viewer shows each
+  inline ✅/⚠️ result. **Video examples are accepted too**: the video LoRAs (Wan, LTX…)
+  illustrate themselves with `.mp4` "images" on Civitai — the preview and the search cards
+  take the **first frame** (rendered as a JPEG by the Civitai CDN), and the example viewer
+  **plays the video** (a ▶ badge marks them). **Example images are clickable** → a full-screen viewer shows each
   example **large with its generation prompt** (Copy prompt) and **← / →** to browse. A small
   **🖼️ icon** next to each **LoRA** dropdown and the **Z-Image checkpoint** dropdown
   (Advanced) opens the Asset Browser **straight to that model's card** (its preview /

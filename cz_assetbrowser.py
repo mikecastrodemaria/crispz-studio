@@ -619,6 +619,23 @@ def _scan_catalog(model_dirs, out_dir, kind):
                 civ = cz_civitai.load_civitai_sidecar(fp)
             except Exception:
                 civ = {}
+            examples = []
+            for e in (civ.get("examples") or []):
+                url = e.get("url")
+                if not url:
+                    continue
+                video = e.get("video") or ""
+                # A sidecar written before video examples were understood keeps the
+                # .mp4 in 'url': the poster frame goes to the <img>, the video to the
+                # lightbox.
+                if not video and cz_civitai.is_video_url(url):
+                    video, url = url, cz_civitai.still_url(url)
+                examples.append({"url": url, "video": video,
+                                 "prompt": e.get("prompt") or "",
+                                 "width": e.get("width"), "height": e.get("height"),
+                                 "has_prompt": bool((e.get("prompt") or "").strip())})
+                if len(examples) >= 8:
+                    break
             trig = ", ".join(civ.get("trainedWords") or [])
             if not trig and kind == "loras":
                 try:
@@ -629,10 +646,7 @@ def _scan_catalog(model_dirs, out_dir, kind):
                 "file": rel, "name": os.path.splitext(os.path.basename(f))[0],
                 "thumb": thumb, "img": img, "day": sub or "(root)",
                 "mode": kind[:-1], "size": f"{size_mb:.0f} MB", "prompt": trig,
-                "examples": [{"url": e.get("url"), "prompt": e.get("prompt") or "",
-                              "width": e.get("width"), "height": e.get("height"),
-                              "has_prompt": bool((e.get("prompt") or "").strip())}
-                             for e in (civ.get("examples") or []) if e.get("url")][:8],
+                "examples": examples,
                 "civitai": civ.get("url") or "",
                 "reco": civ.get("recommended") or {},
                 "update": bool(civ.get("update_available")),
