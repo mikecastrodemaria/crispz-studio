@@ -52,7 +52,7 @@ spandrel==0.4.1
 gguf==0.19.0
 
 # UI / service
-gradio==5.50.0
+gradio==6.16.0
 fastapi==0.136.3
 uvicorn==0.35.0
 
