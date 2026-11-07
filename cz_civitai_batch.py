@@ -26,6 +26,7 @@ import time
 import argparse
 
 import cz_core
+from cz_core import split_dir_spec  # noqa: E402
 from cz_core import CONFIG, _prefs, HERE
 import cz_civitai
 
@@ -41,8 +42,7 @@ def _split_dirs(spec):
     cz_pipeline would pull torch in and cost seconds at every launch of this script."""
     if not spec:
         return []
-    parts = ([p for chunk in spec.split(os.pathsep) for p in chunk.split(";")]
-             if isinstance(spec, str) else list(spec))
+    parts = split_dir_spec(spec)
     out = []
     for p in parts:
         p = str(p or "").strip()

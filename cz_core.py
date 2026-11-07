@@ -17,6 +17,7 @@ value. _log/_dbg read the live value here, so importing them is safe.
 """
 
 import os
+import re
 
 # Force protobuf's pure-Python backend BEFORE any import of transformers/sentencepiece.
 # Otherwise the tokenizer (Qwen3 / T5 / sentencepiece) crashes: "Descriptors cannot be created
@@ -427,3 +428,39 @@ def _pil_to_b64_jpeg(img, max_side=1600, quality=85):
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=quality, optimize=True)
     return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+# --- Folder lists ('a;b' strings) --------------------------------------------------------
+_DRIVE_COLON = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def split_dir_spec(spec):
+    """Folder list from a JSON list or an 'a;b' string. ';' always separates; ':' (the
+    POSIX os.pathsep) separates too, EXCEPT as the drive colon of a Windows path ('X:/a',
+    'C:\\x'), so one list reads the same on both systems and in a shared
+    preferences.json (until 2026-11-07 the family split on os.pathsep blindly and a
+    Linux run cut 'X:/a;Y:/b' into 'X', '/a', 'Y', '/b'). Stripped, deduplicated, empty
+    entries dropped. The one single source for cz_pipeline, cz_civitai_batch,
+    cz_edit_loras and cz_protocol."""
+    if not spec:
+        return []
+    if isinstance(spec, str):
+        parts = []
+        for chunk in spec.split(";"):
+            chunk = chunk.strip()
+            while chunk:
+                head = 2 if _DRIVE_COLON.match(chunk) else 0
+                i = chunk.find(":", head)
+                if i < 0:
+                    parts.append(chunk)
+                    break
+                parts.append(chunk[:i])
+                chunk = chunk[i + 1:].strip()
+    else:
+        parts = list(spec)
+    out = []
+    for p in parts:
+        p = str(p or "").strip()
+        if p and p not in out:
+            out.append(p)
+    return out
