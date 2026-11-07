@@ -283,11 +283,40 @@ import json  # noqa: F811 (utilise par _load_styles ci-dessous)
 # CONFIG + the defaults driven by config.txt -> cz_core.py (imported at the top).
 
 # Presets Performance editables via config.txt (performance_presets: nom -> [steps, guidance]).
-if isinstance(CONFIG.get("performance_presets"), dict) and CONFIG["performance_presets"]:
+_BUILT_IN_PERFORMANCE = dict(PERFORMANCE)
+
+
+def _performance_from_config(cfg):
+    """(PERFORMANCE, note) from a config's `performance_presets`. The config's entries
+    come first and win on a name; the app's own presets the config does not name are
+    APPENDED (a config.txt copied from an older sample used to hide every preset added
+    since: seen on crispz-moss, 2026-11-07, ported to the family).
+    `performance_presets_merge: false` keeps the config's list alone. note says what was
+    appended, or None."""
+    raw = cfg.get("performance_presets")
+    if not (isinstance(raw, dict) and raw):
+        return dict(_BUILT_IN_PERFORMANCE), None
     try:
-        PERFORMANCE = {k: (int(v[0]), float(v[1])) for k, v in CONFIG["performance_presets"].items()}
-    except Exception:
-        pass
+        perf = {k: (int(v[0]), float(v[1])) for k, v in raw.items()}
+    except Exception as e:
+        return (dict(_BUILT_IN_PERFORMANCE),
+                f"performance_presets in config.txt unreadable ({e}): the app's own presets are used")
+    if cfg.get("performance_presets_merge", True) is False:
+        return perf, None
+    added = [k for k in _BUILT_IN_PERFORMANCE if k not in perf]
+    for k in added:
+        perf[k] = _BUILT_IN_PERFORMANCE[k]
+    note = None
+    if added:
+        note = ("performance_presets in config.txt names " + str(len(raw)) + " preset(s); the app's "
+                + ", ".join(f"'{k}'" for k in added) + " added after them (performance_presets_merge: "
+                "false in config.txt keeps only yours)")
+    return perf, note
+
+
+PERFORMANCE, _perf_note = _performance_from_config(CONFIG)
+if _perf_note:
+    _log(_perf_note)
 
 # MODEL_PROFILES / profile_for_model -> cz_core.py (imported at the top).
 

@@ -5,6 +5,14 @@ The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browse
 
 
 
+## Unreleased : performance presets and config.txt
+
+- A `performance_presets` list copied into config.txt used to replace the app's list
+  entirely, hiding every preset added since (seen on crispz-moss, 2026-11-07, fixed
+  across the family). Now the config's entries come first (they win on a name) and the
+  app's missing presets are appended, said in the log at start;
+  `performance_presets_merge: false` keeps the config's list alone.
+
 ## Unreleased — The LoRA library can live outside the app folder
 
 `loras_dir` was the only folder the app ever looked in. A library shared with ComfyUI or

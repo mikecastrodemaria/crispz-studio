@@ -29,6 +29,8 @@
     "caption_model": "blip-large",
     "_caption_model_help": "Auto-describe model: blip-large (default, local) | blip-base | ollama:<vision model> (listed in Prompt AI once Ollama is detected; blip-large takes over if Ollama fails)",
 
+    "_performance_presets_merge_help": "true (default): the app's own presets missing from your performance_presets are added after yours, so a config.txt copied from an older sample keeps showing the presets added since (said in the log). false: your list is the whole list.",
+    "performance_presets_merge": true,
     "performance_presets": {
         "Turbo (8 steps)": [8, 0.0],
         "Quality (20 steps)": [20, 0.0],
