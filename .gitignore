@@ -64,7 +64,10 @@ output/
 *.tsv
 
 # --- Local test images (experiments, not versioned) ---
-tests/
+# The rule used to be "tests/" and swallowed new test files (2026-11-07: a test written
+# for the presets never reached the repo). The Python files are versioned, the images not.
+tests/*
+!tests/*.py
 
 # --- Style thumbnails (Fooocus samples, local, ~8 MB, not versioned) ---
 styles/samples/

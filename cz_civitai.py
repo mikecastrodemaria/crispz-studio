@@ -275,13 +275,18 @@ def analyze_settings(imgs, min_meta=2):
         s = str(meta.get("sampler") or "").strip()
         if s:
             samplers.append(s)
+        # CivitAI publishes "steps": 0 / "cfgScale": 0 for images whose metadata lacks the
+        # value (not null: zero). Kept in the median, a majority of them drags the consensus
+        # to 0, and the app then pushes 0 into a steps slider whose minimum is 2 (seen on
+        # 2026-11-07 in crispz-moss with a Jib Mix build: Gradio refused the next click with
+        # "Value 0 is less than minimum value 2"). A zero or negative value is no value.
         try:
-            if meta.get("cfgScale") is not None:
+            if meta.get("cfgScale") is not None and float(meta["cfgScale"]) > 0:
                 cfgs.append(float(meta["cfgScale"]))
         except (TypeError, ValueError):
             pass
         try:
-            if meta.get("steps") is not None:
+            if meta.get("steps") is not None and int(meta["steps"]) > 0:
                 steps.append(int(meta["steps"]))
         except (TypeError, ValueError):
             pass
