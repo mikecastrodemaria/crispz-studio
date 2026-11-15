@@ -283,11 +283,40 @@ import json  # noqa: F811 (utilise par _load_styles ci-dessous)
 # CONFIG + the defaults driven by config.txt -> cz_core.py (imported at the top).
 
 # Presets Performance editables via config.txt (performance_presets: nom -> [steps, guidance]).
-if isinstance(CONFIG.get("performance_presets"), dict) and CONFIG["performance_presets"]:
+_BUILT_IN_PERFORMANCE = dict(PERFORMANCE)
+
+
+def _performance_from_config(cfg):
+    """(PERFORMANCE, note) from a config's `performance_presets`. The config's entries
+    come first and win on a name; the app's own presets the config does not name are
+    APPENDED (a config.txt copied from an older sample used to hide every preset added
+    since: seen on crispz-moss, 2026-11-07, ported to the family).
+    `performance_presets_merge: false` keeps the config's list alone. note says what was
+    appended, or None."""
+    raw = cfg.get("performance_presets")
+    if not (isinstance(raw, dict) and raw):
+        return dict(_BUILT_IN_PERFORMANCE), None
     try:
-        PERFORMANCE = {k: (int(v[0]), float(v[1])) for k, v in CONFIG["performance_presets"].items()}
-    except Exception:
-        pass
+        perf = {k: (int(v[0]), float(v[1])) for k, v in raw.items()}
+    except Exception as e:
+        return (dict(_BUILT_IN_PERFORMANCE),
+                f"performance_presets in config.txt unreadable ({e}): the app's own presets are used")
+    if cfg.get("performance_presets_merge", True) is False:
+        return perf, None
+    added = [k for k in _BUILT_IN_PERFORMANCE if k not in perf]
+    for k in added:
+        perf[k] = _BUILT_IN_PERFORMANCE[k]
+    note = None
+    if added:
+        note = ("performance_presets in config.txt names " + str(len(raw)) + " preset(s); the app's "
+                + ", ".join(f"'{k}'" for k in added) + " added after them (performance_presets_merge: "
+                "false in config.txt keeps only yours)")
+    return perf, note
+
+
+PERFORMANCE, _perf_note = _performance_from_config(CONFIG)
+if _perf_note:
+    _log(_perf_note)
 
 # MODEL_PROFILES / profile_for_model -> cz_core.py (imported at the top).
 
@@ -690,6 +719,50 @@ def _apply_checkpoint(name):
             _bounded_update("gen_steps", st), _bounded_update("guidance", g), _perf_update(st, g))
 
 
+# The Generate sliders' bounds, the single source for the sliders and for the CivitAI
+# consensus guard: a sidecar written before the median ignored zeros (or a page whose
+# images all publish "steps": 0) must never push a value the slider refuses.
+GEN_STEPS_BOUNDS = _UI_BOUNDS["gen_steps"]
+GUIDANCE_BOUNDS = _UI_BOUNDS["guidance"]
+
+
+def _sane_reco(reco, what="CivitAI consensus"):
+    """(steps or None, guidance or None) from a CivitAI 'recommended' dict, kept inside
+    the sliders' bounds. A zero or negative value is treated as absent (it is CivitAI's
+    "unknown"), a value above the slider's maximum is clamped; both are said in the log.
+    Seen on 2026-11-07 (crispz-moss): a sidecar with steps 0 put the steps slider at 0
+    (minimum 2) and Gradio refused every click after that ("Value 0 is less than minimum
+    value 2"). The same code lives in the whole family, hence the same guard here."""
+    reco = reco or {}
+    st = g = None
+    try:
+        if reco.get("steps") is not None:
+            st = int(reco["steps"])
+    except (TypeError, ValueError):
+        st = None
+    try:
+        if reco.get("guidance") is not None:
+            g = float(reco["guidance"])
+    except (TypeError, ValueError):
+        g = None
+    lo, hi = GEN_STEPS_BOUNDS
+    if st is not None and st < lo:
+        _log(f"{what}: steps {st} is not a usable value (slider minimum {lo}): ignored, "
+             "the model profile applies")
+        st = None
+    elif st is not None and st > hi:
+        _log(f"{what}: steps {st} clamped to the slider maximum {hi}")
+        st = hi
+    glo, ghi = GUIDANCE_BOUNDS
+    if g is not None and g <= 0:
+        _log(f"{what}: CFG {g} is not a usable value: ignored, the model profile applies")
+        g = None
+    elif g is not None and g > ghi:
+        _log(f"{what}: CFG {g} clamped to the slider maximum {ghi}")
+        g = ghi
+    return st, g
+
+
 def _ui_civitai_reco(name, progress=gr.Progress()):
     """Applies the CivitAI community settings to the current model (the consensus of the
     example images' 'meta': steps/CFG by median, the sampler by majority). Fetches the
@@ -722,12 +795,17 @@ def _ui_civitai_reco(name, progress=gr.Progress()):
     samp, sched = cz_civitai.map_sampler_name(reco.get("sampler"))
     parts = []
     st_u = g_u = gr.update()
-    if reco.get("steps") is not None:
-        st_u = gr.update(value=int(reco["steps"]))
-        parts.append(f"steps={reco['steps']}")
-    if reco.get("guidance") is not None:
-        g_u = gr.update(value=float(reco["guidance"]))
-        parts.append(f"CFG={reco['guidance']}")
+    r_st, r_g = _sane_reco(reco)
+    if r_st is not None:
+        st_u = gr.update(value=r_st)
+        parts.append(f"steps={r_st}")
+    elif reco.get("steps") is not None:
+        parts.append(f"steps={reco['steps']} (not usable, ignored)")
+    if r_g is not None:
+        g_u = gr.update(value=r_g)
+        parts.append(f"CFG={r_g}")
+    elif reco.get("guidance") is not None:
+        parts.append(f"CFG={reco['guidance']} (not usable, ignored)")
     if reco.get("sampler"):
         parts.append(f"sampler={reco['sampler']}"
                      + ("" if samp else " → no Z-Image equivalent, kept current"))

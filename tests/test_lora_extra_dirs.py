@@ -114,6 +114,28 @@ def test_the_slots_resolve_through_the_extra_folders():
             P.LORAS = old
 
 
+def test_the_dir_split_keeps_windows_drive_colons_and_splits_posix_lists():
+    """One rule for the family (cz_core.split_dir_spec): ';' separates, the POSIX ':'
+    separates too, a Windows drive colon never does, on any system; stripped,
+    deduplicated, empties dropped; a JSON list passes as is."""
+    import cz_core
+    f = cz_core.split_dir_spec
+    assert f("X:/a;Y:/b") == ["X:/a", "Y:/b"]
+    assert f("C:\\loras;D:\\more\\sub") == ["C:\\loras", "D:\\more\\sub"]
+    assert f("/mnt/a:/mnt/b") == ["/mnt/a", "/mnt/b"]
+    assert f("X:/a:Y:/b") == ["X:/a", "Y:/b"]
+    assert f(" /m/a ; ;/m/a;/m/c ") == ["/m/a", "/m/c"]
+    assert f(["X:/a", "X:/a", "Z:/c"]) == ["X:/a", "Z:/c"]
+    assert f("") == [] and f(None) == [] and f([]) == []
+    old = list(P.LORAS_EXTRA_DIRS)
+    try:
+        P.set_loras_extra_dirs("X:/a;Y:/b")
+        assert P.LORAS_EXTRA_DIRS == ["X:/a", "Y:/b"], P.LORAS_EXTRA_DIRS
+    finally:
+        P.LORAS_EXTRA_DIRS = old
+    print("OK test_the_dir_split_keeps_windows_drive_colons_and_splits_posix_lists")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

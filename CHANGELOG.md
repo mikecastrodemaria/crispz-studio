@@ -5,6 +5,28 @@ The app version lives in `cz_core.py` (`APP_VERSION`) and is shown in the browse
 
 
 
+## Unreleased : performance presets and config.txt
+
+- **Extra folder lists on Linux** (2026-11-07, whole family): `loras_extra_dirs` and the
+  other 'a;b' folder lists were split on os.pathsep blindly, so on Linux (the CI) a
+  Windows path in a shared preferences.json broke on its drive colon ('X:/a;Y:/b' into
+  'X', '/a', 'Y', '/b'; `test_lora_extra_dirs` was red on the CI of crispz-krea2 and
+  crispz-studio). One rule now, `cz_core.split_dir_spec`, used by cz_pipeline,
+  cz_civitai_batch, cz_edit_loras and cz_protocol: ';' and the POSIX ':' separate, a
+  drive colon never does.
+- **CivitAI consensus at 0 steps** (2026-11-07, whole family): CivitAI publishes
+  `steps: 0` / `cfgScale: 0` for images without the value; the median kept them and a
+  sidecar could carry steps 0, which selecting the checkpoint or "Apply CivitAI
+  recommended settings" pushed into the steps slider (minimum 2): Gradio then refused
+  every click ("Value 0 is less than minimum value 2", seen in crispz-moss). The median
+  ignores zeros, and `cz_ui._sane_reco` keeps a sidecar's steps / CFG inside the sliders'
+  bounds (zero = ignored, above the maximum = clamped, said in the log).
+- A `performance_presets` list copied into config.txt used to replace the app's list
+  entirely, hiding every preset added since (seen on crispz-moss, 2026-11-07, fixed
+  across the family). Now the config's entries come first (they win on a name) and the
+  app's missing presets are appended, said in the log at start;
+  `performance_presets_merge: false` keeps the config's list alone.
+
 ## Unreleased — The LoRA library can live outside the app folder
 
 `loras_dir` was the only folder the app ever looked in. A library shared with ComfyUI or
