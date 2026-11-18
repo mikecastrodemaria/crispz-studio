@@ -32,7 +32,7 @@ gguf
 # No external dep -> a stable stack.
 # The <6 bound: Gradio 6 has a Brotli middleware buggy with h11 ("Too little data for
 # declared Content-Length") that spams the console when a response is interrupted.
-gradio>=4.44,<6
+gradio>=6.16.0,<7
 
 pillow
 numpy
